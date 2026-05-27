@@ -2,6 +2,15 @@ import type { CellStyle, CellValue, WorkbookData } from './types'
 
 const API_BASE = '/api'
 
+export interface WorkbookSummary {
+  id: string
+  name: string
+  createdAt: number
+  updatedAt: number
+  count: number
+  columnWidths: Record<string, number>
+}
+
 export interface ServerOrder {
   id: string
   row: CellValue[]
@@ -72,38 +81,90 @@ export async function logout(): Promise<void> {
   await request('/logout', { method: 'POST' })
 }
 
-export async function fetchWorkbook(since?: number): Promise<ServerWorkbookResponse> {
-  const query = since != null ? `?since=${since}` : ''
-  return request<ServerWorkbookResponse>(`/workbook${query}`)
+/* ===========================================================
+   Workbook CRUD
+   =========================================================== */
+
+export async function listWorkbooks(): Promise<WorkbookSummary[]> {
+  return request<WorkbookSummary[]>('/workbooks')
 }
 
-export async function replaceWorkbook(payload: {
-  orders: Array<{
-    id: string
-    row: CellValue[]
-    styles?: Record<string, CellStyle>
-    disappeared?: boolean
-    sheetDate?: string
-  }>
-  columnWidths?: Record<number, number>
-}): Promise<{ updatedAt: number; count: number }> {
-  return request('/workbook/replace', {
+export async function createWorkbook(name: string): Promise<WorkbookSummary> {
+  return request<WorkbookSummary>('/workbooks', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
+export async function renameWorkbook(id: string, name: string): Promise<{ ok: true; updatedAt: number }> {
+  return request(`/workbooks/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ name }),
+  })
+}
+
+export async function deleteWorkbook(id: string): Promise<{ ok: true }> {
+  return request(`/workbooks/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function duplicateWorkbook(id: string, name?: string): Promise<WorkbookSummary> {
+  return request<WorkbookSummary>(`/workbooks/${encodeURIComponent(id)}/duplicate`, {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  })
+}
+
+/* ===========================================================
+   Workbook data (orders/images) — scoped por workbookId
+   =========================================================== */
+
+export async function fetchWorkbook(
+  workbookId: string,
+  since?: number,
+): Promise<ServerWorkbookResponse> {
+  const query = since != null ? `?since=${since}` : ''
+  return request<ServerWorkbookResponse>(
+    `/workbooks/${encodeURIComponent(workbookId)}/data${query}`,
+  )
+}
+
+export async function replaceWorkbook(
+  workbookId: string,
+  payload: {
+    orders: Array<{
+      id: string
+      row: CellValue[]
+      styles?: Record<string, CellStyle>
+      disappeared?: boolean
+      sheetDate?: string
+    }>
+    columnWidths?: Record<number, number>
+  },
+): Promise<{ updatedAt: number; count: number }> {
+  return request(`/workbooks/${encodeURIComponent(workbookId)}/replace`, {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
 
 export async function patchOrder(
+  workbookId: string,
   orderId: string,
   patch: { row?: CellValue[]; styles?: Record<string, CellStyle>; disappeared?: boolean },
 ): Promise<{ updatedAt: number }> {
-  return request(`/orders/${encodeURIComponent(orderId)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(patch),
-  })
+  return request(
+    `/workbooks/${encodeURIComponent(workbookId)}/orders/${encodeURIComponent(orderId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    },
+  )
 }
 
 export async function uploadImage(
+  workbookId: string,
   orderId: string,
   col: number,
   blob: Blob,
@@ -111,11 +172,14 @@ export async function uploadImage(
 ): Promise<{ url: string; updatedAt: number }> {
   const body = new FormData()
   body.append('image', blob, fileName)
-  const response = await fetch(`${API_BASE}/images/${encodeURIComponent(orderId)}/${col}`, {
-    method: 'POST',
-    credentials: 'include',
-    body,
-  })
+  const response = await fetch(
+    `${API_BASE}/workbooks/${encodeURIComponent(workbookId)}/images/${encodeURIComponent(orderId)}/${col}`,
+    {
+      method: 'POST',
+      credentials: 'include',
+      body,
+    },
+  )
   if (response.status === 401) throw new AuthRequiredError()
   if (!response.ok) {
     const detail = await response.json().catch(() => ({ error: response.statusText }))
@@ -124,12 +188,19 @@ export async function uploadImage(
   return (await response.json()) as { url: string; updatedAt: number }
 }
 
-export async function deleteImage(orderId: string, col: number): Promise<{ updatedAt: number }> {
-  return request(`/images/${encodeURIComponent(orderId)}/${col}`, { method: 'DELETE' })
+export async function deleteImage(
+  workbookId: string,
+  orderId: string,
+  col: number,
+): Promise<{ updatedAt: number }> {
+  return request(
+    `/workbooks/${encodeURIComponent(workbookId)}/images/${encodeURIComponent(orderId)}/${col}`,
+    { method: 'DELETE' },
+  )
 }
 
 /** Converte payload do servidor pra WorkbookData (formato que a grid usa) */
-export function serverWorkbookToLocal(server: ServerWorkbook): WorkbookData {
+export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook): WorkbookData {
   const rows: CellValue[][] = []
   const rowDates: string[] = []
   const images: Record<string, { url: string; fileName: string }> = {}
@@ -153,9 +224,9 @@ export function serverWorkbookToLocal(server: ServerWorkbook): WorkbookData {
     columnWidths[Number(colKey)] = width
   }
 
-  const sheetId = 'sheet-relatorios'
+  const sheetId = `sheet-${workbookId}`
   return {
-    id: 'workbook-relatorios',
+    id: workbookId,
     name: server.name,
     importedAt: new Date(server.updatedAt).toISOString(),
     sheetOrder: [sheetId],

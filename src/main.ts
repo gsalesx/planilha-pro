@@ -15,6 +15,7 @@ import { GridView, PHOTO_COLUMN_INDICES } from './grid'
 import { showLoginScreen } from './login'
 import { formatHitRef, highlightMatch, searchWorkbook, type SearchHit } from './search'
 import type { CellValue, WorkbookData } from './types'
+import { showWorkbooksList } from './workbooks-list'
 import { FIXED_HEADERS, parseXlsx } from './xlsx-parser'
 
 const POLL_INTERVAL_MS = 8000
@@ -27,6 +28,7 @@ let pollTimer: number | null = null
 let searchTimer: number | null = null
 let lastSearchHits: SearchHit[] = []
 let searchHighlightIndex = -1
+let currentWorkbookId: string | null = null
 
 function el<T extends HTMLElement>(selector: string): T {
   const node = document.querySelector<T>(selector)
@@ -39,6 +41,7 @@ function buildShell() {
   app.innerHTML = `
     <div class="app">
       <header class="app-header">
+        <button class="btn btn-back" id="back-btn" title="Voltar para Minhas planilhas">← Voltar</button>
         <h1>Planilha Pro</h1>
         <span class="filename" id="filename">Relatórios</span>
         <div class="search-box">
@@ -52,7 +55,6 @@ function buildShell() {
             <input type="file" id="file-input" accept=".xlsx,.xls" hidden />
             ⟳ Atualizar Planilha
           </label>
-          <button class="btn" id="reset-btn" title="Apagar todos os pedidos">🗑 Zerar Planilha</button>
           <button class="btn" id="logout-btn" title="Sair">Sair</button>
         </div>
       </header>
@@ -123,13 +125,12 @@ function getRowStylesAsRecord(rowIndex: number): Record<string, { bg?: string }>
 type ChangeBatch = ReadonlyArray<{ row: number; col: number; value: CellValue }>
 
 async function handleCellChange(changes: ChangeBatch) {
-  if (!workbook || changes.length === 0) return
+  if (!workbook || !currentWorkbookId || changes.length === 0) return
   const sheetId = grid.getActiveSheetId()
   if (!sheetId) return
   const sheet = workbook.sheets[sheetId]
   if (!sheet) return
 
-  // group by rowIndex
   const byRow = new Map<number, { row: number; cols: number[] }>()
   for (const { row, col, value } of changes) {
     if (!sheet.rows[row]) sheet.rows[row] = []
@@ -139,12 +140,11 @@ async function handleCellChange(changes: ChangeBatch) {
   }
   grid.render()
 
-  // PATCH each affected order
   for (const { row } of byRow.values()) {
     const id = getOrderId(row)
     if (!id) continue
     try {
-      const result = await patchOrder(id, { row: sheet.rows[row] })
+      const result = await patchOrder(currentWorkbookId, id, { row: sheet.rows[row] })
       serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
     } catch (error) {
       handleApiError(error, 'Falha ao salvar alteração')
@@ -157,26 +157,17 @@ function handleSelect(_ref: string, _value: CellValue) {
 }
 
 async function handleEtiqueta(color: string | null) {
-  if (!workbook) return
+  if (!workbook || !currentWorkbookId) return
   const sel = grid.getSelection()
   if (!sel) return
   grid.applyCellBackground(color)
-  // identify affected rows
   const sheet = workbook.sheets[workbook.sheetOrder[0]]
   if (!sheet) return
-  // After applyCellBackground the styles map is updated. Build per-row styles and patch each.
-  // grid.applyCellBackground touches all selected rows on selection.col
-  const rowsTouched = new Set<number>()
-  for (const key of Object.keys(sheet.cellStyles ?? {})) {
-    const [r] = key.split(':').map(Number)
-    rowsTouched.add(r)
-  }
-  // simplification: re-send styles for all currently-selected rows
   for (const row of getCurrentSelectedRows()) {
     const id = getOrderId(row)
     if (!id) continue
     try {
-      const result = await patchOrder(id, { styles: getRowStylesAsRecord(row) })
+      const result = await patchOrder(currentWorkbookId, id, { styles: getRowStylesAsRecord(row) })
       serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
     } catch (error) {
       handleApiError(error, 'Falha ao salvar etiqueta')
@@ -187,7 +178,6 @@ async function handleEtiqueta(color: string | null) {
 function getCurrentSelectedRows(): number[] {
   const sel = grid.getSelection()
   if (!sel) return []
-  // GridView doesn't expose internal range; reconstruct via DOM
   const tds = document.querySelectorAll<HTMLElement>('td.is-selected')
   const rows = new Set<number>()
   tds.forEach((td) => {
@@ -234,19 +224,18 @@ async function pickImageFile(row: number, col: number) {
 }
 
 async function uploadAndSetImage(row: number, col: number, blob: Blob, fileName: string) {
+  if (!currentWorkbookId) return
   const id = getOrderId(row)
   if (!id) {
     setStatusText('Pedido sem ID — não pode ter foto')
     return
   }
-  // optimistic: mostra o blob localmente
   grid.setCellImage(row, col, blob, fileName)
   setStatusText('Convertendo e enviando foto...')
   try {
     const jpeg = await blobToJpeg(blob)
     const safeName = fileName.replace(/\.[^.]+$/, '') + '.jpg'
-    const result = await uploadImage(id, col, jpeg, safeName)
-    // Replace local blob with server URL — re-render with url
+    const result = await uploadImage(currentWorkbookId, id, col, jpeg, safeName)
     if (!workbook) return
     const sheet = workbook.sheets[workbook.sheetOrder[0]]
     if (!sheet) return
@@ -260,11 +249,12 @@ async function uploadAndSetImage(row: number, col: number, blob: Blob, fileName:
 }
 
 async function deleteImageAt(row: number, col: number) {
+  if (!currentWorkbookId) return
   const id = getOrderId(row)
   if (!id) return
   grid.removeCellImage(row, col)
   try {
-    await deleteImage(id, col)
+    await deleteImage(currentWorkbookId, id, col)
   } catch (error) {
     handleApiError(error, 'Falha ao remover foto')
   }
@@ -425,6 +415,7 @@ function bindSearch() {
 }
 
 async function loadFile(file: File) {
+  if (!currentWorkbookId) return
   setStatusText('Lendo arquivo...')
   try {
     const parsed = await parseXlsx(file, {
@@ -440,9 +431,6 @@ async function loadFile(file: File) {
     setStatusText('Enviando para o servidor...')
     const sheet = parsed.sheets[parsed.sheetOrder[0]]
 
-    // For each row that has an image as Blob (new from xlsx), we need to upload to server.
-    // For rows that re-use existing images (from previous workbook), they're already on server.
-    // To distinguish: server-fetched images have `url`. New ones have `blob` (or both).
     const blobImages: Array<{ row: number; col: number; blob: Blob; fileName: string }> = []
     for (const [key, img] of Object.entries(sheet.images)) {
       const [r, c] = key.split(':').map(Number)
@@ -451,7 +439,6 @@ async function loadFile(file: File) {
       }
     }
 
-    // Build server-friendly payload: orders array
     const orders = sheet.rows.map((row, idx) => ({
       id: String(row[ID_COL] ?? '').trim() || `order-${idx}-${Date.now()}`,
       row,
@@ -464,22 +451,29 @@ async function loadFile(file: File) {
       sheetDate: sheet.rowDates?.[idx] ?? '',
     }))
 
-    const result = await replaceWorkbook({ orders, columnWidths: sheet.columnWidths })
+    const result = await replaceWorkbook(currentWorkbookId, {
+      orders,
+      columnWidths: sheet.columnWidths,
+    })
     serverUpdatedAt = result.updatedAt
 
-    // Upload images extracted from XLSX
     for (const item of blobImages) {
       const orderId = orders[item.row]?.id
       if (!orderId) continue
       try {
         const jpeg = await blobToJpeg(item.blob)
-        await uploadImage(orderId, item.col, jpeg, item.fileName.replace(/\.[^.]+$/, '') + '.jpg')
+        await uploadImage(
+          currentWorkbookId,
+          orderId,
+          item.col,
+          jpeg,
+          item.fileName.replace(/\.[^.]+$/, '') + '.jpg',
+        )
       } catch (error) {
         console.warn('Falha ao enviar imagem do XLSX:', error)
       }
     }
 
-    // Now refetch from server to get URLs for images
     await refreshFromServer({ force: true })
     setStatusText(`Importado · ${result.count} pedidos`)
   } catch (error) {
@@ -537,79 +531,25 @@ function bindLogout() {
   })
 }
 
-function openConfirmDialog(opts: {
-  title: string
-  body: string
-  confirmLabel: string
-  onConfirm: () => Promise<void> | void
-}) {
-  const overlay = document.createElement('div')
-  overlay.className = 'modal-overlay'
-  overlay.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true">
-      <div class="modal-title">${opts.title}</div>
-      <div class="modal-body">${opts.body}</div>
-      <div class="modal-actions">
-        <button type="button" class="btn modal-cancel">Cancelar</button>
-        <button type="button" class="btn btn-danger modal-confirm">${opts.confirmLabel}</button>
-      </div>
-    </div>
-  `
-  document.body.appendChild(overlay)
-  const close = () => overlay.remove()
-  overlay.addEventListener('click', (event) => {
-    if (event.target === overlay) close()
-  })
-  overlay.querySelector('.modal-cancel')!.addEventListener('click', close)
-  const confirmBtn = overlay.querySelector<HTMLButtonElement>('.modal-confirm')!
-  confirmBtn.addEventListener('click', async () => {
-    confirmBtn.disabled = true
-    try {
-      await opts.onConfirm()
-    } finally {
-      close()
-    }
-  })
-  const onKey = (event: KeyboardEvent) => {
-    if (event.key === 'Escape') {
-      close()
-      document.removeEventListener('keydown', onKey)
-    }
-  }
-  document.addEventListener('keydown', onKey)
-  confirmBtn.focus()
-}
-
-function bindResetButton() {
-  el<HTMLButtonElement>('#reset-btn').addEventListener('click', () => {
-    openConfirmDialog({
-      title: 'Zerar planilha?',
-      body:
-        'Isso vai apagar <strong>todos os pedidos</strong>, incluindo etiquetas, fotos e edições manuais. Esta ação não pode ser desfeita.',
-      confirmLabel: 'Zerar',
-      onConfirm: async () => {
-        setStatusText('Zerando planilha...')
-        try {
-          const result = await replaceWorkbook({ orders: [], columnWidths: {} })
-          serverUpdatedAt = result.updatedAt
-          await refreshFromServer({ force: true })
-          setStatusText('Planilha zerada')
-        } catch (error) {
-          handleApiError(error, 'Falha ao zerar planilha')
-        }
-      },
-    })
+function bindBackButton() {
+  el<HTMLButtonElement>('#back-btn').addEventListener('click', () => {
+    leaveWorkbook()
+    showHome()
   })
 }
 
 async function refreshFromServer(options: { force?: boolean } = {}): Promise<void> {
+  if (!currentWorkbookId) return
   try {
-    const response = await fetchWorkbook(options.force ? undefined : serverUpdatedAt || undefined)
+    const response = await fetchWorkbook(
+      currentWorkbookId,
+      options.force ? undefined : serverUpdatedAt || undefined,
+    )
     if (response.unchanged) {
       serverUpdatedAt = response.updatedAt
       return
     }
-    workbook = serverWorkbookToLocal(response)
+    workbook = serverWorkbookToLocal(currentWorkbookId, response)
     grid.setWorkbook(workbook)
     updateStatusCounts()
     setFilename(workbook.name)
@@ -624,11 +564,18 @@ function startPolling() {
   pollTimer = window.setInterval(() => void refreshFromServer(), POLL_INTERVAL_MS)
 }
 
+function stopPolling() {
+  if (pollTimer) {
+    window.clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
 function handleApiError(error: unknown, fallback?: string) {
   if (error instanceof AuthRequiredError) {
-    if (pollTimer) window.clearInterval(pollTimer)
+    stopPolling()
     showLoginScreen(() => {
-      void bootstrap()
+      void init()
     })
     return
   }
@@ -636,7 +583,17 @@ function handleApiError(error: unknown, fallback?: string) {
   console.error(error)
 }
 
-async function bootstrap() {
+function leaveWorkbook() {
+  stopPolling()
+  workbook = null
+  currentWorkbookId = null
+  serverUpdatedAt = 0
+}
+
+async function enterWorkbook(workbookId: string) {
+  currentWorkbookId = workbookId
+  serverUpdatedAt = 0
+  workbook = null
   buildShell()
   grid = new GridView(el<HTMLDivElement>('#sheet-root'), {
     onSelectCell: handleSelect,
@@ -654,22 +611,42 @@ async function bootstrap() {
   bindEtiquetas()
   bindClipboardPaste()
   bindLogout()
-  bindResetButton()
+  bindBackButton()
   await refreshFromServer({ force: true })
   startPolling()
 }
 
+function showHome() {
+  const app = el<HTMLDivElement>('#app')
+  showWorkbooksList({
+    root: app,
+    onOpen: (id) => void enterWorkbook(id),
+    onAuthLost: () => {
+      showLoginScreen(() => {
+        void init()
+      })
+    },
+    onLogout: async () => {
+      try {
+        await logout()
+      } catch {
+        // ignore
+      }
+      location.reload()
+    },
+  })
+}
+
 async function init() {
-  // ensure FIXED_HEADERS imported (referenced for forwards-compat)
   void FIXED_HEADERS
   const ok = await checkAuth()
   if (!ok) {
     showLoginScreen(() => {
-      void bootstrap()
+      void init()
     })
     return
   }
-  await bootstrap()
+  showHome()
 }
 
 void init()

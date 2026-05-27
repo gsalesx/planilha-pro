@@ -1,6 +1,7 @@
-import Database from 'better-sqlite3'
-import { mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import path from 'node:path'
+
+import Database from 'better-sqlite3'
 
 import { env } from './env.js'
 
@@ -13,6 +14,27 @@ export const db = new Database(dbPath)
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
 
+// Base schema — sempre cria o que ainda não existe.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS workbooks (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    column_widths TEXT NOT NULL DEFAULT '{}'
+  );
+  CREATE INDEX IF NOT EXISTS idx_workbooks_updated_at ON workbooks (updated_at);
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    user_agent TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_at);
+`)
+
+// Tabela legada que pode não existir mais em DBs novos. Garantir antes de migrar.
 db.exec(`
   CREATE TABLE IF NOT EXISTS workbook_meta (
     id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -20,8 +42,6 @@ db.exec(`
     updated_at INTEGER NOT NULL DEFAULT 0,
     column_widths TEXT NOT NULL DEFAULT '{}'
   );
-
-  INSERT OR IGNORE INTO workbook_meta (id, name, updated_at) VALUES (1, 'Relatórios', 0);
 
   CREATE TABLE IF NOT EXISTS orders (
     id TEXT PRIMARY KEY,
@@ -32,8 +52,6 @@ db.exec(`
     position INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
-  CREATE INDEX IF NOT EXISTS idx_orders_position ON orders (position);
-  CREATE INDEX IF NOT EXISTS idx_orders_updated_at ON orders (updated_at);
 
   CREATE TABLE IF NOT EXISTS images (
     order_id TEXT NOT NULL,
@@ -45,21 +63,102 @@ db.exec(`
     PRIMARY KEY (order_id, col),
     FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
   );
-
-  CREATE TABLE IF NOT EXISTS sessions (
-    token TEXT PRIMARY KEY,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL,
-    user_agent TEXT
-  );
-  CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_at);
 `)
 
-// Migration: garante sheet_date em DBs antigos
-const orderCols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>
-if (!orderCols.some((c) => c.name === 'sheet_date')) {
-  db.exec("ALTER TABLE orders ADD COLUMN sheet_date TEXT NOT NULL DEFAULT ''")
-  db.exec('CREATE INDEX IF NOT EXISTS idx_orders_sheet_date ON orders (sheet_date)')
+// Migration legada (single-workbook): garante sheet_date em DBs antigos.
+{
+  const cols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>
+  if (!cols.some((c) => c.name === 'sheet_date')) {
+    db.exec("ALTER TABLE orders ADD COLUMN sheet_date TEXT NOT NULL DEFAULT ''")
+  }
+}
+
+// Multi-workbook migration: idempotente, roda quando orders ainda não tem workbook_id.
+{
+  const cols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>
+  const hasWorkbookId = cols.some((c) => c.name === 'workbook_id')
+  if (!hasWorkbookId) {
+    if (existsSync(dbPath)) {
+      const backupPath = `${dbPath}.pre-multiworkbook.bak`
+      if (!existsSync(backupPath)) {
+        copyFileSync(dbPath, backupPath)
+      }
+    }
+
+    const migrate = db.transaction(() => {
+      // 1) Seed workbook 'default' a partir do workbook_meta legado, se ainda não houver.
+      const meta = db
+        .prepare(
+          'SELECT name, updated_at, column_widths FROM workbook_meta WHERE id = 1',
+        )
+        .get() as { name: string; updated_at: number; column_widths: string } | undefined
+      const wbCount = (db.prepare('SELECT COUNT(*) AS c FROM workbooks').get() as { c: number }).c
+      if (wbCount === 0) {
+        const now = Date.now()
+        db.prepare(
+          'INSERT INTO workbooks (id, name, created_at, updated_at, column_widths) VALUES (?, ?, ?, ?, ?)',
+        ).run(
+          'default',
+          meta?.name ?? 'Relatórios',
+          meta?.updated_at ?? now,
+          meta?.updated_at ?? now,
+          meta?.column_widths ?? '{}',
+        )
+      }
+
+      // 2) Recriar `orders` com workbook_id + PK composta.
+      db.exec(`
+        CREATE TABLE orders_new (
+          workbook_id TEXT NOT NULL,
+          id TEXT NOT NULL,
+          row_json TEXT NOT NULL,
+          styles_json TEXT NOT NULL DEFAULT '{}',
+          disappeared INTEGER NOT NULL DEFAULT 0,
+          sheet_date TEXT NOT NULL DEFAULT '',
+          position INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (workbook_id, id),
+          FOREIGN KEY (workbook_id) REFERENCES workbooks(id) ON DELETE CASCADE
+        );
+      `)
+      db.prepare(
+        `INSERT INTO orders_new (workbook_id, id, row_json, styles_json, disappeared, sheet_date, position, updated_at)
+         SELECT 'default', id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders`,
+      ).run()
+      db.exec('DROP TABLE orders')
+      db.exec('ALTER TABLE orders_new RENAME TO orders')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_orders_workbook_position ON orders (workbook_id, position)')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_orders_workbook_updated_at ON orders (workbook_id, updated_at)')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_orders_workbook_sheet_date ON orders (workbook_id, sheet_date)')
+
+      // 3) Recriar `images` com workbook_id + PK e FK compostas.
+      db.exec(`
+        CREATE TABLE images_new (
+          workbook_id TEXT NOT NULL,
+          order_id TEXT NOT NULL,
+          col INTEGER NOT NULL,
+          file_name TEXT NOT NULL,
+          mime TEXT NOT NULL DEFAULT 'image/jpeg',
+          storage_path TEXT NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (workbook_id, order_id, col),
+          FOREIGN KEY (workbook_id, order_id) REFERENCES orders(workbook_id, id) ON DELETE CASCADE
+        );
+      `)
+      db.prepare(
+        `INSERT INTO images_new (workbook_id, order_id, col, file_name, mime, storage_path, updated_at)
+         SELECT 'default', order_id, col, file_name, mime, storage_path, updated_at FROM images`,
+      ).run()
+      db.exec('DROP TABLE images')
+      db.exec('ALTER TABLE images_new RENAME TO images')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_images_workbook_order ON images (workbook_id, order_id)')
+
+      // 4) workbook_meta vira história — mantemos a tabela criada acima por compat,
+      //    mas não escrevemos mais nela. As novas rotas usam `workbooks`.
+    })
+    migrate()
+    console.log('[migration] multi-workbook schema aplicada com sucesso')
+  }
 }
 
 export function nowMs(): number {

@@ -11,6 +11,7 @@ import { env, isProd } from './env.js'
 import imagesRouter from './routes/images.js'
 import loginRouter from './routes/login.js'
 import workbookRouter from './routes/workbook.js'
+import workbooksRouter from './routes/workbooks.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -29,6 +30,7 @@ app.use(cookieParser())
 app.use(express.json({ limit: '10mb' }))
 
 app.use('/api', loginRouter)
+app.use('/api', workbooksRouter)
 app.use('/api', workbookRouter)
 app.use('/api', imagesRouter)
 

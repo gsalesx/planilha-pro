@@ -23,31 +23,35 @@ interface ImageRow {
   mime: string
 }
 
-interface MetaRow {
+interface WorkbookRow {
+  id: string
   name: string
   updated_at: number
   column_widths: string
 }
 
-function getMeta(): MetaRow {
+function getWorkbook(id: string): WorkbookRow | undefined {
   return db
-    .prepare('SELECT name, updated_at, column_widths FROM workbook_meta WHERE id = 1')
-    .get() as MetaRow
+    .prepare('SELECT id, name, updated_at, column_widths FROM workbooks WHERE id = ?')
+    .get(id) as WorkbookRow | undefined
 }
 
-function buildWorkbookPayload(since?: number) {
-  const meta = getMeta()
-  if (since != null && meta.updated_at <= since) {
-    return { unchanged: true, updatedAt: meta.updated_at }
+function buildWorkbookPayload(workbookId: string, since?: number) {
+  const wb = getWorkbook(workbookId)
+  if (!wb) return null
+  if (since != null && wb.updated_at <= since) {
+    return { unchanged: true as const, updatedAt: wb.updated_at }
   }
 
   const orders = db
     .prepare(
-      'SELECT id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders ORDER BY position ASC',
+      'SELECT id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders WHERE workbook_id = ? ORDER BY position ASC',
     )
-    .all() as OrderRow[]
+    .all(workbookId) as OrderRow[]
 
-  const images = db.prepare('SELECT order_id, col, file_name, mime FROM images').all() as ImageRow[]
+  const images = db
+    .prepare('SELECT order_id, col, file_name, mime FROM images WHERE workbook_id = ?')
+    .all(workbookId) as ImageRow[]
   const imagesByOrder = new Map<string, ImageRow[]>()
   for (const img of images) {
     const list = imagesByOrder.get(img.order_id) ?? []
@@ -56,10 +60,10 @@ function buildWorkbookPayload(since?: number) {
   }
 
   return {
-    unchanged: false,
-    updatedAt: meta.updated_at,
-    name: meta.name,
-    columnWidths: JSON.parse(meta.column_widths || '{}') as Record<string, number>,
+    unchanged: false as const,
+    updatedAt: wb.updated_at,
+    name: wb.name,
+    columnWidths: JSON.parse(wb.column_widths || '{}') as Record<string, number>,
     orders: orders.map((o) => ({
       id: o.id,
       row: JSON.parse(o.row_json),
@@ -70,7 +74,7 @@ function buildWorkbookPayload(since?: number) {
       updatedAt: o.updated_at,
       images: (imagesByOrder.get(o.id) ?? []).map((i) => ({
         col: i.col,
-        url: `/api/images/${encodeURIComponent(o.id)}/${i.col}`,
+        url: `/api/workbooks/${encodeURIComponent(workbookId)}/images/${encodeURIComponent(o.id)}/${i.col}`,
         fileName: i.file_name,
         mime: i.mime,
       })),
@@ -78,12 +82,22 @@ function buildWorkbookPayload(since?: number) {
   }
 }
 
-router.get('/workbook', requireAuth, (req, res) => {
+router.get('/workbooks/:workbookId/data', requireAuth, (req, res) => {
   const since = req.query.since ? Number(req.query.since) : undefined
-  res.json(buildWorkbookPayload(since))
+  const payload = buildWorkbookPayload(req.params.workbookId, since)
+  if (!payload) {
+    res.status(404).json({ error: 'Planilha não encontrada' })
+    return
+  }
+  res.json(payload)
 })
 
-router.post('/workbook/replace', requireAuth, (req, res) => {
+router.post('/workbooks/:workbookId/replace', requireAuth, (req, res) => {
+  const workbookId = req.params.workbookId
+  if (!getWorkbook(workbookId)) {
+    res.status(404).json({ error: 'Planilha não encontrada' })
+    return
+  }
   const { orders, columnWidths } = req.body as {
     orders?: Array<{
       id: string
@@ -102,12 +116,13 @@ router.post('/workbook/replace', requireAuth, (req, res) => {
 
   const now = nowMs()
   const txn = db.transaction(() => {
-    db.prepare('DELETE FROM orders').run()
+    db.prepare('DELETE FROM orders WHERE workbook_id = ?').run(workbookId)
     const insertOrder = db.prepare(
-      'INSERT INTO orders (id, row_json, styles_json, disappeared, sheet_date, position, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO orders (workbook_id, id, row_json, styles_json, disappeared, sheet_date, position, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     )
     orders.forEach((order, position) => {
       insertOrder.run(
+        workbookId,
         order.id,
         JSON.stringify(order.row ?? []),
         JSON.stringify(order.styles ?? {}),
@@ -117,9 +132,10 @@ router.post('/workbook/replace', requireAuth, (req, res) => {
         now,
       )
     })
-    db.prepare('UPDATE workbook_meta SET updated_at = ?, column_widths = ? WHERE id = 1').run(
+    db.prepare('UPDATE workbooks SET updated_at = ?, column_widths = ? WHERE id = ?').run(
       now,
       JSON.stringify(columnWidths ?? {}),
+      workbookId,
     )
   })
   txn()
@@ -127,9 +143,12 @@ router.post('/workbook/replace', requireAuth, (req, res) => {
   res.json({ ok: true, updatedAt: now, count: orders.length })
 })
 
-router.patch('/orders/:id', requireAuth, (req, res) => {
+router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
+  const workbookId = req.params.workbookId
   const id = req.params.id
-  const existing = db.prepare('SELECT id FROM orders WHERE id = ?').get(id) as { id: string } | undefined
+  const existing = db
+    .prepare('SELECT id FROM orders WHERE workbook_id = ? AND id = ?')
+    .get(workbookId, id) as { id: string } | undefined
   if (!existing) {
     res.status(404).json({ error: 'Pedido não encontrado' })
     return
@@ -159,10 +178,12 @@ router.patch('/orders/:id', requireAuth, (req, res) => {
   }
   const now = nowMs()
   sets.push('updated_at = ?')
-  params.push(now, id)
+  params.push(now, workbookId, id)
   const txn = db.transaction(() => {
-    db.prepare(`UPDATE orders SET ${sets.join(', ')} WHERE id = ?`).run(...params)
-    db.prepare('UPDATE workbook_meta SET updated_at = ? WHERE id = 1').run(now)
+    db.prepare(
+      `UPDATE orders SET ${sets.join(', ')} WHERE workbook_id = ? AND id = ?`,
+    ).run(...params)
+    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
   })
   txn()
   res.json({ ok: true, updatedAt: now })

@@ -336,6 +336,156 @@ button {
   border-color: #b91c1c;
 }
 
+.btn-back {
+  background: rgba(255, 255, 255, 0.18);
+  font-weight: 500;
+}
+.btn-back:hover {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+/* ============================================================
+   Workbooks list (home screen)
+   ============================================================ */
+.workbooks-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: #f1f5f9;
+}
+.workbooks-page .app-header {
+  flex-shrink: 0;
+}
+.workbooks-header-spacer {
+  flex: 1;
+}
+.workbooks-main {
+  flex: 1;
+  padding: 28px 32px 40px;
+  max-width: 1280px;
+  width: 100%;
+  margin: 0 auto;
+}
+.workbooks-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #0f172a;
+  margin: 0 0 18px;
+}
+.workbooks-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+.workbooks-loading,
+.workbooks-empty {
+  grid-column: 1 / -1;
+  background: #fff;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  padding: 40px;
+  text-align: center;
+  color: #475569;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+.workbook-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 16px 12px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: box-shadow 120ms ease, border-color 120ms ease;
+}
+.workbook-card:hover {
+  border-color: #94a3b8;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+.workbook-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.workbook-card-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f172a;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workbook-card-count {
+  font-size: 12px;
+  color: #64748b;
+  white-space: nowrap;
+}
+.workbook-card-meta {
+  font-size: 12px;
+  color: #64748b;
+  margin: 0;
+}
+.workbook-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.workbook-card-actions .btn {
+  background: #e2e8f0;
+  color: #1f2937;
+  border-color: #cbd5e1;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.workbook-card-actions .btn:hover {
+  background: #cbd5e1;
+}
+.workbook-card-actions .btn-primary {
+  background: #217346;
+  color: #fff;
+  border-color: #217346;
+}
+.workbook-card-actions .btn-primary:hover {
+  background: #1a5a37;
+  border-color: #1a5a37;
+}
+.workbook-card-actions .btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+}
+.workbook-card-actions .btn-danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
+/* prompt dialog */
+.modal-prompt-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: #334155;
+}
+.modal-prompt-input {
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  padding: 8px 10px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 120ms ease;
+}
+.modal-prompt-input:focus {
+  border-color: #2563eb;
+}
+
 /* ============================================================
    Modal (confirmation dialog)
    ============================================================ */
