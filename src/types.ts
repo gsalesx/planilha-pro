@@ -39,6 +39,8 @@ export interface SheetData {
   name: string
   headers: string[]
   rows: CellValue[][]
+  /** sheet name (date) of origin, indexed by row */
+  rowDates?: string[]
   /** keyed by `${rowIndex}:${colIndex}` */
   images: Record<string, CellImage>
   /** keyed by `${rowIndex}:${colIndex}` */

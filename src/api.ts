@@ -7,6 +7,7 @@ export interface ServerOrder {
   row: CellValue[]
   styles: Record<string, CellStyle>
   disappeared: boolean
+  sheetDate?: string
   position: number
   updatedAt: number
   images: Array<{ col: number; url: string; fileName: string; mime: string }>
@@ -82,6 +83,7 @@ export async function replaceWorkbook(payload: {
     row: CellValue[]
     styles?: Record<string, CellStyle>
     disappeared?: boolean
+    sheetDate?: string
   }>
   columnWidths?: Record<number, number>
 }): Promise<{ updatedAt: number; count: number }> {
@@ -129,12 +131,14 @@ export async function deleteImage(orderId: string, col: number): Promise<{ updat
 /** Converte payload do servidor pra WorkbookData (formato que a grid usa) */
 export function serverWorkbookToLocal(server: ServerWorkbook): WorkbookData {
   const rows: CellValue[][] = []
+  const rowDates: string[] = []
   const images: Record<string, { url: string; fileName: string }> = {}
   const cellStyles: Record<string, CellStyle> = {}
   const rowFlags: Record<number, { disappeared?: boolean }> = {}
 
   server.orders.forEach((order, idx) => {
     rows.push(order.row)
+    rowDates.push(order.sheetDate ?? '')
     for (const [colKey, style] of Object.entries(order.styles ?? {})) {
       cellStyles[`${idx}:${colKey}`] = style
     }
@@ -161,6 +165,7 @@ export function serverWorkbookToLocal(server: ServerWorkbook): WorkbookData {
         name: server.name,
         headers: FIXED_HEADERS,
         rows,
+        rowDates,
         images,
         cellStyles,
         rowFlags,

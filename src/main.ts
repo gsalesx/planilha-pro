@@ -460,6 +460,7 @@ async function loadFile(file: File) {
           .map(([k, v]) => [k.split(':')[1], v]),
       ),
       disappeared: !!sheet.rowFlags?.[idx]?.disappeared,
+      sheetDate: sheet.rowDates?.[idx] ?? '',
     }))
 
     const result = await replaceWorkbook({ orders, columnWidths: sheet.columnWidths })

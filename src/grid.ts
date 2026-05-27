@@ -82,6 +82,7 @@ export class GridView {
   private filters = new Map<string, Map<number, Set<string>>>()
   private sorts = new Map<string, SortState>()
   private visibleOrder: number[] = []
+  private collapsedDates = new Set<string>()
 
   constructor(root: HTMLElement, callbacks: GridCallbacks) {
     this.root = root
@@ -396,25 +397,81 @@ export class GridView {
   private buildBody(sheet: SheetData, columnCount: number, _rowCount: number): HTMLTableSectionElement {
     const tbody = document.createElement('tbody')
     const selectedRows = this.selection ? new Set(this.getSelectedRows()) : new Set<number>()
+    const dates = sheet.rowDates ?? []
+    const hasGroups = dates.some((d) => d && d.length > 0)
 
-    for (const r of this.visibleOrder) {
-      const tr = document.createElement('tr')
-      tr.style.height = `${DEFAULT_ROW_HEIGHT}px`
-      if (sheet.rowFlags?.[r]?.disappeared) tr.classList.add('row-disappeared')
-
-      const rowNum = document.createElement('th')
-      rowNum.className = 'row-num'
-      rowNum.textContent = String(r + 1)
-      if (selectedRows.has(r)) rowNum.classList.add('is-active')
-      tr.appendChild(rowNum)
-
-      for (let c = 0; c < columnCount; c++) {
-        tr.appendChild(this.buildCell(sheet, r, c))
+    if (!hasGroups) {
+      for (const r of this.visibleOrder) {
+        tbody.appendChild(this.buildDataRow(sheet, r, columnCount, selectedRows))
       }
-      tbody.appendChild(tr)
+      return tbody
+    }
+
+    // Conta total por data (sobre visibleOrder, pra refletir filtros aplicados)
+    const groupCounts = new Map<string, number>()
+    for (const r of this.visibleOrder) {
+      const d = dates[r] ?? ''
+      groupCounts.set(d, (groupCounts.get(d) ?? 0) + 1)
+    }
+
+    let lastDate: string | null = null
+    for (const r of this.visibleOrder) {
+      const date = dates[r] ?? ''
+      if (date !== lastDate) {
+        tbody.appendChild(this.buildDateGroupHeader(date, groupCounts.get(date) ?? 0, columnCount))
+        lastDate = date
+      }
+      if (this.collapsedDates.has(date)) continue
+      tbody.appendChild(this.buildDataRow(sheet, r, columnCount, selectedRows))
     }
 
     return tbody
+  }
+
+  private buildDateGroupHeader(date: string, count: number, columnCount: number): HTMLTableRowElement {
+    const tr = document.createElement('tr')
+    tr.className = 'date-group-header'
+    const collapsed = this.collapsedDates.has(date)
+    if (collapsed) tr.classList.add('is-collapsed')
+
+    const cell = document.createElement('td')
+    cell.colSpan = columnCount + 1
+    cell.className = 'date-group-cell'
+    const labelDate = date || 'Sem data'
+    cell.innerHTML = `
+      <span class="date-group-toggle">${collapsed ? '▸' : '▾'}</span>
+      <span class="date-group-label">${labelDate}</span>
+      <span class="date-group-count">${count} pedido${count === 1 ? '' : 's'}</span>
+    `
+    cell.addEventListener('click', () => {
+      if (this.collapsedDates.has(date)) this.collapsedDates.delete(date)
+      else this.collapsedDates.add(date)
+      this.render()
+    })
+    tr.appendChild(cell)
+    return tr
+  }
+
+  private buildDataRow(
+    sheet: SheetData,
+    r: number,
+    columnCount: number,
+    selectedRows: Set<number>,
+  ): HTMLTableRowElement {
+    const tr = document.createElement('tr')
+    tr.style.height = `${DEFAULT_ROW_HEIGHT}px`
+    if (sheet.rowFlags?.[r]?.disappeared) tr.classList.add('row-disappeared')
+
+    const rowNum = document.createElement('th')
+    rowNum.className = 'row-num'
+    rowNum.textContent = String(r + 1)
+    if (selectedRows.has(r)) rowNum.classList.add('is-active')
+    tr.appendChild(rowNum)
+
+    for (let c = 0; c < columnCount; c++) {
+      tr.appendChild(this.buildCell(sheet, r, c))
+    }
+    return tr
   }
 
   private buildCell(sheet: SheetData, row: number, col: number): HTMLTableCellElement {
@@ -618,9 +675,6 @@ export class GridView {
     })
     if (!this.selection) return
 
-    const tbody = this.root.querySelector('tbody')
-    if (!tbody) return
-
     const anchorPos = this.visibleOrder.indexOf(this.selection.anchorRow)
     const activePos = this.visibleOrder.indexOf(this.selection.activeRow)
     if (anchorPos < 0 || activePos < 0) return
@@ -630,14 +684,18 @@ export class GridView {
     const col = this.selection.col
 
     for (let pos = lo; pos <= hi; pos++) {
-      const tr = tbody.children[pos] as HTMLElement | undefined
-      if (!tr) continue
-      tr.children[0]?.classList.add('is-active') // row-num
-      tr.children[col + 1]?.classList.add('is-selected') // +1 = skip row-num
+      const r = this.visibleOrder[pos]
+      const cell = this.root.querySelector<HTMLElement>(`td[data-row="${r}"][data-col="${col}"]`)
+      if (cell) {
+        cell.classList.add('is-selected')
+        const tr = cell.parentElement
+        const rowNum = tr?.querySelector<HTMLElement>('th.row-num')
+        rowNum?.classList.add('is-active')
+      }
     }
 
     const firstHeaderRow = this.root.querySelector('thead tr:first-child')
-    firstHeaderRow?.children[col + 1]?.classList.add('is-active') // +1 = skip corner
+    firstHeaderRow?.children[col + 1]?.classList.add('is-active')
   }
 
   private openStatusPopover(row: number, col: number) {

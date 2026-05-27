@@ -28,11 +28,13 @@ db.exec(`
     row_json TEXT NOT NULL,
     styles_json TEXT NOT NULL DEFAULT '{}',
     disappeared INTEGER NOT NULL DEFAULT 0,
+    sheet_date TEXT NOT NULL DEFAULT '',
     position INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_orders_position ON orders (position);
   CREATE INDEX IF NOT EXISTS idx_orders_updated_at ON orders (updated_at);
+  CREATE INDEX IF NOT EXISTS idx_orders_sheet_date ON orders (sheet_date);
 
   CREATE TABLE IF NOT EXISTS images (
     order_id TEXT NOT NULL,
@@ -53,6 +55,13 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_at);
 `)
+
+// Migration: garante sheet_date em DBs antigos
+const orderCols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>
+if (!orderCols.some((c) => c.name === 'sheet_date')) {
+  db.exec("ALTER TABLE orders ADD COLUMN sheet_date TEXT NOT NULL DEFAULT ''")
+  db.exec('CREATE INDEX IF NOT EXISTS idx_orders_sheet_date ON orders (sheet_date)')
+}
 
 export function nowMs(): number {
   return Date.now()

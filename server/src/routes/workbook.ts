@@ -11,6 +11,7 @@ interface OrderRow {
   row_json: string
   styles_json: string
   disappeared: number
+  sheet_date: string
   position: number
   updated_at: number
 }
@@ -42,7 +43,7 @@ function buildWorkbookPayload(since?: number) {
 
   const orders = db
     .prepare(
-      'SELECT id, row_json, styles_json, disappeared, position, updated_at FROM orders ORDER BY position ASC',
+      'SELECT id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders ORDER BY position ASC',
     )
     .all() as OrderRow[]
 
@@ -64,6 +65,7 @@ function buildWorkbookPayload(since?: number) {
       row: JSON.parse(o.row_json),
       styles: JSON.parse(o.styles_json || '{}'),
       disappeared: o.disappeared === 1,
+      sheetDate: o.sheet_date || '',
       position: o.position,
       updatedAt: o.updated_at,
       images: (imagesByOrder.get(o.id) ?? []).map((i) => ({
@@ -88,6 +90,7 @@ router.post('/workbook/replace', requireAuth, (req, res) => {
       row: unknown[]
       styles?: Record<string, { bg?: string }>
       disappeared?: boolean
+      sheetDate?: string
     }>
     columnWidths?: Record<string, number>
   }
@@ -100,9 +103,8 @@ router.post('/workbook/replace', requireAuth, (req, res) => {
   const now = nowMs()
   const txn = db.transaction(() => {
     db.prepare('DELETE FROM orders').run()
-    // images com order_id que não existe mais serão removidas via FK CASCADE
     const insertOrder = db.prepare(
-      'INSERT INTO orders (id, row_json, styles_json, disappeared, position, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT INTO orders (id, row_json, styles_json, disappeared, sheet_date, position, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     )
     orders.forEach((order, position) => {
       insertOrder.run(
@@ -110,6 +112,7 @@ router.post('/workbook/replace', requireAuth, (req, res) => {
         JSON.stringify(order.row ?? []),
         JSON.stringify(order.styles ?? {}),
         order.disappeared ? 1 : 0,
+        order.sheetDate ?? '',
         position,
         now,
       )

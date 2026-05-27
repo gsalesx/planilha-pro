@@ -197,6 +197,7 @@ function buildHeaderColumnMap(sheetHeaders: string[]): number[] {
 interface NewPedido {
   id: string
   row: CellValue[]
+  sheetDate: string
   images: Map<number, CellImage>
 }
 
@@ -265,7 +266,7 @@ export async function parseXlsx(file: File, options: ParseOptions = {}): Promise
       }
 
       if (hasValue && id) {
-        newPedidos.push({ id, row, images })
+        newPedidos.push({ id, row, sheetDate: sheetName, images })
       }
       bodyRowIndex++
     }
@@ -280,6 +281,7 @@ export async function parseXlsx(file: File, options: ParseOptions = {}): Promise
   // build existing index by ID
   const existingById = new Map<string, {
     row: CellValue[]
+    sheetDate: string
     styles: Map<number, CellStyle>
     images: Map<number, CellImage>
   }>()
@@ -299,13 +301,19 @@ export async function parseXlsx(file: File, options: ParseOptions = {}): Promise
           const [rr, cc] = key.split(':').map(Number)
           if (rr === r) images.set(cc, val)
         }
-        existingById.set(id, { row: sheet.rows[r], styles, images })
+        existingById.set(id, {
+          row: sheet.rows[r],
+          sheetDate: sheet.rowDates?.[r] ?? '',
+          styles,
+          images,
+        })
       }
     }
   }
 
   // merge
   const finalRows: CellValue[][] = []
+  const finalRowDates: string[] = []
   const finalImages: Record<string, CellImage> = {}
   const finalStyles: Record<string, CellStyle> = {}
   const finalFlags: Record<number, RowFlags> = {}
@@ -320,6 +328,7 @@ export async function parseXlsx(file: File, options: ParseOptions = {}): Promise
         row[STATUS_COL] = priorStatus
       }
       finalRows.push(row)
+      finalRowDates.push(pedido.sheetDate) // data nova vence
       for (const [col, style] of prior.styles) {
         finalStyles[`${idx}:${col}`] = style
       }
@@ -328,6 +337,7 @@ export async function parseXlsx(file: File, options: ParseOptions = {}): Promise
       }
     } else {
       finalRows.push(row)
+      finalRowDates.push(pedido.sheetDate)
       for (const [col, img] of pedido.images) {
         finalImages[`${idx}:${col}`] = img
       }
@@ -338,6 +348,7 @@ export async function parseXlsx(file: File, options: ParseOptions = {}): Promise
     if (newById.has(id)) continue
     const idx = finalRows.length
     finalRows.push([...prior.row])
+    finalRowDates.push(prior.sheetDate)
     finalFlags[idx] = { disappeared: true }
     for (const [col, style] of prior.styles) {
       finalStyles[`${idx}:${col}`] = style
@@ -365,6 +376,7 @@ export async function parseXlsx(file: File, options: ParseOptions = {}): Promise
     name: 'Relatórios',
     headers: FIXED_HEADERS,
     rows: finalRows,
+    rowDates: finalRowDates,
     images: finalImages,
     cellStyles: finalStyles,
     rowFlags: finalFlags,
