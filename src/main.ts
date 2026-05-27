@@ -52,6 +52,7 @@ function buildShell() {
             <input type="file" id="file-input" accept=".xlsx,.xls" hidden />
             ⟳ Atualizar Planilha
           </label>
+          <button class="btn" id="reset-btn" title="Apagar todos os pedidos">🗑 Zerar Planilha</button>
           <button class="btn" id="logout-btn" title="Sair">Sair</button>
         </div>
       </header>
@@ -536,6 +537,71 @@ function bindLogout() {
   })
 }
 
+function openConfirmDialog(opts: {
+  title: string
+  body: string
+  confirmLabel: string
+  onConfirm: () => Promise<void> | void
+}) {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-title">${opts.title}</div>
+      <div class="modal-body">${opts.body}</div>
+      <div class="modal-actions">
+        <button type="button" class="btn modal-cancel">Cancelar</button>
+        <button type="button" class="btn btn-danger modal-confirm">${opts.confirmLabel}</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(overlay)
+  const close = () => overlay.remove()
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) close()
+  })
+  overlay.querySelector('.modal-cancel')!.addEventListener('click', close)
+  const confirmBtn = overlay.querySelector<HTMLButtonElement>('.modal-confirm')!
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true
+    try {
+      await opts.onConfirm()
+    } finally {
+      close()
+    }
+  })
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      close()
+      document.removeEventListener('keydown', onKey)
+    }
+  }
+  document.addEventListener('keydown', onKey)
+  confirmBtn.focus()
+}
+
+function bindResetButton() {
+  el<HTMLButtonElement>('#reset-btn').addEventListener('click', () => {
+    openConfirmDialog({
+      title: 'Zerar planilha?',
+      body:
+        'Isso vai apagar <strong>todos os pedidos</strong>, incluindo etiquetas, fotos e edições manuais. Esta ação não pode ser desfeita.',
+      confirmLabel: 'Zerar',
+      onConfirm: async () => {
+        setStatusText('Zerando planilha...')
+        try {
+          const result = await replaceWorkbook({ orders: [], columnWidths: {} })
+          serverUpdatedAt = result.updatedAt
+          await refreshFromServer({ force: true })
+          setStatusText('Planilha zerada')
+        } catch (error) {
+          handleApiError(error, 'Falha ao zerar planilha')
+        }
+      },
+    })
+  })
+}
+
 async function refreshFromServer(options: { force?: boolean } = {}): Promise<void> {
   try {
     const response = await fetchWorkbook(options.force ? undefined : serverUpdatedAt || undefined)
@@ -588,6 +654,7 @@ async function bootstrap() {
   bindEtiquetas()
   bindClipboardPaste()
   bindLogout()
+  bindResetButton()
   await refreshFromServer({ force: true })
   startPolling()
 }

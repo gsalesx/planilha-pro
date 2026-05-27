@@ -326,6 +326,71 @@ button {
   background: #f1f5f9;
 }
 
+.btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+}
+.btn-danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
+/* ============================================================
+   Modal (confirmation dialog)
+   ============================================================ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.modal {
+  background: #fff;
+  color: #0f172a;
+  border-radius: 8px;
+  padding: 20px 22px 16px;
+  max-width: 420px;
+  width: calc(100% - 32px);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.25);
+}
+.modal-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.modal-body {
+  font-size: 14px;
+  line-height: 1.45;
+  color: #334155;
+  margin-bottom: 18px;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.modal-actions .btn {
+  background: #e2e8f0;
+  color: #1f2937;
+  border-color: #cbd5e1;
+}
+.modal-actions .btn:hover {
+  background: #cbd5e1;
+}
+.modal-actions .btn-danger {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+}
+.modal-actions .btn-danger:hover {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
 /* ============================================================
    Etiqueta bar (label colors)
    ============================================================ */
@@ -824,11 +889,11 @@ table.sheet tbody td.cell-user {
   justify-content: center;
   width: 26px;
   height: 26px;
-  border: 1px solid #cbd5e1;
-  background: #f8fafc;
+  border: 1px solid #9ca3af;
+  background: #e5e7eb;
   border-radius: 5px;
   cursor: pointer;
-  color: #475569;
+  color: #374151;
   font-size: 16px;
   flex-shrink: 0;
   opacity: 0;
@@ -838,8 +903,9 @@ table.sheet tbody tr:hover .user-cell-copy {
   opacity: 0.95;
 }
 .user-cell-copy:hover {
-  background: #dbeafe;
-  color: #1e40af;
+  background: #d1d5db;
+  color: #111827;
+  border-color: #6b7280;
 }
 .user-cell-copy.is-copied {
   background: #d1fae5;
