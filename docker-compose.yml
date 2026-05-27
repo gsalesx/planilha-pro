@@ -1,0 +1,22 @@
+services:
+  planilha-pro:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      - PORT=3030
+      - NODE_ENV=production
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - AUTH_USERNAME=${AUTH_USERNAME:?defina AUTH_USERNAME}
+      - AUTH_PASSWORD=${AUTH_PASSWORD:?defina AUTH_PASSWORD}
+      - SESSION_SECRET=${SESSION_SECRET:?defina SESSION_SECRET}
+      - SESSION_TTL_DAYS=${SESSION_TTL_DAYS:-30}
+      - DATA_DIR=/data
+    volumes:
+      - planilha-data:/data
+    ports:
+      - "${HOST_PORT:-3030}:3030"
+
+volumes:
+  planilha-data:
