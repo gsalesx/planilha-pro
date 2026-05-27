@@ -23,14 +23,14 @@ RUN npm run build
 # ----- Stage 3: runtime -----
 FROM node:22-alpine AS runtime
 WORKDIR /app
-RUN apk add --no-cache tini python3 make g++
+RUN apk add --no-cache tini libstdc++ libgcc
 
 # Production server deps (better-sqlite3 needs native build)
 COPY server/package.json server/package-lock.json* ./
-RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
-
-# Remove compilers after install (image stays small)
-RUN apk del python3 make g++
+RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+  && npm install --omit=dev --no-audit --no-fund \
+  && npm cache clean --force \
+  && apk del .build-deps
 
 # Compiled server
 COPY --from=server-build /app/server/dist ./dist
