@@ -34,7 +34,6 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_orders_position ON orders (position);
   CREATE INDEX IF NOT EXISTS idx_orders_updated_at ON orders (updated_at);
-  CREATE INDEX IF NOT EXISTS idx_orders_sheet_date ON orders (sheet_date);
 
   CREATE TABLE IF NOT EXISTS images (
     order_id TEXT NOT NULL,
