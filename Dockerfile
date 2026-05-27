@@ -8,7 +8,6 @@ RUN npm install --no-audit --no-fund
 COPY index.html ./
 COPY vite.config.ts tsconfig.json tailwind.config.js postcss.config.js ./
 COPY src ./src
-COPY public ./public
 RUN npx vite build
 
 # ----- Stage 2: build server (Express + SQLite) -----
