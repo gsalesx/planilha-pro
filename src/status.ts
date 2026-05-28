@@ -4,7 +4,7 @@ export const STATUS_COLUMN_INDEX = 5 // coluna F (Status)
 
 export const STATUS_OPTIONS: StatusOption[] = [
   { label: '', color: '#ffffff' },
-  { label: 'Pronto', color: '#c084fc' },
+  { label: 'Pronto', color: '#34d399' },
   { label: 'Separado', color: '#93c5fd' },
   { label: 'Em produção', color: '#5eead4' },
   { label: 'Manual', color: '#fdba74' },
