@@ -203,16 +203,18 @@ async function handleCellChange(changes: ChangeBatch) {
   }
   grid.render()
 
-  for (const { row } of byRow.values()) {
-    const id = getOrderId(row)
-    if (!id) continue
-    try {
-      const result = await patchOrder(currentWorkbookId, id, { row: sheet.rows[row] })
-      serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
-    } catch (error) {
-      handleApiError(error, 'Falha ao salvar alteração')
+  await withPollingPaused(async () => {
+    for (const { row } of byRow.values()) {
+      const id = getOrderId(row)
+      if (!id) continue
+      try {
+        const result = await patchOrder(currentWorkbookId!, id, { row: sheet.rows[row] })
+        serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
+      } catch (error) {
+        handleApiError(error, 'Falha ao salvar alteração')
+      }
     }
-  }
+  })
 }
 
 function handleSelect(_ref: string, _value: CellValue) {
@@ -223,19 +225,24 @@ async function handleEtiqueta(color: string | null) {
   if (!workbook || !currentWorkbookId) return
   const sel = grid.getSelection()
   if (!sel) return
+  // Captura linhas ANTES do applyCellBackground/render — evita perder
+  // a selecao se algo (re-render, polling tardio) mexer no DOM no meio.
+  const rows = getCurrentSelectedRows()
   grid.applyCellBackground(color)
   const sheet = workbook.sheets[workbook.sheetOrder[0]]
   if (!sheet) return
-  for (const row of getCurrentSelectedRows()) {
-    const id = getOrderId(row)
-    if (!id) continue
-    try {
-      const result = await patchOrder(currentWorkbookId, id, { styles: getRowStylesAsRecord(row) })
-      serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
-    } catch (error) {
-      handleApiError(error, 'Falha ao salvar etiqueta')
+  await withPollingPaused(async () => {
+    for (const row of rows) {
+      const id = getOrderId(row)
+      if (!id) continue
+      try {
+        const result = await patchOrder(currentWorkbookId!, id, { styles: getRowStylesAsRecord(row) })
+        serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
+      } catch (error) {
+        handleApiError(error, 'Falha ao salvar etiqueta')
+      }
     }
-  }
+  })
 }
 
 function getCurrentSelectedRows(): number[] {
@@ -718,6 +725,18 @@ function stopPolling() {
   if (pollTimer) {
     window.clearInterval(pollTimer)
     pollTimer = null
+  }
+}
+
+let inflightBatches = 0
+async function withPollingPaused<T>(fn: () => Promise<T>): Promise<T> {
+  inflightBatches++
+  stopPolling()
+  try {
+    return await fn()
+  } finally {
+    inflightBatches--
+    if (inflightBatches === 0 && currentWorkbookId) startPolling()
   }
 }
 
