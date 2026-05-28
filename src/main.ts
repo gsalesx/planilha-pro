@@ -3,6 +3,7 @@ import './style.css'
 import {
   AuthRequiredError,
   checkAuth,
+  createWorkbook,
   deleteImage,
   fetchWorkbook,
   logout,
@@ -616,11 +617,19 @@ async function enterWorkbook(workbookId: string) {
   startPolling()
 }
 
+async function createWorkbookFromXlsx(file: File) {
+  const name = file.name.replace(/\.[^.]+$/, '').trim() || 'Sem nome'
+  const wb = await createWorkbook(name)
+  await enterWorkbook(wb.id)
+  await loadFile(file)
+}
+
 function showHome() {
   const app = el<HTMLDivElement>('#app')
   showWorkbooksList({
     root: app,
     onOpen: (id) => void enterWorkbook(id),
+    onCreateFromXlsx: createWorkbookFromXlsx,
     onAuthLost: () => {
       showLoginScreen(() => {
         void init()

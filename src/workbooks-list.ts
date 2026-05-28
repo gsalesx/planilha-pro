@@ -1,6 +1,5 @@
 import {
   AuthRequiredError,
-  createWorkbook,
   deleteWorkbook,
   duplicateWorkbook,
   listWorkbooks,
@@ -10,6 +9,7 @@ import {
 
 type OpenHandler = (workbookId: string) => void
 type AuthLostHandler = () => void
+type CreateFromXlsxHandler = (file: File) => Promise<void>
 
 function escapeHtml(s: string): string {
   return s
@@ -133,10 +133,11 @@ function openPromptDialog(opts: {
 export function showWorkbooksList(opts: {
   root: HTMLElement
   onOpen: OpenHandler
+  onCreateFromXlsx: CreateFromXlsxHandler
   onAuthLost: AuthLostHandler
   onLogout: () => void
 }): void {
-  const { root, onOpen, onAuthLost, onLogout } = opts
+  const { root, onOpen, onCreateFromXlsx, onAuthLost, onLogout } = opts
 
   root.innerHTML = `
     <div class="workbooks-page">
@@ -144,7 +145,10 @@ export function showWorkbooksList(opts: {
         <h1>Planilha Pro</h1>
         <div class="workbooks-header-spacer"></div>
         <div class="toolbar-actions">
-          <button class="btn btn-primary" id="wb-new-btn">+ Nova planilha</button>
+          <label class="btn btn-primary" id="wb-new-btn" title="Crie uma planilha nova a partir de um XLSX">
+            <input type="file" id="wb-new-file" accept=".xlsx,.xls" hidden />
+            + Nova planilha (XLSX)
+          </label>
           <button class="btn" id="wb-logout-btn" title="Sair">Sair</button>
         </div>
       </header>
@@ -158,7 +162,7 @@ export function showWorkbooksList(opts: {
   `
 
   const grid = root.querySelector<HTMLDivElement>('#wb-grid')!
-  const newBtn = root.querySelector<HTMLButtonElement>('#wb-new-btn')!
+  const newFileInput = root.querySelector<HTMLInputElement>('#wb-new-file')!
   const logoutBtn = root.querySelector<HTMLButtonElement>('#wb-logout-btn')!
 
   logoutBtn.addEventListener('click', () => {
@@ -188,10 +192,18 @@ export function showWorkbooksList(opts: {
       grid.innerHTML = `
         <div class="workbooks-empty">
           <p>Você ainda não tem planilhas.</p>
-          <button class="btn btn-primary" id="wb-empty-new">+ Criar primeira planilha</button>
+          <label class="btn btn-primary">
+            <input type="file" id="wb-empty-new" accept=".xlsx,.xls" hidden />
+            + Criar primeira planilha (XLSX)
+          </label>
         </div>
       `
-      root.querySelector<HTMLButtonElement>('#wb-empty-new')?.addEventListener('click', promptNew)
+      const emptyInput = root.querySelector<HTMLInputElement>('#wb-empty-new')!
+      emptyInput.addEventListener('change', () => {
+        const file = emptyInput.files?.[0]
+        emptyInput.value = ''
+        if (file) void handleNewFile(file)
+      })
       return
     }
     grid.innerHTML = workbooks
@@ -269,24 +281,18 @@ export function showWorkbooksList(opts: {
     })
   }
 
-  function promptNew() {
-    openPromptDialog({
-      title: 'Nova planilha',
-      label: 'Nome',
-      defaultValue: '',
-      confirmLabel: 'Criar',
-      onConfirm: async (name) => {
-        try {
-          const wb = await createWorkbook(name)
-          await refresh()
-          onOpen(wb.id)
-        } catch (error) {
-          handleError(error, 'Falha ao criar planilha')
-        }
-      },
-    })
+  async function handleNewFile(file: File) {
+    try {
+      await onCreateFromXlsx(file)
+    } catch (error) {
+      handleError(error, 'Falha ao criar planilha a partir do XLSX')
+    }
   }
 
-  newBtn.addEventListener('click', promptNew)
+  newFileInput.addEventListener('change', () => {
+    const file = newFileInput.files?.[0]
+    newFileInput.value = ''
+    if (file) void handleNewFile(file)
+  })
   void refresh()
 }
