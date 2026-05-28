@@ -116,6 +116,7 @@ export class GridView {
   private sorts = new Map<string, SortState>()
   private visibleOrder: number[] = []
   private dateFilter: string | null = null
+  private loading = false
 
   constructor(root: HTMLElement, callbacks: GridCallbacks) {
     this.root = root
@@ -363,8 +364,19 @@ export class GridView {
     return changes
   }
 
+  setLoading(loading: boolean) {
+    if (this.loading === loading) return
+    this.loading = loading
+    this.render()
+  }
+
   render() {
     this.root.innerHTML = ''
+
+    if (this.loading) {
+      this.renderLoading()
+      return
+    }
 
     if (!this.workbook) {
       this.renderEmpty()
@@ -1025,7 +1037,22 @@ export class GridView {
     let lastX = 0
     let lastY = 0
 
+    const clampPan = () => {
+      // Mantem a imagem dentro do wrap: |tx|<=overflowX/2 e |ty|<=overflowY/2.
+      // Antes do load, clientWidth=0 → pula clamp (sem efeito).
+      const baseW = img.clientWidth
+      const baseH = img.clientHeight
+      const wrapW = imgWrap.clientWidth
+      const wrapH = imgWrap.clientHeight
+      if (baseW === 0 || baseH === 0) return
+      const overflowX = Math.max(0, (scale * baseW - wrapW) / 2)
+      const overflowY = Math.max(0, (scale * baseH - wrapH) / 2)
+      tx = Math.max(-overflowX, Math.min(overflowX, tx))
+      ty = Math.max(-overflowY, Math.min(overflowY, ty))
+    }
+
     const applyTransform = () => {
+      clampPan()
       img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`
       zoomBadge.textContent = `${Math.round(scale * 100)}%`
       imgWrap.style.cursor = scale > 1.001 ? (dragging ? 'grabbing' : 'grab') : 'zoom-in'
@@ -1218,11 +1245,22 @@ export class GridView {
     const empty = document.createElement('div')
     empty.className = 'sheet-empty'
     empty.innerHTML = `
-      <div class="drop-zone" id="initial-drop-zone">
-        <strong>Atualize a planilha para começar</strong>
-        <span>Clique em <b>⟳ Atualizar Planilha</b> no topo · ou solte um .xlsx aqui</span>
+      <div class="sheet-empty-box">
+        <strong>Nenhuma planilha aberta</strong>
       </div>
     `
     this.root.appendChild(empty)
+  }
+
+  private renderLoading() {
+    const wrap = document.createElement('div')
+    wrap.className = 'sheet-loading'
+    wrap.innerHTML = `
+      <div class="sheet-loading-box">
+        <div class="sheet-loading-spinner"></div>
+        <strong>Carregando planilha…</strong>
+      </div>
+    `
+    this.root.appendChild(wrap)
   }
 }

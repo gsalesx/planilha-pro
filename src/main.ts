@@ -113,6 +113,14 @@ function setFilename(text: string) {
   el<HTMLSpanElement>('#filename').textContent = text
 }
 
+function renderSheetLoading() {
+  grid.setLoading(true)
+}
+
+function stopSheetLoading() {
+  grid.setLoading(false)
+}
+
 function updateStatusCounts() {
   const sheet = grid.getActiveSheet()
   const target = el<HTMLSpanElement>('#status-counts')
@@ -853,7 +861,7 @@ async function enterWorkbook(workbookId: string) {
     },
     onImageDelete: (row, col) => void deleteImageAt(row, col),
   })
-  grid.setWorkbook(null)
+  renderSheetLoading()
   bindFileInput()
   bindPhotosInput()
   bindDropZone()
@@ -863,7 +871,11 @@ async function enterWorkbook(workbookId: string) {
   bindLogout()
   bindBackButton()
   bindZoomControls()
-  await refreshFromServer({ force: true })
+  try {
+    await refreshFromServer({ force: true })
+  } finally {
+    stopSheetLoading()
+  }
   startPolling()
 }
 

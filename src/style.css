@@ -678,27 +678,45 @@ button {
   font-size: 13px;
 }
 
-.sheet-empty .drop-zone {
-  border: 2px dashed #cbd5e1;
+.sheet-empty-box {
+  padding: 28px 44px;
   border-radius: 8px;
-  padding: 36px 56px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sheet-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+.sheet-loading-box {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 14px;
+  padding: 32px 48px;
+  border-radius: 8px;
   background: #fff;
-  cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease;
-}
-.sheet-empty .drop-zone:hover,
-.sheet-empty .drop-zone.is-dragging {
-  border-color: #2563eb;
-  background: #eff6ff;
-}
-
-.sheet-empty .drop-zone strong {
+  border: 1px solid #e5e7eb;
   color: #111827;
   font-size: 14px;
+  font-weight: 600;
+}
+.sheet-loading-spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid #e5e7eb;
+  border-top-color: #2563eb;
+  animation: sheet-loading-spin 0.8s linear infinite;
+}
+@keyframes sheet-loading-spin {
+  to { transform: rotate(360deg); }
 }
 
 table.sheet {
@@ -880,18 +898,20 @@ table.sheet tbody td.cell-image {
   transition: opacity 100ms ease, background 100ms ease, transform 80ms ease;
   z-index: 2;
 }
-table.sheet tbody tr:hover .image-cell-action {
+table.sheet tbody td.cell-image:hover .image-cell-action,
+.image-cell-action:focus-visible {
   opacity: 0.95;
 }
 .image-cell-action:hover {
   transform: scale(1.1);
 }
-.image-cell-replace {
+.image-cell-copy {
   top: 1px;
-  right: 20px;
+  left: 1px;
   background: rgba(30, 64, 175, 0.85);
 }
-.image-cell-replace:hover {
+.image-cell-copy:hover,
+.image-cell-copy.is-copied {
   background: #1e40af;
 }
 .image-cell-delete {
@@ -1492,7 +1512,7 @@ table.sheet tbody th.row-num.is-active {
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  max-width: 92vw;
+  max-width: 80vw;
   max-height: 92vh;
   margin: 0;
   cursor: default;
@@ -1502,7 +1522,7 @@ table.sheet tbody th.row-num.is-active {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 92vw;
+  width: 80vw;
   height: 78vh;
   overflow: hidden;
   cursor: zoom-in;
