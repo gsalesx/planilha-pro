@@ -189,6 +189,235 @@ router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
   res.json({ ok: true, updatedAt: now })
 })
 
+/* ===========================================================
+   Endpoints automation-friendly (escopados por workbook)
+   =========================================================== */
+
+const STATUS_COL = 5
+
+function serializeOrderRow(workbookId: string, o: OrderRow) {
+  return {
+    id: o.id,
+    row: JSON.parse(o.row_json) as unknown[],
+    styles: JSON.parse(o.styles_json || '{}'),
+    disappeared: o.disappeared === 1,
+    sheetDate: o.sheet_date || '',
+    position: o.position,
+    updatedAt: o.updated_at,
+    images: (db
+      .prepare('SELECT col, file_name, mime FROM images WHERE workbook_id = ? AND order_id = ?')
+      .all(workbookId, o.id) as ImageRow[]).map((i) => ({
+      col: i.col,
+      url: `/api/workbooks/${encodeURIComponent(workbookId)}/images/${encodeURIComponent(o.id)}/${i.col}`,
+      fileName: i.file_name,
+      mime: i.mime,
+    })),
+  }
+}
+
+/** GET /workbooks/:workbookId/orders?status=Separado&sheetDate=27-05-2026 */
+router.get('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
+  const workbookId = req.params.workbookId
+  if (!getWorkbook(workbookId)) {
+    res.status(404).json({ error: 'Planilha não encontrada' })
+    return
+  }
+  const status = typeof req.query.status === 'string' ? req.query.status : null
+  const sheetDate = typeof req.query.sheetDate === 'string' ? req.query.sheetDate : null
+
+  const where: string[] = ['workbook_id = ?']
+  const params: unknown[] = [workbookId]
+  if (sheetDate) {
+    where.push('sheet_date = ?')
+    params.push(sheetDate)
+  }
+  const rows = db
+    .prepare(
+      `SELECT id, row_json, styles_json, disappeared, sheet_date, position, updated_at
+         FROM orders WHERE ${where.join(' AND ')} ORDER BY position ASC`,
+    )
+    .all(...params) as OrderRow[]
+
+  const filtered = status == null
+    ? rows
+    : rows.filter((o) => {
+        const row = JSON.parse(o.row_json) as unknown[]
+        const v = row[STATUS_COL]
+        return v != null && String(v) === status
+      })
+
+  res.json(filtered.map((o) => serializeOrderRow(workbookId, o)))
+})
+
+/** POST /workbooks/:workbookId/orders — cria pedido novo. Body: {id, row, sheetDate?} */
+router.post('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
+  const workbookId = req.params.workbookId
+  if (!getWorkbook(workbookId)) {
+    res.status(404).json({ error: 'Planilha não encontrada' })
+    return
+  }
+  const body = req.body as {
+    id?: unknown
+    row?: unknown
+    sheetDate?: unknown
+    styles?: Record<string, { bg?: string }>
+    disappeared?: boolean
+  }
+  const id = typeof body.id === 'string' ? body.id.trim() : ''
+  if (!id) {
+    res.status(400).json({ error: 'id obrigatório' })
+    return
+  }
+  if (!Array.isArray(body.row)) {
+    res.status(400).json({ error: 'row[] obrigatório' })
+    return
+  }
+  const exists = db
+    .prepare('SELECT id FROM orders WHERE workbook_id = ? AND id = ?')
+    .get(workbookId, id)
+  if (exists) {
+    res.status(409).json({ error: 'Pedido com este id já existe' })
+    return
+  }
+  const sheetDate = typeof body.sheetDate === 'string' ? body.sheetDate : ''
+  const now = nowMs()
+  const maxPos = (db
+    .prepare('SELECT COALESCE(MAX(position), -1) AS m FROM orders WHERE workbook_id = ?')
+    .get(workbookId) as { m: number }).m
+  const txn = db.transaction(() => {
+    db.prepare(
+      'INSERT INTO orders (workbook_id, id, row_json, styles_json, disappeared, sheet_date, position, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(
+      workbookId,
+      id,
+      JSON.stringify(body.row),
+      JSON.stringify(body.styles ?? {}),
+      body.disappeared ? 1 : 0,
+      sheetDate,
+      maxPos + 1,
+      now,
+    )
+    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
+  })
+  txn()
+  const created = db
+    .prepare('SELECT id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders WHERE workbook_id = ? AND id = ?')
+    .get(workbookId, id) as OrderRow
+  res.status(201).json(serializeOrderRow(workbookId, created))
+})
+
+/** POST /workbooks/:workbookId/orders/:id/cells — merge de colunas. Body: {"5": "Pronto", "1": "Pijama X"} */
+router.post('/workbooks/:workbookId/orders/:id/cells', requireAuth, (req, res) => {
+  const workbookId = req.params.workbookId
+  const id = req.params.id
+  const existing = db
+    .prepare('SELECT id, row_json FROM orders WHERE workbook_id = ? AND id = ?')
+    .get(workbookId, id) as { id: string; row_json: string } | undefined
+  if (!existing) {
+    res.status(404).json({ error: 'Pedido não encontrado' })
+    return
+  }
+  const cells = req.body as Record<string, unknown>
+  if (!cells || typeof cells !== 'object' || Array.isArray(cells)) {
+    res.status(400).json({ error: 'Body deve ser objeto { colIndex: value }' })
+    return
+  }
+  const row = JSON.parse(existing.row_json) as unknown[]
+  for (const [k, v] of Object.entries(cells)) {
+    const colIdx = Number(k)
+    if (!Number.isInteger(colIdx) || colIdx < 0 || colIdx > 30) {
+      res.status(400).json({ error: `Índice de coluna inválido: ${k}` })
+      return
+    }
+    while (row.length <= colIdx) row.push(null)
+    row[colIdx] = v as unknown
+  }
+  const now = nowMs()
+  const txn = db.transaction(() => {
+    db.prepare(
+      'UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND id = ?',
+    ).run(JSON.stringify(row), now, workbookId, id)
+    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
+  })
+  txn()
+  res.json({ ok: true, updatedAt: now, row })
+})
+
+/** PATCH /workbooks/:workbookId/orders — bulk. Body: [{id, cells?: {col: value}, row?: [...]}] */
+router.patch('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
+  const workbookId = req.params.workbookId
+  if (!getWorkbook(workbookId)) {
+    res.status(404).json({ error: 'Planilha não encontrada' })
+    return
+  }
+  const body = req.body as Array<{
+    id?: unknown
+    row?: unknown
+    cells?: Record<string, unknown>
+    styles?: Record<string, { bg?: string }>
+    disappeared?: boolean
+  }>
+  if (!Array.isArray(body)) {
+    res.status(400).json({ error: 'Body deve ser array de updates' })
+    return
+  }
+  const now = nowMs()
+  const results: Array<{ id: string; ok: boolean; error?: string }> = []
+  const txn = db.transaction(() => {
+    for (const upd of body) {
+      const id = typeof upd.id === 'string' ? upd.id : ''
+      if (!id) {
+        results.push({ id: '', ok: false, error: 'id obrigatório' })
+        continue
+      }
+      const existing = db
+        .prepare('SELECT row_json FROM orders WHERE workbook_id = ? AND id = ?')
+        .get(workbookId, id) as { row_json: string } | undefined
+      if (!existing) {
+        results.push({ id, ok: false, error: 'não encontrado' })
+        continue
+      }
+      const sets: string[] = []
+      const params: unknown[] = []
+      if (Array.isArray(upd.row)) {
+        sets.push('row_json = ?')
+        params.push(JSON.stringify(upd.row))
+      } else if (upd.cells && typeof upd.cells === 'object') {
+        const row = JSON.parse(existing.row_json) as unknown[]
+        for (const [k, v] of Object.entries(upd.cells)) {
+          const colIdx = Number(k)
+          if (!Number.isInteger(colIdx) || colIdx < 0 || colIdx > 30) continue
+          while (row.length <= colIdx) row.push(null)
+          row[colIdx] = v as unknown
+        }
+        sets.push('row_json = ?')
+        params.push(JSON.stringify(row))
+      }
+      if (upd.styles && typeof upd.styles === 'object') {
+        sets.push('styles_json = ?')
+        params.push(JSON.stringify(upd.styles))
+      }
+      if (typeof upd.disappeared === 'boolean') {
+        sets.push('disappeared = ?')
+        params.push(upd.disappeared ? 1 : 0)
+      }
+      if (sets.length === 0) {
+        results.push({ id, ok: false, error: 'nada para atualizar' })
+        continue
+      }
+      sets.push('updated_at = ?')
+      params.push(now, workbookId, id)
+      db.prepare(
+        `UPDATE orders SET ${sets.join(', ')} WHERE workbook_id = ? AND id = ?`,
+      ).run(...params)
+      results.push({ id, ok: true })
+    }
+    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
+  })
+  txn()
+  res.json({ ok: true, updatedAt: now, results })
+})
+
 router.get('/health', (_req, res) => {
   res.json({ ok: true, dataDir: env.dataDir })
 })

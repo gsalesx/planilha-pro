@@ -71,14 +71,39 @@ export interface AuthenticatedRequest extends Request {
   session?: { token: string; expiresAt: number }
 }
 
+function extractApiKey(req: Request): string | null {
+  const auth = req.headers['authorization']
+  if (typeof auth === 'string' && auth.toLowerCase().startsWith('bearer ')) {
+    return auth.slice(7).trim()
+  }
+  const apiKeyHeader = req.headers['x-api-key']
+  if (typeof apiKeyHeader === 'string' && apiKeyHeader.trim().length > 0) {
+    return apiKeyHeader.trim()
+  }
+  return null
+}
+
+function isValidApiKey(presented: string): boolean {
+  if (!env.apiKey) return false
+  if (presented.length === 0) return false
+  return constantTimeEquals(presented, env.apiKey)
+}
+
 export function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction): void {
+  // 1) API key (automacoes): Authorization: Bearer X  ou  X-API-Key: X
+  const presented = extractApiKey(req)
+  if (presented && isValidApiKey(presented)) {
+    next()
+    return
+  }
+
+  // 2) Cookie de sessao (UI)
   const token = req.cookies?.[COOKIE_NAME] as string | undefined
   const session = readSession(token)
   if (!session) {
     res.status(401).json({ error: 'Não autenticado' })
     return
   }
-  // refresh sliding window if mais de 1 dia passou
   if (session.expiresAt - nowMs() < TTL_MS - 24 * 60 * 60 * 1000) {
     const newExpiry = refreshSession(session.token)
     setSessionCookie(res, session.token, newExpiry)

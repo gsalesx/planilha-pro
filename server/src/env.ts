@@ -17,6 +17,8 @@ export const env = {
   dataDir: process.env.DATA_DIR ?? './data',
   sessionSecret: required('SESSION_SECRET'),
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS ?? 30),
+  /** Opcional. Se definida, requests com Authorization: Bearer <key> ou X-API-Key: <key> autenticam. */
+  apiKey: process.env.API_KEY ?? '',
 }
 
 export const isProd = env.nodeEnv === 'production'
