@@ -516,7 +516,8 @@ export class GridView {
         const img = document.createElement('img')
         img.src = url
         img.alt = meta.fileName
-        img.loading = 'lazy'
+        img.loading = 'eager'
+        img.decoding = 'async'
         img.addEventListener('click', (event) => {
           event.stopPropagation()
           this.openLightbox(url, meta.fileName)
@@ -965,7 +966,7 @@ export class GridView {
     overlay.appendChild(figure)
 
     const MIN_SCALE = 0.4
-    const MAX_SCALE = 12
+    const MAX_SCALE = 2
     let scale = 1
     let tx = 0
     let ty = 0
@@ -1061,7 +1062,7 @@ export class GridView {
     }
 
     overlay.addEventListener('click', (event) => {
-      if (event.target === overlay || event.target === closeBtn) close()
+      if (event.target !== img) close()
     })
     imgWrap.addEventListener('wheel', onWheel, { passive: false })
     imgWrap.addEventListener('mousedown', onMouseDown)
