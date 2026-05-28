@@ -638,14 +638,13 @@ export class GridView {
         this.extendSelection(row)
         return
       }
-      // Mesmo padrao das celulas de foto: 1o click so seleciona,
-      // 2o click (na celula ja single-selected) abre o popover.
-      const isSingleSelected =
+      // 1o click so seleciona, 2o click (na celula ja dentro do range
+      // selecionado) abre o popover. Preserva multi-selecao via shift+click.
+      const inRange =
         !!this.selection &&
         this.selection.col === col &&
-        this.selection.anchorRow === row &&
-        this.selection.activeRow === row
-      if (!isSingleSelected) {
+        this.isRowInSelection(row)
+      if (!inRange) {
         this.selection = { col, anchorRow: row, activeRow: row }
         this.editing = null
         this.refreshSelectionClasses()
