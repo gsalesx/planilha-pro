@@ -16,6 +16,7 @@ const COLUMN_WIDTH_OVERRIDES: Record<number, number> = {
   6: 220, // G — Nome do destinatário
 }
 const CENTERED_COLUMNS = new Set([3]) // D — Qnt.
+const TYPEAHEAD_MS = 900 // ms — reset do buffer estilo Windows Explorer
 void ID_COLUMN_INDEX
 
 const COL_LETTER_CACHE = new Map<number, string>()
@@ -120,6 +121,10 @@ export class GridView {
   // Rows extras selecionadas via Ctrl-click (não-contíguas). Sempre na mesma
   // coluna do `selection`. Limpa quando o user seleciona algo sem Ctrl/Shift.
   private extraRows = new Set<number>()
+  // Buffer pra type-to-jump (estilo Windows Explorer). Reseta após TYPEAHEAD_MS
+  // de inatividade. Concatena chars enquanto o user digita rápido.
+  private typeBuffer = ''
+  private typeBufferAt = 0
 
   constructor(root: HTMLElement, callbacks: GridCallbacks) {
     this.root = root
@@ -378,6 +383,60 @@ export class GridView {
     if (this.loading === loading) return
     this.loading = loading
     this.render()
+  }
+
+  /** Copia os valores das celulas selecionadas (1 coluna, N linhas) pra
+   *  clipboard. Junta por `\n`. Retorna nº de valores copiados (0 = nada
+   *  selecionado ou clipboard falhou). */
+  async copySelectedToClipboard(): Promise<number> {
+    if (!this.selection) return 0
+    const sheet = this.getActiveSheet()
+    if (!sheet) return 0
+    const rows = this.getSelectedRows()
+    if (rows.length === 0) return 0
+    const col = this.selection.col
+    const values = rows.map((r) => {
+      const v = sheet.rows[r]?.[col]
+      return v == null ? '' : String(v)
+    })
+    try {
+      await navigator.clipboard.writeText(values.join('\n'))
+      return values.length
+    } catch {
+      return 0
+    }
+  }
+
+  /** Type-to-jump estilo Windows Explorer. Buffer acumula chars enquanto
+   *  o user digita rápido (<900ms entre teclas); busca a 1ª linha visível
+   *  cuja célula da coluna selecionada `startsWith(buffer)`. Retorna true
+   *  se achou e moveu a seleção. */
+  typeAheadJump(char: string): boolean {
+    if (!this.selection || this.editing) return false
+    if (char.length !== 1) return false
+    const sheet = this.getActiveSheet()
+    if (!sheet) return false
+    const now = Date.now()
+    if (now - this.typeBufferAt > TYPEAHEAD_MS) this.typeBuffer = ''
+    this.typeBuffer += char.toLowerCase()
+    this.typeBufferAt = now
+    const col = this.selection.col
+    for (const r of this.visibleOrder) {
+      const v = sheet.rows[r]?.[col]
+      if (v == null) continue
+      const s = String(v).toLowerCase().trim()
+      if (s.startsWith(this.typeBuffer)) {
+        this.select(r, col)
+        requestAnimationFrame(() => {
+          const cell = this.root.querySelector<HTMLElement>(
+            `td[data-row="${r}"][data-col="${col}"]`,
+          )
+          cell?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+        })
+        return true
+      }
+    }
+    return false
   }
 
   render() {

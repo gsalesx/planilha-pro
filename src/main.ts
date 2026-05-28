@@ -574,6 +574,31 @@ function bindSearch() {
       event.preventDefault()
       input.focus()
       input.select()
+      return
+    }
+    // Não processa atalhos da grid se o foco está em algum input/textarea/edit.
+    const target = event.target as HTMLElement | null
+    const tag = target?.tagName
+    const inField = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable === true
+    if (inField) return
+    if (!grid) return
+
+    // Ctrl/Cmd+C: copia os valores das células selecionadas (1 col × N linhas).
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') {
+      event.preventDefault()
+      void grid.copySelectedToClipboard().then((n) => {
+        if (n > 0) setStatusText(`${n} valor(es) copiado(s)`)
+      })
+      return
+    }
+
+    // Type-to-jump (Windows Explorer style) — só pra caracteres imprimíveis,
+    // sem modificadores. Pula pra próxima célula da coluna selecionada que
+    // comece com o que o user digitou.
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.length === 1) {
+      if (grid.typeAheadJump(event.key)) {
+        event.preventDefault()
+      }
     }
   })
 }
