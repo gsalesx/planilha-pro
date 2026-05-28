@@ -39,11 +39,14 @@ Endpoints chave:
 
 **Restrições por design (não readicionar)**: via API só dá pra mudar status e foto em pedido existente. Etiquetas são MANUAIS na UI. Demais campos só na criação. README da raiz tem exemplos curl.
 
-## Produção (em 2026-05-27)
-- URL: https://planilha-pro.144-91-112-68.sslip.io
+## Produção (em 2026-05-28)
+- URLs (ambas servem tudo — UI + API):
+  - https://planilha.guilhermesales.com (canonical, desde 2026-05-28)
+  - https://planilha-pro.144-91-112-68.sslip.io (legado sslip)
 - Repo: https://github.com/gsalesx/planilha-pro (público)
 - Dokploy app: `wlWGFdMbDH8BKdDyPtFJE` — autodeploy via webhook **NÃO funciona**, sempre disparar via `mcp__dokploy-mcp__application-deploy`
 - Login/API key: ver `memory/reference-planilha-pro-prod.md` e `memory/reference-planilha-pro-api.md`
+- **Backup diário** pra Google Drive (`Joao e Maria:planilha-pro-backups/`) via Schedule Dokploy `qHAjmxrhg-BbH34kgn7_r` (cron `0 3 * * *` BRT). Mantém os 3 mais recentes. Script: `/usr/local/bin/backup-to-drive` (de `scripts/backup-to-drive.sh`).
 
 ## Comandos comuns
 
