@@ -8,6 +8,7 @@ import express from 'express'
 
 import { cleanupExpiredSessions } from './auth.js'
 import { env, isProd } from './env.js'
+import backupRouter from './routes/backup.js'
 import imagesRouter from './routes/images.js'
 import loginRouter from './routes/login.js'
 import workbookRouter from './routes/workbook.js'
@@ -33,6 +34,7 @@ app.use('/api', loginRouter)
 app.use('/api', workbooksRouter)
 app.use('/api', workbookRouter)
 app.use('/api', imagesRouter)
+app.use('/api', backupRouter)
 
 // healthcheck público
 app.get('/healthz', (_req, res) => res.json({ ok: true }))

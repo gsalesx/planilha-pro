@@ -109,4 +109,63 @@ curl -H "$H" "$BASE/workbooks/<wbId>/images/P001/7" -o foto.jpg
 
 # Deletar foto
 curl -X DELETE -H "$H" "$BASE/workbooks/<wbId>/images/P001/7"
+
+# Backup completo (banco + imagens) como tar.gz
+# Usado pelo cron do backup pra Google Drive — ver seção "Backup" abaixo
+curl -fSL -H "$H" "$BASE/backup" -o planilha-backup.tar.gz
+```
+
+## Backup (Google Drive via rclone)
+
+O endpoint `GET /api/backup` retorna um `.tar.gz` com:
+- `planilha.db` — snapshot consistente do SQLite (feito via `db.backup()`, lida com WAL)
+- `images/` — diretório inteiro com as fotos
+
+O script `scripts/backup-to-drive.sh` (instalado no container como `/usr/local/bin/backup-to-drive`) chama o endpoint local, pipe direto pra `rclone rcat`, e rotaciona pra manter só os N mais recentes.
+
+### Setup no Dokploy (uma vez)
+
+1. **API_KEY** já configurada na Environment do app.
+
+2. **rclone.conf como Mount (tipo File)**: na aba *Advanced → Mounts* do app, criar:
+   - Type: `File`
+   - Mount Path: `/root/.config/rclone/rclone.conf`
+   - Content: cole o conteúdo do seu `rclone.conf` local (a parte com a remote Google Drive).
+
+3. **Env vars adicionais** (na aba Environment):
+   ```
+   RCLONE_REMOTE=Joao e Maria
+   BACKUP_PATH=planilha-pro-backups
+   KEEP_BACKUPS=3
+   ```
+   (Ajuste o `RCLONE_REMOTE` pro nome exato da sua remote.)
+
+4. **Schedule** (aba *Schedules*):
+   - Name: `Backup diário`
+   - Cron: `0 3 * * *` (3h da manhã todo dia)
+   - Shell: `sh`
+   - Command: `/usr/local/bin/backup-to-drive`
+   - Schedule Type: `application` (este app)
+
+5. **Testar manualmente** uma vez antes de confiar no cron:
+   - Schedules → "Run Now" no `Backup diário`
+   - Verificar logs do schedule
+   - Conferir no Google Drive (`planilha-pro-backups/planilha-YYYY-MM-DD_HHMM.tar.gz`)
+
+### Restaurar num servidor novo
+
+```bash
+# 1. Baixar o backup mais recente do Drive
+rclone copy "Joao e Maria:planilha-pro-backups/planilha-XXXX.tar.gz" .
+
+# 2. Subir o novo container Dokploy normalmente (volume vazio)
+
+# 3. Parar o container temporariamente
+docker compose -f /etc/dokploy/compose/<app>/docker-compose.yml stop
+
+# 4. Extrair pro volume
+tar -xzf planilha-XXXX.tar.gz -C /var/lib/docker/volumes/<app>_planilha-data/_data/
+
+# 5. Subir de novo
+docker compose -f /etc/dokploy/compose/<app>/docker-compose.yml start
 ```

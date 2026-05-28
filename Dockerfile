@@ -23,7 +23,7 @@ RUN npm run build
 # ----- Stage 3: runtime -----
 FROM node:22-alpine AS runtime
 WORKDIR /app
-RUN apk add --no-cache tini libstdc++ libgcc
+RUN apk add --no-cache tini libstdc++ libgcc tar gzip curl rclone
 
 # Production server deps (better-sqlite3 needs native build)
 COPY server/package.json server/package-lock.json* ./
@@ -37,6 +37,10 @@ COPY --from=server-build /app/server/dist ./dist
 
 # Vite client build → served as static
 COPY --from=client-build /app/client/dist ./public
+
+# Script de backup (chamado via Dokploy Schedule)
+COPY scripts/backup-to-drive.sh /usr/local/bin/backup-to-drive
+RUN chmod +x /usr/local/bin/backup-to-drive
 
 ENV NODE_ENV=production
 ENV PORT=3030
