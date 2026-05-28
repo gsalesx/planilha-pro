@@ -130,8 +130,8 @@ function updateStatusCounts() {
    =========================================================== */
 
 const ZOOM_KEY = 'planilha-zoom'
-const ZOOM_MIN = 0.5
-const ZOOM_MAX = 2.0
+const ZOOM_MIN = 0.6
+const ZOOM_MAX = 2.4
 const ZOOM_STEP = 0.1
 let currentZoom = 1
 
