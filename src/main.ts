@@ -5,6 +5,7 @@ import {
   checkAuth,
   createWorkbook,
   deleteImage,
+  deleteOrdersBySheetDate,
   fetchWorkbook,
   logout,
   patchOrder,
@@ -12,6 +13,7 @@ import {
   serverWorkbookToLocal,
   uploadImage,
 } from './api'
+import { openConfirmDialog } from './dialog'
 import { GridView, PHOTO_COLUMN_INDICES } from './grid'
 import { showLoginScreen } from './login'
 import { formatHitRef, highlightMatch, searchWorkbook, type SearchHit } from './search'
@@ -67,6 +69,7 @@ function buildShell() {
         <div class="date-select-wrap" id="date-select-wrap" hidden>
           <label class="date-select-label" for="date-select">Data:</label>
           <select class="date-select" id="date-select"></select>
+          <button type="button" class="date-delete-btn" id="date-delete-btn" title="Apagar todos os pedidos desta data" aria-label="Apagar data">🗑</button>
         </div>
         <span class="etiqueta-bar-divider" aria-hidden="true"></span>
         <span class="etiqueta-bar-label">Etiqueta:</span>
@@ -141,6 +144,7 @@ function formatDateForDisplay(raw: string): string {
 function renderDateSelect() {
   const wrap = el<HTMLDivElement>('#date-select-wrap')
   const select = el<HTMLSelectElement>('#date-select')
+  const deleteBtn = el<HTMLButtonElement>('#date-delete-btn')
   const dates = grid.getAvailableDates()
   if (dates.length === 0) {
     wrap.hidden = true
@@ -164,6 +168,28 @@ function renderDateSelect() {
   select.onchange = () => {
     grid.setDateFilter(select.value)
     updateStatusCounts()
+  }
+  deleteBtn.onclick = () => {
+    const date = grid.getDateFilter()
+    if (!date || !currentWorkbookId) return
+    const sheet = grid.getActiveSheet()
+    const count = (sheet?.rowDates ?? []).filter((d) => d === date).length
+    openConfirmDialog({
+      title: `Apagar data ${formatDateForDisplay(date)}?`,
+      body: `Vai apagar <strong>${count} pedido${count === 1 ? '' : 's'}</strong> desta data (e suas fotos). A data sai do seletor. Esta ação não pode ser desfeita.`,
+      confirmLabel: 'Apagar',
+      danger: true,
+      onConfirm: async () => {
+        setStatusText(`Apagando data ${date}...`)
+        try {
+          const result = await deleteOrdersBySheetDate(currentWorkbookId!, date)
+          await refreshFromServer({ force: true })
+          setStatusText(`Data ${date} apagada (${result.deleted} pedidos removidos)`)
+        } catch (error) {
+          handleApiError(error, 'Falha ao apagar data')
+        }
+      },
+    })
   }
 }
 

@@ -429,15 +429,16 @@ export class GridView {
   private buildBody(sheet: SheetData, columnCount: number, _rowCount: number): HTMLTableSectionElement {
     const tbody = document.createElement('tbody')
     const selectedRows = this.selection ? new Set(this.getSelectedRows()) : new Set<number>()
-    for (const r of this.visibleOrder) {
-      tbody.appendChild(this.buildDataRow(sheet, r, columnCount, selectedRows))
-    }
+    this.visibleOrder.forEach((r, visibleIndex) => {
+      tbody.appendChild(this.buildDataRow(sheet, r, visibleIndex, columnCount, selectedRows))
+    })
     return tbody
   }
 
   private buildDataRow(
     sheet: SheetData,
     r: number,
+    visibleIndex: number,
     columnCount: number,
     selectedRows: Set<number>,
   ): HTMLTableRowElement {
@@ -447,7 +448,7 @@ export class GridView {
 
     const rowNum = document.createElement('th')
     rowNum.className = 'row-num'
-    rowNum.textContent = String(r + 1)
+    rowNum.textContent = String(visibleIndex + 1)
     if (selectedRows.has(r)) rowNum.classList.add('is-active')
     tr.appendChild(rowNum)
 

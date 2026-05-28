@@ -1007,6 +1007,26 @@ table.sheet tbody tr.row-disappeared td.cell-image .image-cell-wrap {
   background: #cbd5e1;
   margin: 0 4px;
 }
+.date-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #b91c1c;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.date-delete-btn:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+  color: #991b1b;
+}
 
 /* Cell: user (column F) with copy button */
 table.sheet tbody td.cell-user {

@@ -199,6 +199,16 @@ export async function deleteImage(
   )
 }
 
+export async function deleteOrdersBySheetDate(
+  workbookId: string,
+  sheetDate: string,
+): Promise<{ ok: true; deleted: number; sheetDate: string; updatedAt: number }> {
+  return request(
+    `/workbooks/${encodeURIComponent(workbookId)}/orders?sheetDate=${encodeURIComponent(sheetDate)}`,
+    { method: 'DELETE' },
+  )
+}
+
 /** Converte payload do servidor pra WorkbookData (formato que a grid usa) */
 export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook): WorkbookData {
   const rows: CellValue[][] = []

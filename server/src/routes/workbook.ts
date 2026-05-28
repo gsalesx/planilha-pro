@@ -1,3 +1,5 @@
+import { existsSync, unlinkSync } from 'node:fs'
+
 import { Router } from 'express'
 
 import { requireAuth } from '../auth.js'
@@ -352,6 +354,53 @@ router.patch('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
   })
   txn()
   res.json({ ok: true, updatedAt: now, results })
+})
+
+/** DELETE /workbooks/:workbookId/orders?sheetDate=DD-MM-YYYY
+ *  Apaga apenas os pedidos daquela data (e os arquivos de imagem em disco).
+ *  Os demais pedidos do workbook ficam intactos. */
+router.delete('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
+  const workbookId = req.params.workbookId
+  if (!getWorkbook(workbookId)) {
+    res.status(404).json({ error: 'Planilha não encontrada' })
+    return
+  }
+  const sheetDate = typeof req.query.sheetDate === 'string' ? req.query.sheetDate : ''
+  if (!sheetDate) {
+    res.status(400).json({ error: 'sheetDate (query param) obrigatório' })
+    return
+  }
+
+  // Coletar storage_paths das imagens dos pedidos da data antes do cascade.
+  const imagePaths = db
+    .prepare(
+      `SELECT i.storage_path AS storage_path
+         FROM images i
+         INNER JOIN orders o ON o.workbook_id = i.workbook_id AND o.id = i.order_id
+         WHERE i.workbook_id = ? AND o.sheet_date = ?`,
+    )
+    .all(workbookId, sheetDate) as Array<{ storage_path: string }>
+
+  const now = nowMs()
+  let deletedCount = 0
+  const txn = db.transaction(() => {
+    const result = db
+      .prepare('DELETE FROM orders WHERE workbook_id = ? AND sheet_date = ?')
+      .run(workbookId, sheetDate)
+    deletedCount = result.changes
+    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
+  })
+  txn()
+
+  for (const row of imagePaths) {
+    try {
+      if (existsSync(row.storage_path)) unlinkSync(row.storage_path)
+    } catch {
+      // ignore
+    }
+  }
+
+  res.json({ ok: true, deleted: deletedCount, sheetDate, updatedAt: now })
 })
 
 router.get('/health', (_req, res) => {
