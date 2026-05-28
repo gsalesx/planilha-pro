@@ -56,6 +56,10 @@ function buildShell() {
             <input type="file" id="file-input" accept=".xlsx,.xls" hidden />
             ⟳ Atualizar Planilha
           </label>
+          <label class="btn" title="Atualiza só as fotos a partir de um XLSX, casando por ID do pedido. Pedidos sem match são ignorados.">
+            <input type="file" id="photos-input" accept=".xlsx,.xls" hidden />
+            🖼 Atualizar Fotos
+          </label>
           <button class="btn" id="logout-btn" title="Sair">Sair</button>
         </div>
       </header>
@@ -497,6 +501,92 @@ function bindFileInput() {
   })
 }
 
+async function loadPhotos(file: File) {
+  if (!currentWorkbookId || !workbook) return
+  setStatusText('Lendo XLSX de fotos...')
+  try {
+    const parsed = await parseXlsx(file, {
+      existing: workbook,
+      onProgress: (msg, current, total) => {
+        if (current != null && total != null) {
+          setStatusText(`${msg}: ${current} / ${total}`)
+        } else {
+          setStatusText(msg)
+        }
+      },
+    })
+    const sheet = parsed.sheets[parsed.sheetOrder[0]]
+    if (!sheet) {
+      setStatusText('XLSX sem dados')
+      return
+    }
+
+    const currentSheet = workbook.sheets[workbook.sheetOrder[0]]
+    const existingIds = new Set<string>()
+    for (const row of currentSheet?.rows ?? []) {
+      const id = String(row[ID_COL] ?? '').trim()
+      if (id) existingIds.add(id)
+    }
+
+    const uploads: Array<{ id: string; col: number; blob: Blob; fileName: string }> = []
+    const skippedIds = new Set<string>()
+    for (const [key, img] of Object.entries(sheet.images)) {
+      if (!img.blob || img.url) continue
+      const [r, c] = key.split(':').map(Number)
+      const id = String(sheet.rows[r]?.[ID_COL] ?? '').trim()
+      if (!id) continue
+      if (!existingIds.has(id)) {
+        skippedIds.add(id)
+        continue
+      }
+      uploads.push({ id, col: c, blob: img.blob, fileName: img.fileName })
+    }
+
+    if (uploads.length === 0) {
+      const skipMsg = skippedIds.size > 0 ? ` (${skippedIds.size} IDs sem match foram ignorados)` : ''
+      setStatusText(`Nenhuma foto pra atualizar${skipMsg}`)
+      return
+    }
+
+    let done = 0
+    let failed = 0
+    for (const u of uploads) {
+      try {
+        const jpeg = await blobToJpeg(u.blob)
+        const safeName = u.fileName.replace(/\.[^.]+$/, '') + '.jpg'
+        await uploadImage(currentWorkbookId, u.id, u.col, jpeg, safeName)
+        done++
+        setStatusText(`Enviando fotos: ${done} / ${uploads.length}`)
+      } catch (error) {
+        failed++
+        console.warn('Falha ao enviar foto:', error)
+      }
+    }
+
+    await refreshFromServer({ force: true })
+    const skipMsg = skippedIds.size > 0 ? ` · ${skippedIds.size} IDs ignorados` : ''
+    const failMsg = failed > 0 ? ` · ${failed} falhas` : ''
+    setStatusText(`Fotos atualizadas: ${done}${skipMsg}${failMsg}`)
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      handleApiError(error)
+      return
+    }
+    console.error(error)
+    setStatusText('Falha ao atualizar fotos')
+    alert(`Falha ao ler XLSX: ${(error as Error).message}`)
+  }
+}
+
+function bindPhotosInput() {
+  const input = el<HTMLInputElement>('#photos-input')
+  input.addEventListener('change', () => {
+    const file = input.files?.[0]
+    if (file) void loadPhotos(file)
+    input.value = ''
+  })
+}
+
 function bindDropZone() {
   const sheetRoot = el<HTMLDivElement>('#sheet-root')
   sheetRoot.addEventListener('dragover', (event) => {
@@ -607,6 +697,7 @@ async function enterWorkbook(workbookId: string) {
   })
   grid.setWorkbook(null)
   bindFileInput()
+  bindPhotosInput()
   bindDropZone()
   bindSearch()
   bindEtiquetas()
