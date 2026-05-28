@@ -89,9 +89,10 @@ curl -H "$H" -H "Content-Type: application/json" \
   -d '{"id":"P001","row":["P001","Pijama X","Adulto","1","joao","Separado","Joao Silva",null,null,null],"sheetDate":"27-05-2026"}' \
   "$BASE/workbooks/<wbId>/orders"
 
-# Atualizar pedidos (1 ou N) — bulk com merge de células
+# Atualizar status (1 ou N) — bulk
+# Via API só dá pra mudar o status. Demais campos só na criação. Etiquetas são manuais.
 curl -X PATCH -H "$H" -H "Content-Type: application/json" \
-  -d '[{"id":"P001","cells":{"5":"Pronto"}},{"id":"P002","cells":{"5":"Pronto"}}]' \
+  -d '[{"id":"P001","status":"Pronto"},{"id":"P002","status":"Pronto"}]' \
   "$BASE/workbooks/<wbId>/orders"
 
 # Subir foto (col 7=Foto, 8=Foto 2, 9=+Fotos)

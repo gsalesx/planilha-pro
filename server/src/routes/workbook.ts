@@ -306,22 +306,18 @@ router.post('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
   res.status(201).json(serializeOrderRow(workbookId, created))
 })
 
-/** PATCH /workbooks/:workbookId/orders — bulk. Body: [{id, cells?: {col: value}, row?: [...]}] */
+/** PATCH /workbooks/:workbookId/orders — bulk update de status. Body: [{id, status}].
+ *  Pelo design, via API so o status pode ser atualizado em pedidos existentes.
+ *  Foto: usar POST /images. Etiquetas: so manual na UI. Demais campos: so na criacao. */
 router.patch('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
   const workbookId = req.params.workbookId
   if (!getWorkbook(workbookId)) {
     res.status(404).json({ error: 'Planilha não encontrada' })
     return
   }
-  const body = req.body as Array<{
-    id?: unknown
-    row?: unknown
-    cells?: Record<string, unknown>
-    styles?: Record<string, { bg?: string }>
-    disappeared?: boolean
-  }>
+  const body = req.body as Array<{ id?: unknown; status?: unknown }>
   if (!Array.isArray(body)) {
-    res.status(400).json({ error: 'Body deve ser array de updates' })
+    res.status(400).json({ error: 'Body deve ser array [{id, status}]' })
     return
   }
   const now = nowMs()
@@ -333,6 +329,10 @@ router.patch('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
         results.push({ id: '', ok: false, error: 'id obrigatório' })
         continue
       }
+      if (typeof upd.status !== 'string') {
+        results.push({ id, ok: false, error: 'status (string) obrigatório' })
+        continue
+      }
       const existing = db
         .prepare('SELECT row_json FROM orders WHERE workbook_id = ? AND id = ?')
         .get(workbookId, id) as { row_json: string } | undefined
@@ -340,39 +340,12 @@ router.patch('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
         results.push({ id, ok: false, error: 'não encontrado' })
         continue
       }
-      const sets: string[] = []
-      const params: unknown[] = []
-      if (Array.isArray(upd.row)) {
-        sets.push('row_json = ?')
-        params.push(JSON.stringify(upd.row))
-      } else if (upd.cells && typeof upd.cells === 'object') {
-        const row = JSON.parse(existing.row_json) as unknown[]
-        for (const [k, v] of Object.entries(upd.cells)) {
-          const colIdx = Number(k)
-          if (!Number.isInteger(colIdx) || colIdx < 0 || colIdx > 30) continue
-          while (row.length <= colIdx) row.push(null)
-          row[colIdx] = v as unknown
-        }
-        sets.push('row_json = ?')
-        params.push(JSON.stringify(row))
-      }
-      if (upd.styles && typeof upd.styles === 'object') {
-        sets.push('styles_json = ?')
-        params.push(JSON.stringify(upd.styles))
-      }
-      if (typeof upd.disappeared === 'boolean') {
-        sets.push('disappeared = ?')
-        params.push(upd.disappeared ? 1 : 0)
-      }
-      if (sets.length === 0) {
-        results.push({ id, ok: false, error: 'nada para atualizar' })
-        continue
-      }
-      sets.push('updated_at = ?')
-      params.push(now, workbookId, id)
+      const row = JSON.parse(existing.row_json) as unknown[]
+      while (row.length <= STATUS_COL) row.push(null)
+      row[STATUS_COL] = upd.status
       db.prepare(
-        `UPDATE orders SET ${sets.join(', ')} WHERE workbook_id = ? AND id = ?`,
-      ).run(...params)
+        'UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND id = ?',
+      ).run(JSON.stringify(row), now, workbookId, id)
       results.push({ id, ok: true })
     }
     db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
