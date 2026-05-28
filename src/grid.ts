@@ -37,6 +37,39 @@ function formatCellRef(row: number, col: number): string {
   return `${colLetter(col)}${row + 1}`
 }
 
+async function getClipboardImageBlob(img: { url?: string; blob?: Blob }): Promise<Blob> {
+  let blob = img.blob
+  if (!blob) {
+    if (!img.url) throw new Error('Imagem sem origem para copiar')
+    const response = await fetch(img.url, { credentials: 'include' })
+    if (!response.ok) throw new Error(`Falha ao buscar imagem: HTTP ${response.status}`)
+    blob = await response.blob()
+  }
+  if (blob.type === 'image/png') return blob
+
+  const bitmap = await createImageBitmap(blob)
+  const canvas = document.createElement('canvas')
+  canvas.width = bitmap.width
+  canvas.height = bitmap.height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas indisponivel para copiar imagem')
+  ctx.drawImage(bitmap, 0, 0)
+  bitmap.close()
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (result) => result ? resolve(result) : reject(new Error('Falha ao converter imagem para copiar')),
+      'image/png',
+    )
+  })
+}
+
+async function copyImageToClipboard(img: { url?: string; blob?: Blob }): Promise<void> {
+  const clipboard = navigator.clipboard
+  if (!clipboard?.write) throw new Error('Area de transferencia nao suporta imagens')
+  const blob = await getClipboardImageBlob(img)
+  await clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })])
+}
+
 export interface CellChange {
   row: number
   col: number
@@ -230,8 +263,12 @@ export class GridView {
     return url
   }
 
-  private resolveImageSrc(img: { url?: string; blob?: Blob }): string {
-    if (img.url) return img.url
+  private resolveImageSrc(img: { url?: string; blob?: Blob }, thumb?: number): string {
+    if (img.url) {
+      if (thumb == null) return img.url
+      const sep = img.url.includes('?') ? '&' : '?'
+      return `${img.url}${sep}thumb=${thumb}`
+    }
     if (img.blob) return this.getImageUrl(img.blob)
     return ''
   }
@@ -512,28 +549,42 @@ export class GridView {
       if (meta) {
         const wrap = document.createElement('div')
         wrap.className = 'image-cell-wrap'
-        const url = this.resolveImageSrc(meta)
+        const thumbUrl = this.resolveImageSrc(meta, 200)
+        const fullUrl = this.resolveImageSrc(meta)
         const img = document.createElement('img')
-        img.src = url
+        img.src = thumbUrl
         img.alt = meta.fileName
         img.loading = 'eager'
         img.decoding = 'async'
         img.addEventListener('click', (event) => {
           event.stopPropagation()
-          this.openLightbox(url, meta.fileName)
+          this.openLightbox(fullUrl, meta.fileName)
         })
-        const replaceBtn = document.createElement('button')
-        replaceBtn.type = 'button'
-        replaceBtn.className = 'image-cell-action image-cell-replace'
-        replaceBtn.title = 'Trocar foto'
-        replaceBtn.textContent = '↻'
-        replaceBtn.addEventListener('click', (event) => {
+        const copyBtn = document.createElement('button')
+        copyBtn.type = 'button'
+        copyBtn.className = 'image-cell-action image-cell-copy'
+        copyBtn.title = 'Copiar foto'
+        copyBtn.textContent = '⎘'
+        copyBtn.addEventListener('click', async (event) => {
           event.stopPropagation()
-          this.selection = { col, anchorRow: row, activeRow: row }
-          this.editing = null
-          this.refreshSelectionClasses()
-          this.emitSelection()
-          this.callbacks.onImageRequest?.(row, col)
+          copyBtn.disabled = true
+          try {
+            await copyImageToClipboard(meta)
+            copyBtn.classList.add('is-copied')
+            copyBtn.textContent = '✓'
+            window.setTimeout(() => {
+              copyBtn.classList.remove('is-copied')
+              copyBtn.textContent = '⎘'
+            }, 1100)
+          } catch (error) {
+            console.error('Falha ao copiar imagem', error)
+            copyBtn.textContent = '!'
+            window.setTimeout(() => {
+              copyBtn.textContent = '⎘'
+            }, 1100)
+          } finally {
+            copyBtn.disabled = false
+          }
         })
         const delBtn = document.createElement('button')
         delBtn.type = 'button'
@@ -549,7 +600,7 @@ export class GridView {
           }
         })
         wrap.appendChild(img)
-        wrap.appendChild(replaceBtn)
+        wrap.appendChild(copyBtn)
         wrap.appendChild(delBtn)
         td.appendChild(wrap)
       } else {

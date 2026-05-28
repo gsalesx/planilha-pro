@@ -1,9 +1,10 @@
 import crypto from 'node:crypto'
-import { createReadStream, existsSync, mkdirSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { Router } from 'express'
 import multer from 'multer'
+import sharp from 'sharp'
 
 import { requireAuth } from '../auth.js'
 import { db, nowMs } from '../db.js'
@@ -11,7 +12,60 @@ import { env } from '../env.js'
 
 const router = Router()
 const imagesDir = path.join(env.dataDir, 'images')
+const thumbsDir = path.join(imagesDir, '_thumbs')
 mkdirSync(imagesDir, { recursive: true })
+mkdirSync(thumbsDir, { recursive: true })
+
+const THUMB_MAX = 400
+const THUMB_MIN = 64
+const THUMB_QUALITY = 70
+
+function parseThumbSize(raw: unknown): number | null {
+  if (typeof raw !== 'string' || raw.length === 0) return null
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return null
+  return Math.max(THUMB_MIN, Math.min(THUMB_MAX, Math.trunc(n)))
+}
+
+function thumbPathFor(storagePath: string, size: number): string {
+  const base = path.basename(storagePath, path.extname(storagePath))
+  return path.join(thumbsDir, `${base}_t${size}.jpg`)
+}
+
+function purgeThumbs(storagePath: string): void {
+  const base = path.basename(storagePath, path.extname(storagePath))
+  try {
+    for (const f of readdirSync(thumbsDir)) {
+      if (f.startsWith(`${base}_t`)) {
+        try { unlinkSync(path.join(thumbsDir, f)) } catch { /* ignore */ }
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function ensureThumb(storagePath: string, size: number): Promise<string | null> {
+  const target = thumbPathFor(storagePath, size)
+  try {
+    const orig = statSync(storagePath)
+    if (existsSync(target)) {
+      const t = statSync(target)
+      if (t.mtimeMs >= orig.mtimeMs && t.size > 0) return target
+    }
+  } catch {
+    return null
+  }
+  try {
+    await sharp(storagePath)
+      .resize(size, size, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: THUMB_QUALITY, progressive: true })
+      .toFile(target)
+    return target
+  } catch {
+    return null
+  }
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -64,6 +118,7 @@ router.post(
         } catch {
           // ignore
         }
+        purgeThumbs(existing.storage_path)
       }
       db.prepare(
         `INSERT INTO images (workbook_id, order_id, col, file_name, mime, storage_path, updated_at)
@@ -104,6 +159,7 @@ router.delete('/workbooks/:workbookId/images/:orderId/:col', requireAuth, (req, 
     } catch {
       // ignore
     }
+    purgeThumbs(existing.storage_path)
     db.prepare('DELETE FROM images WHERE workbook_id = ? AND order_id = ? AND col = ?').run(
       workbookId,
       orderId,
@@ -115,7 +171,7 @@ router.delete('/workbooks/:workbookId/images/:orderId/:col', requireAuth, (req, 
   res.json({ ok: true, updatedAt: now })
 })
 
-router.get('/workbooks/:workbookId/images/:orderId/:col', requireAuth, (req, res) => {
+router.get('/workbooks/:workbookId/images/:orderId/:col', requireAuth, async (req, res) => {
   const workbookId = req.params.workbookId
   const orderId = req.params.orderId
   const col = Number(req.params.col)
@@ -125,6 +181,18 @@ router.get('/workbooks/:workbookId/images/:orderId/:col', requireAuth, (req, res
   if (!row || !existsSync(row.storage_path)) {
     res.status(404).end()
     return
+  }
+  // ?thumb=N → JPEG progressivo NxN max (cache em disco, regenera se foto mudar)
+  const thumbSize = parseThumbSize(req.query.thumb)
+  if (thumbSize != null) {
+    const target = await ensureThumb(row.storage_path, thumbSize)
+    if (target) {
+      res.setHeader('content-type', 'image/jpeg')
+      res.setHeader('cache-control', 'private, max-age=86400')
+      createReadStream(target).pipe(res)
+      return
+    }
+    // se falhou em gerar, cai pra full em vez de quebrar
   }
   res.setHeader('content-type', row.mime)
   res.setHeader('cache-control', 'private, max-age=86400')
