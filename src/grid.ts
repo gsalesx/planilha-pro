@@ -4,7 +4,7 @@ import type { CellValue, SheetData, WorkbookData } from './types'
 const ID_COLUMN_INDEX = 0 // coluna A (ID do pedido — chave única)
 const USER_COLUMN_INDEX = 4 // coluna E (Nome de usuário)
 const IMAGE_COLUMN_INDICES = new Set([7, 8, 9]) // colunas H, I, J (Foto, Foto 2, + Fotos)
-const FILTERABLE_COL = 2 // coluna C (Modelo)
+const FILTERABLE_COLS = new Set<number>([2, STATUS_COLUMN_INDEX]) // C (Modelo) e F (Status)
 const SORTABLE_COL = 6 // coluna G (Nome do destinatário)
 const MIN_COLUMN_COUNT = 15 // até coluna O — espaço extra pra anotações
 const DEFAULT_COL_WIDTH = 110
@@ -399,12 +399,12 @@ export class GridView {
       span.className = 'header-text'
       span.textContent = headerText
       th.appendChild(span)
-      if (headerText && (c === FILTERABLE_COL || c === SORTABLE_COL)) {
+      if (headerText && (FILTERABLE_COLS.has(c) || c === SORTABLE_COL)) {
         const btn = document.createElement('button')
         btn.type = 'button'
         btn.className = 'col-filter-btn'
-        btn.title = c === FILTERABLE_COL ? 'Filtrar valores' : 'Ordenar A → Z / Z → A'
-        const hasFilter = c === FILTERABLE_COL && !!filters?.has(c)
+        btn.title = FILTERABLE_COLS.has(c) ? 'Filtrar valores' : 'Ordenar A → Z / Z → A'
+        const hasFilter = FILTERABLE_COLS.has(c) && !!filters?.has(c)
         const isSorted = c === SORTABLE_COL && sort?.col === c
         if (hasFilter) btn.classList.add('is-filtered')
         if (isSorted) {
@@ -638,13 +638,19 @@ export class GridView {
         this.extendSelection(row)
         return
       }
-      const inRange = !!this.selection
-        && this.selection.col === col
-        && this.isRowInSelection(row)
-      if (!inRange) {
+      // Mesmo padrao das celulas de foto: 1o click so seleciona,
+      // 2o click (na celula ja single-selected) abre o popover.
+      const isSingleSelected =
+        !!this.selection &&
+        this.selection.col === col &&
+        this.selection.anchorRow === row &&
+        this.selection.activeRow === row
+      if (!isSingleSelected) {
         this.selection = { col, anchorRow: row, activeRow: row }
+        this.editing = null
         this.refreshSelectionClasses()
         this.emitSelection()
+        return
       }
       this.editing = null
       this.openStatusPopover(row, col)

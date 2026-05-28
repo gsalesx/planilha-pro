@@ -169,6 +169,13 @@ function isDateSheet(name: string): boolean {
   return /^\d{2}-\d{2}-\d{4}$/.test(name) || /^\d{4}_\d{2}_\d{2}/.test(name)
 }
 
+/** Normaliza o nome da aba pra formato canonico DD-MM-YYYY antes de salvar como sheet_date. */
+function normalizeSheetDate(name: string): string {
+  const m = /^(\d{4})_(\d{2})_(\d{2})/.exec(name)
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`
+  return name
+}
+
 function buildHeaderColumnMap(sheetHeaders: string[]): number[] {
   const norm = (s: string) =>
     s
@@ -267,7 +274,7 @@ export async function parseXlsx(file: File, options: ParseOptions = {}): Promise
       }
 
       if (hasValue && id) {
-        newPedidos.push({ id, row, sheetDate: sheetName, images })
+        newPedidos.push({ id, row, sheetDate: normalizeSheetDate(sheetName), images })
       }
       bodyRowIndex++
     }
