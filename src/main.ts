@@ -66,6 +66,12 @@ function buildShell() {
         </div>
       </header>
       <div class="etiqueta-bar" role="toolbar" aria-label="Etiquetas">
+        <div class="zoom-controls" role="group" aria-label="Zoom da planilha">
+          <button type="button" class="zoom-btn" id="zoom-out" title="Diminuir zoom" aria-label="Diminuir zoom">−</button>
+          <span class="zoom-display" id="zoom-display">100%</span>
+          <button type="button" class="zoom-btn" id="zoom-in" title="Aumentar zoom" aria-label="Aumentar zoom">+</button>
+        </div>
+        <span class="etiqueta-bar-divider" aria-hidden="true"></span>
         <div class="date-select-wrap" id="date-select-wrap" hidden>
           <label class="date-select-label" for="date-select">Data:</label>
           <select class="date-select" id="date-select"></select>
@@ -117,6 +123,54 @@ function updateStatusCounts() {
   const visible = grid.getVisibleRowCount()
   const total = sheet.rows.length
   target.textContent = visible === total ? `${total} pedidos` : `${visible} de ${total} pedidos`
+}
+
+/* ===========================================================
+   Zoom da planilha
+   =========================================================== */
+
+const ZOOM_KEY = 'planilha-zoom'
+const ZOOM_MIN = 0.5
+const ZOOM_MAX = 2.0
+const ZOOM_STEP = 0.1
+let currentZoom = 1
+
+function loadZoom() {
+  const raw = localStorage.getItem(ZOOM_KEY)
+  if (!raw) return
+  const v = parseFloat(raw)
+  if (Number.isFinite(v) && v >= ZOOM_MIN && v <= ZOOM_MAX) currentZoom = v
+}
+
+function applyZoom() {
+  document.documentElement.style.setProperty('--sheet-zoom', String(currentZoom))
+  try {
+    localStorage.setItem(ZOOM_KEY, String(currentZoom))
+  } catch {
+    // ignore (modo privado, etc)
+  }
+  const display = document.querySelector<HTMLSpanElement>('#zoom-display')
+  if (display) display.textContent = `${Math.round(currentZoom * 100)}%`
+  const zoomOut = document.querySelector<HTMLButtonElement>('#zoom-out')
+  const zoomIn = document.querySelector<HTMLButtonElement>('#zoom-in')
+  if (zoomOut) zoomOut.disabled = currentZoom <= ZOOM_MIN + 1e-6
+  if (zoomIn) zoomIn.disabled = currentZoom >= ZOOM_MAX - 1e-6
+}
+
+function clampZoom(v: number): number {
+  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(v * 10) / 10))
+}
+
+function bindZoomControls() {
+  el<HTMLButtonElement>('#zoom-out').addEventListener('click', () => {
+    currentZoom = clampZoom(currentZoom - ZOOM_STEP)
+    applyZoom()
+  })
+  el<HTMLButtonElement>('#zoom-in').addEventListener('click', () => {
+    currentZoom = clampZoom(currentZoom + ZOOM_STEP)
+    applyZoom()
+  })
+  applyZoom()
 }
 
 const WEEKDAY_FMT = new Intl.DateTimeFormat('pt-BR', { weekday: 'short' })
@@ -808,6 +862,7 @@ async function enterWorkbook(workbookId: string) {
   bindClipboardPaste()
   bindLogout()
   bindBackButton()
+  bindZoomControls()
   await refreshFromServer({ force: true })
   startPolling()
 }
@@ -843,6 +898,7 @@ function showHome() {
 
 async function init() {
   void FIXED_HEADERS
+  loadZoom()
   const ok = await checkAuth()
   if (!ok) {
     showLoginScreen(() => {

@@ -664,6 +664,7 @@ button {
   flex: 1;
   overflow: auto;
   background: #fff;
+  zoom: var(--sheet-zoom, 1);
 }
 
 .sheet-empty {
@@ -1007,6 +1008,46 @@ table.sheet tbody tr.row-disappeared td.cell-image .image-cell-wrap {
   background: #cbd5e1;
   margin: 0 4px;
 }
+/* Zoom controls (etiqueta-bar, leftmost) */
+.zoom-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.zoom-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #1f2937;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 0;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.zoom-btn:hover:not(:disabled) {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+.zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.zoom-display {
+  min-width: 42px;
+  text-align: center;
+  font-size: 12px;
+  font-family: 'Consolas', monospace;
+  color: #475569;
+  user-select: none;
+}
+
 .date-delete-btn {
   display: inline-flex;
   align-items: center;
