@@ -963,56 +963,47 @@ table.sheet tbody tr.row-disappeared td.cell-image .image-cell-wrap {
   background: #fff7ed;
 }
 
-/* Date group separators */
-table.sheet tbody tr.date-group-header td.date-group-cell {
-  background: linear-gradient(180deg, #f0fdf4 0%, #dcfce7 100%);
-  border-top: 2px solid #16a34a;
-  border-bottom: 1px solid #86efac;
-  padding: 6px 12px;
-  cursor: pointer;
-  user-select: none;
-  font-size: 12px;
-  color: #14532d;
-  font-weight: 600;
-  position: sticky;
-  left: 0;
-  transition: background 120ms ease;
+/* Date filter chips (header bar) */
+.date-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
+  align-items: center;
 }
-table.sheet tbody tr.date-group-header td.date-group-cell:hover {
-  background: linear-gradient(180deg, #dcfce7 0%, #bbf7d0 100%);
+.date-bar[hidden] {
+  display: none;
 }
-table.sheet tbody tr.date-group-header.is-collapsed td.date-group-cell {
-  background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
-  border-top: 2px solid #9ca3af;
-  border-bottom: 1px solid #d1d5db;
-  color: #4b5563;
-}
-.date-group-toggle {
-  display: inline-block;
-  width: 14px;
-  font-size: 11px;
-  color: #15803d;
-}
-table.sheet tbody tr.date-group-header.is-collapsed .date-group-toggle {
-  color: #6b7280;
-}
-.date-group-label {
-  display: inline-block;
-  font-family: 'Consolas', monospace;
-  margin-right: 12px;
-  letter-spacing: 0.04em;
-}
-.date-group-count {
-  display: inline-block;
-  font-size: 11px;
-  color: #15803d;
-  background: rgba(255, 255, 255, 0.6);
-  padding: 1px 8px;
+.date-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
   border-radius: 999px;
-  font-weight: 500;
+  font-size: 12px;
+  font-family: 'Consolas', monospace;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  user-select: none;
 }
-table.sheet tbody tr.date-group-header.is-collapsed .date-group-count {
-  color: #4b5563;
+.date-chip:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+.date-chip.is-active {
+  background: #217346;
+  color: #fff;
+  border-color: #217346;
+}
+.date-chip.is-active:hover {
+  background: #1a5a37;
+  border-color: #1a5a37;
 }
 
 /* Cell: user (column F) with copy button */

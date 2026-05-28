@@ -63,6 +63,7 @@ function buildShell() {
           <button class="btn" id="logout-btn" title="Sair">Sair</button>
         </div>
       </header>
+      <div class="date-bar" role="toolbar" aria-label="Filtrar por data" id="date-bar"></div>
       <div class="etiqueta-bar" role="toolbar" aria-label="Etiquetas">
         <span class="etiqueta-bar-label">Etiqueta:</span>
         <button class="etiqueta-btn" data-bg="#93c5fd" title="Marcar como Etiqueta">
@@ -106,7 +107,60 @@ function updateStatusCounts() {
     target.textContent = ''
     return
   }
-  target.textContent = `${sheet.rows.length} pedidos`
+  const visible = grid.getVisibleRowCount()
+  const total = sheet.rows.length
+  target.textContent = visible === total ? `${total} pedidos` : `${visible} de ${total} pedidos`
+}
+
+const WEEKDAY_FMT = new Intl.DateTimeFormat('pt-BR', { weekday: 'short' })
+
+function parseSheetDate(raw: string): Date | null {
+  // Aceita DD-MM-YYYY (formato novo) e YYYY_MM_DD (legado).
+  let m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(raw)
+  if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+  m = /^(\d{4})_(\d{2})_(\d{2})/.exec(raw)
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  return null
+}
+
+function formatDateChipLabel(raw: string): string {
+  const date = parseSheetDate(raw)
+  if (!date || Number.isNaN(date.getTime())) return raw
+  const weekday = WEEKDAY_FMT.format(date).replace(/\.$/, '')
+  return `${raw} ${weekday}`
+}
+
+function renderDateBar() {
+  const bar = el<HTMLDivElement>('#date-bar')
+  const dates = grid.getAvailableDates()
+  if (dates.length === 0) {
+    bar.innerHTML = ''
+    bar.hidden = true
+    return
+  }
+  bar.hidden = false
+  // Ordena ascendente por timestamp da data (fallback: ordem natural se nao parsear).
+  const sorted = [...dates].sort((a, b) => {
+    const da = parseSheetDate(a)?.getTime() ?? 0
+    const db = parseSheetDate(b)?.getTime() ?? 0
+    return da - db
+  })
+  const active = grid.getDateFilter()
+  bar.innerHTML = sorted
+    .map((d) => {
+      const label = formatDateChipLabel(d)
+      const isActive = d === active ? ' is-active' : ''
+      return `<button type="button" class="date-chip${isActive}" data-date="${d}">${label}</button>`
+    })
+    .join('')
+  bar.querySelectorAll<HTMLButtonElement>('.date-chip').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const date = btn.dataset.date ?? ''
+      grid.setDateFilter(date)
+      updateStatusCounts()
+      renderDateBar()
+    })
+  })
 }
 
 function getOrderId(rowIndex: number): string | null {
@@ -642,6 +696,7 @@ async function refreshFromServer(options: { force?: boolean } = {}): Promise<voi
     }
     workbook = serverWorkbookToLocal(currentWorkbookId, response)
     grid.setWorkbook(workbook)
+    renderDateBar()
     updateStatusCounts()
     setFilename(workbook.name)
     serverUpdatedAt = response.updatedAt

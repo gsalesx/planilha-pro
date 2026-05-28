@@ -165,7 +165,8 @@ function normalizeCell(value: unknown): CellValue {
 }
 
 function isDateSheet(name: string): boolean {
-  return /^\d{4}_\d{2}_\d{2}/.test(name)
+  // Aceita DD-MM-YYYY (formato novo do Zoho Sheets) ou YYYY_MM_DD (legado).
+  return /^\d{2}-\d{2}-\d{4}$/.test(name) || /^\d{4}_\d{2}_\d{2}/.test(name)
 }
 
 function buildHeaderColumnMap(sheetHeaders: string[]): number[] {

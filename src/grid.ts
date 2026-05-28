@@ -82,7 +82,7 @@ export class GridView {
   private filters = new Map<string, Map<number, Set<string>>>()
   private sorts = new Map<string, SortState>()
   private visibleOrder: number[] = []
-  private collapsedDates = new Set<string>()
+  private dateFilter: string | null = null
 
   constructor(root: HTMLElement, callbacks: GridCallbacks) {
     this.root = root
@@ -97,8 +97,36 @@ export class GridView {
     this.activeSheetId = workbook?.sheetOrder[0] ?? null
     this.selection = workbook ? { col: 0, anchorRow: 0, activeRow: 0 } : null
     this.editing = null
+    // Se o filtro de data ativo nao existe mais nesta workbook, cai pra primeira data disponivel.
+    const available = this.getAvailableDates()
+    if (this.dateFilter && !available.includes(this.dateFilter)) {
+      this.dateFilter = available[0] ?? null
+    } else if (!this.dateFilter && available.length > 0) {
+      this.dateFilter = available[0]
+    }
     this.recomputeOrder()
     this.render()
+  }
+
+  setDateFilter(date: string | null) {
+    this.dateFilter = date
+    this.recomputeOrder()
+    this.render()
+  }
+
+  getDateFilter(): string | null {
+    return this.dateFilter
+  }
+
+  getAvailableDates(): string[] {
+    const sheet = this.getActiveSheet()
+    if (!sheet) return []
+    const dates = sheet.rowDates ?? []
+    const set = new Set<string>()
+    for (const d of dates) {
+      if (d && d.length > 0) set.add(d)
+    }
+    return [...set]
   }
 
   setActiveSheet(sheetId: string, initialSelection?: SelectionState) {
@@ -156,6 +184,10 @@ export class GridView {
       return
     }
     let indices = sheet.rows.map((_, i) => i)
+    const dates = sheet.rowDates ?? []
+    if (this.dateFilter) {
+      indices = indices.filter((i) => (dates[i] ?? '') === this.dateFilter)
+    }
     const filters = this.activeSheetId ? this.filters.get(this.activeSheetId) : undefined
     if (filters && filters.size > 0) {
       indices = indices.filter((i) => {
@@ -397,59 +429,10 @@ export class GridView {
   private buildBody(sheet: SheetData, columnCount: number, _rowCount: number): HTMLTableSectionElement {
     const tbody = document.createElement('tbody')
     const selectedRows = this.selection ? new Set(this.getSelectedRows()) : new Set<number>()
-    const dates = sheet.rowDates ?? []
-    const hasGroups = dates.some((d) => d && d.length > 0)
-
-    if (!hasGroups) {
-      for (const r of this.visibleOrder) {
-        tbody.appendChild(this.buildDataRow(sheet, r, columnCount, selectedRows))
-      }
-      return tbody
-    }
-
-    // Conta total por data (sobre visibleOrder, pra refletir filtros aplicados)
-    const groupCounts = new Map<string, number>()
     for (const r of this.visibleOrder) {
-      const d = dates[r] ?? ''
-      groupCounts.set(d, (groupCounts.get(d) ?? 0) + 1)
-    }
-
-    let lastDate: string | null = null
-    for (const r of this.visibleOrder) {
-      const date = dates[r] ?? ''
-      if (date !== lastDate) {
-        tbody.appendChild(this.buildDateGroupHeader(date, groupCounts.get(date) ?? 0, columnCount))
-        lastDate = date
-      }
-      if (this.collapsedDates.has(date)) continue
       tbody.appendChild(this.buildDataRow(sheet, r, columnCount, selectedRows))
     }
-
     return tbody
-  }
-
-  private buildDateGroupHeader(date: string, count: number, columnCount: number): HTMLTableRowElement {
-    const tr = document.createElement('tr')
-    tr.className = 'date-group-header'
-    const collapsed = this.collapsedDates.has(date)
-    if (collapsed) tr.classList.add('is-collapsed')
-
-    const cell = document.createElement('td')
-    cell.colSpan = columnCount + 1
-    cell.className = 'date-group-cell'
-    const labelDate = date || 'Sem data'
-    cell.innerHTML = `
-      <span class="date-group-toggle">${collapsed ? '▸' : '▾'}</span>
-      <span class="date-group-label">${labelDate}</span>
-      <span class="date-group-count">${count} pedido${count === 1 ? '' : 's'}</span>
-    `
-    cell.addEventListener('click', () => {
-      if (this.collapsedDates.has(date)) this.collapsedDates.delete(date)
-      else this.collapsedDates.add(date)
-      this.render()
-    })
-    tr.appendChild(cell)
-    return tr
   }
 
   private buildDataRow(
