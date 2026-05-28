@@ -34,6 +34,7 @@ Endpoints chave:
 - `GET /workbooks/:wb/orders?status=&sheetDate=` — filtros (substitui zoho_fila)
 - `POST /workbooks/:wb/orders` — criar (row inteira ok)
 - `PATCH /workbooks/:wb/orders` — bulk update SÓ status: `[{id, status}]`
+- `DELETE /workbooks/:wb/orders?sheetDate=DD-MM-YYYY` — apaga todos os pedidos da data
 - `POST/GET/DELETE /workbooks/:wb/images/:orderId/:col` — fotos
 
 **Restrições por design (não readicionar)**: via API só dá pra mudar status e foto em pedido existente. Etiquetas são MANUAIS na UI. Demais campos só na criação. README da raiz tem exemplos curl.
@@ -71,3 +72,6 @@ cd server && ./node_modules/.bin/tsc --noEmit
 - Status popover só abre no 2º click (1º só seleciona) — mesmo padrão das fotos vazias
 - Etiquetas (`styles.bg`) são SÓ manuais na UI — não expor via API
 - Antes de operações em lote (etiqueta, cell change em massa), use `withPollingPaused` pra não correr com o refresh
+- Numeração de linha (`row-num`) é por filtro: posição no `visibleOrder + 1`, não índice absoluto
+- Apagar data = `DELETE /workbooks/:wb/orders?sheetDate=X` (deleta orders + arquivos de imagem). Data some do `<select>` sozinha quando perde todos os orders
+- Diálogos modais (confirm/prompt) vivem em `src/dialog.ts` — não duplicar a função

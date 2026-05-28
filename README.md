@@ -95,6 +95,10 @@ curl -X PATCH -H "$H" -H "Content-Type: application/json" \
   -d '[{"id":"P001","status":"Pronto"},{"id":"P002","status":"Pronto"}]' \
   "$BASE/workbooks/<wbId>/orders"
 
+# Apagar todos os pedidos de uma data (e seus arquivos de imagem)
+curl -X DELETE -H "$H" \
+  "$BASE/workbooks/<wbId>/orders?sheetDate=27-05-2026"
+
 # Subir foto (col 7=Foto, 8=Foto 2, 9=+Fotos)
 curl -X POST -H "$H" \
   -F "image=@./foto.jpg" \
