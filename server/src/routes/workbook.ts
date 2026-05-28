@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync } from 'node:fs'
+import { existsSync, statSync, unlinkSync } from 'node:fs'
 
 import { Router } from 'express'
 
@@ -23,6 +23,15 @@ interface ImageRow {
   col: number
   file_name: string
   mime: string
+  storage_path: string
+}
+
+function fileSize(p: string): number {
+  try {
+    return statSync(p).size
+  } catch {
+    return 0
+  }
 }
 
 interface WorkbookRow {
@@ -52,7 +61,7 @@ function buildWorkbookPayload(workbookId: string, since?: number) {
     .all(workbookId) as OrderRow[]
 
   const images = db
-    .prepare('SELECT order_id, col, file_name, mime FROM images WHERE workbook_id = ?')
+    .prepare('SELECT order_id, col, file_name, mime, storage_path FROM images WHERE workbook_id = ?')
     .all(workbookId) as ImageRow[]
   const imagesByOrder = new Map<string, ImageRow[]>()
   for (const img of images) {
@@ -79,6 +88,7 @@ function buildWorkbookPayload(workbookId: string, since?: number) {
         url: `/api/workbooks/${encodeURIComponent(workbookId)}/images/${encodeURIComponent(o.id)}/${i.col}`,
         fileName: i.file_name,
         mime: i.mime,
+        size: fileSize(i.storage_path),
       })),
     })),
   }
@@ -207,12 +217,13 @@ function serializeOrderRow(workbookId: string, o: OrderRow) {
     position: o.position,
     updatedAt: o.updated_at,
     images: (db
-      .prepare('SELECT col, file_name, mime FROM images WHERE workbook_id = ? AND order_id = ?')
+      .prepare('SELECT col, file_name, mime, storage_path FROM images WHERE workbook_id = ? AND order_id = ?')
       .all(workbookId, o.id) as ImageRow[]).map((i) => ({
       col: i.col,
       url: `/api/workbooks/${encodeURIComponent(workbookId)}/images/${encodeURIComponent(o.id)}/${i.col}`,
       fileName: i.file_name,
       mime: i.mime,
+      size: fileSize(i.storage_path),
     })),
   }
 }
