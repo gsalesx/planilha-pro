@@ -306,43 +306,6 @@ router.post('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
   res.status(201).json(serializeOrderRow(workbookId, created))
 })
 
-/** POST /workbooks/:workbookId/orders/:id/cells — merge de colunas. Body: {"5": "Pronto", "1": "Pijama X"} */
-router.post('/workbooks/:workbookId/orders/:id/cells', requireAuth, (req, res) => {
-  const workbookId = req.params.workbookId
-  const id = req.params.id
-  const existing = db
-    .prepare('SELECT id, row_json FROM orders WHERE workbook_id = ? AND id = ?')
-    .get(workbookId, id) as { id: string; row_json: string } | undefined
-  if (!existing) {
-    res.status(404).json({ error: 'Pedido não encontrado' })
-    return
-  }
-  const cells = req.body as Record<string, unknown>
-  if (!cells || typeof cells !== 'object' || Array.isArray(cells)) {
-    res.status(400).json({ error: 'Body deve ser objeto { colIndex: value }' })
-    return
-  }
-  const row = JSON.parse(existing.row_json) as unknown[]
-  for (const [k, v] of Object.entries(cells)) {
-    const colIdx = Number(k)
-    if (!Number.isInteger(colIdx) || colIdx < 0 || colIdx > 30) {
-      res.status(400).json({ error: `Índice de coluna inválido: ${k}` })
-      return
-    }
-    while (row.length <= colIdx) row.push(null)
-    row[colIdx] = v as unknown
-  }
-  const now = nowMs()
-  const txn = db.transaction(() => {
-    db.prepare(
-      'UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND id = ?',
-    ).run(JSON.stringify(row), now, workbookId, id)
-    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
-  })
-  txn()
-  res.json({ ok: true, updatedAt: now, row })
-})
-
 /** PATCH /workbooks/:workbookId/orders — bulk. Body: [{id, cells?: {col: value}, row?: [...]}] */
 router.patch('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
   const workbookId = req.params.workbookId

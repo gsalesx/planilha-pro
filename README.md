@@ -89,12 +89,7 @@ curl -H "$H" -H "Content-Type: application/json" \
   -d '{"id":"P001","row":["P001","Pijama X","Adulto","1","joao","Separado","Joao Silva",null,null,null],"sheetDate":"27-05-2026"}' \
   "$BASE/workbooks/<wbId>/orders"
 
-# Atualizar apenas o status (col 5) — merge de células
-curl -X POST -H "$H" -H "Content-Type: application/json" \
-  -d '{"5":"Pronto"}' \
-  "$BASE/workbooks/<wbId>/orders/P001/cells"
-
-# Bulk update (várias linhas numa request)
+# Atualizar pedidos (1 ou N) — bulk com merge de células
 curl -X PATCH -H "$H" -H "Content-Type: application/json" \
   -d '[{"id":"P001","cells":{"5":"Pronto"}},{"id":"P002","cells":{"5":"Pronto"}}]' \
   "$BASE/workbooks/<wbId>/orders"
