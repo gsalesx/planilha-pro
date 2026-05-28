@@ -952,6 +952,24 @@ table.sheet tbody tr:hover td.has-bg {
   filter: brightness(0.94);
 }
 
+/* Linha selecionada: tom mais forte que o hover.
+   `.row-selected` ganha do hover por especificidade + ordem. */
+table.sheet tbody tr.row-selected td {
+  background: #dbeafe;
+}
+table.sheet tbody tr.row-selected td.cell-image {
+  background: #bfdbfe;
+}
+table.sheet tbody tr.row-selected td.has-bg {
+  filter: brightness(0.88);
+}
+table.sheet tbody tr.row-selected:hover td {
+  background: #bfdbfe;
+}
+table.sheet tbody tr.row-selected:hover td.cell-image {
+  background: #93c5fd;
+}
+
 table.sheet tbody td.is-selected {
   outline: 2px solid #2563eb;
   outline-offset: -2px;

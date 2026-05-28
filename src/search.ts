@@ -7,6 +7,10 @@ export interface SearchHit {
   colIndex: number
   value: string
   type: 'cell' | 'header'
+  /** YYYY_MM_DD ou DD-MM-YYYY etc — vazio = sem data */
+  sheetDate: string
+  /** posição 1-based DENTRO do filtro de data (não global). 0 = sem data */
+  displayRow: number
 }
 
 const DEFAULT_MAX = 80
@@ -36,9 +40,23 @@ export function searchWorkbook(
           colIndex: c,
           value,
           type: 'header',
+          sheetDate: '',
+          displayRow: 0,
         })
         if (hits.length >= maxResults) return hits
       }
+    }
+
+    // Posição 1-based dentro do dia de cada row — pra search exibir
+    // "linha N do dia DD-MM-YYYY" em vez do índice global.
+    const dates = sheet.rowDates ?? []
+    const positionByGlobal = new Array<number>(sheet.rows.length).fill(0)
+    const counterByDate = new Map<string, number>()
+    for (let r = 0; r < sheet.rows.length; r++) {
+      const d = dates[r] ?? ''
+      const n = (counterByDate.get(d) ?? 0) + 1
+      counterByDate.set(d, n)
+      positionByGlobal[r] = n
     }
 
     for (let r = 0; r < sheet.rows.length; r++) {
@@ -56,6 +74,8 @@ export function searchWorkbook(
             colIndex: c,
             value: text,
             type: 'cell',
+            sheetDate: dates[r] ?? '',
+            displayRow: positionByGlobal[r],
           })
           if (hits.length >= maxResults) return hits
         }
@@ -82,7 +102,10 @@ function colLetter(index: number): string {
 
 export function formatHitRef(hit: SearchHit): string {
   if (hit.type === 'header') return `${colLetter(hit.colIndex)}1 · cabeçalho`
-  return `${colLetter(hit.colIndex)}${hit.rowIndex + 2}`
+  // Mostra "linha N · DD-MM-YYYY" — N é a posição DENTRO do dia (1-based),
+  // não a posição global no workbook. Cada dia é independente.
+  const n = hit.displayRow || hit.rowIndex + 2
+  return hit.sheetDate ? `linha ${n} · ${hit.sheetDate}` : `linha ${n}`
 }
 
 export function escapeHtml(value: string): string {

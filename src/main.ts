@@ -397,7 +397,7 @@ async function uploadAndSetImage(row: number, col: number, blob: Blob, fileName:
     if (!workbook) return
     const sheet = workbook.sheets[workbook.sheetOrder[0]]
     if (!sheet) return
-    sheet.images[`${row}:${col}`] = { url: result.url, fileName: safeName }
+    sheet.images[`${row}:${col}`] = { url: result.url, fileName: safeName, updatedAt: result.updatedAt }
     grid.render()
     serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
     setStatusText(`Foto enviada (${Math.round(jpeg.size / 1024)} KB)`)
@@ -491,6 +491,12 @@ function renderSearchResults(query: string) {
       <span class="search-result-value">${highlightMatch(hit.value, query)}</span>
     `
     item.addEventListener('click', () => {
+      // troca pra data do hit antes de navegar — search retorna hits de outros
+      // dias e o navigateTo so funciona em rows visiveis no filtro atual.
+      if (hit.sheetDate && grid.getDateFilter() !== hit.sheetDate) {
+        grid.setDateFilter(hit.sheetDate)
+        renderDateSelect()
+      }
       grid.navigateTo(hit.sheetId, hit.rowIndex < 0 ? 0 : hit.rowIndex, hit.colIndex)
       closeSearchResults()
       el<HTMLInputElement>('#search-input').value = ''

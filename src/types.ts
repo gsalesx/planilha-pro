@@ -21,6 +21,8 @@ export interface CellImage {
   /** blob local enquanto sobe (otimista) */
   blob?: Blob
   fileName: string
+  /** epoch ms da última gravação no servidor — cache-buster da thumb */
+  updatedAt?: number
 }
 
 export interface CellStyle {

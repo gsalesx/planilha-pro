@@ -117,6 +117,9 @@ export class GridView {
   private visibleOrder: number[] = []
   private dateFilter: string | null = null
   private loading = false
+  // Rows extras selecionadas via Ctrl-click (não-contíguas). Sempre na mesma
+  // coluna do `selection`. Limpa quando o user seleciona algo sem Ctrl/Shift.
+  private extraRows = new Set<number>()
 
   constructor(root: HTMLElement, callbacks: GridCallbacks) {
     this.root = root
@@ -264,11 +267,18 @@ export class GridView {
     return url
   }
 
-  private resolveImageSrc(img: { url?: string; blob?: Blob }, thumb?: number): string {
+  private resolveImageSrc(
+    img: { url?: string; blob?: Blob; updatedAt?: number },
+    thumb?: number,
+  ): string {
     if (img.url) {
-      if (thumb == null) return img.url
+      const params: string[] = []
+      if (thumb != null) params.push(`thumb=${thumb}`)
+      // cache-buster: troca de foto → updatedAt muda → browser baixa de novo
+      if (img.updatedAt != null) params.push(`v=${img.updatedAt}`)
+      if (params.length === 0) return img.url
       const sep = img.url.includes('?') ? '&' : '?'
-      return `${img.url}${sep}thumb=${thumb}`
+      return `${img.url}${sep}${params.join('&')}`
     }
     if (img.blob) return this.getImageUrl(img.blob)
     return ''
@@ -492,8 +502,10 @@ export class GridView {
     selectedRows: Set<number>,
   ): HTMLTableRowElement {
     const tr = document.createElement('tr')
+    tr.dataset.row = String(r)
     tr.style.height = `${DEFAULT_ROW_HEIGHT}px`
     if (sheet.rowFlags?.[r]?.disappeared) tr.classList.add('row-disappeared')
+    if (selectedRows.has(r)) tr.classList.add('row-selected')
 
     const rowNum = document.createElement('th')
     rowNum.className = 'row-num'
@@ -540,6 +552,8 @@ export class GridView {
       btn.textContent = '⎘'
       btn.addEventListener('click', async (event) => {
         event.stopPropagation()
+        // Seleciona a linha clicada antes de copiar (visual feedback).
+        this.select(row, col)
         try {
           await navigator.clipboard.writeText(String(value))
           btn.classList.add('is-copied')
@@ -627,16 +641,18 @@ export class GridView {
             this.extendSelection(row)
             return
           }
+          if (event.ctrlKey || event.metaKey) {
+            this.toggleExtraRow(row, col)
+            return
+          }
           const isSingleSelected =
             !!this.selection &&
             this.selection.col === col &&
             this.selection.anchorRow === row &&
-            this.selection.activeRow === row
+            this.selection.activeRow === row &&
+            this.extraRows.size === 0
           if (!isSingleSelected) {
-            this.selection = { col, anchorRow: row, activeRow: row }
-            this.editing = null
-            this.refreshSelectionClasses()
-            this.emitSelection()
+            this.select(row, col)
             return
           }
           this.callbacks.onImageRequest?.(row, col)
@@ -676,6 +692,8 @@ export class GridView {
       event.stopPropagation()
       if (event.shiftKey && this.selection && this.selection.col === col) {
         this.extendSelection(row)
+      } else if (event.ctrlKey || event.metaKey) {
+        this.toggleExtraRow(row, col)
       } else {
         this.select(row, col)
       }
@@ -703,6 +721,10 @@ export class GridView {
         this.extendSelection(row)
         return
       }
+      if (event.ctrlKey || event.metaKey) {
+        this.toggleExtraRow(row, col)
+        return
+      }
       // 1o click so seleciona, 2o click (na celula ja dentro do range
       // selecionado) abre o popover. Preserva multi-selecao via shift+click.
       const inRange =
@@ -710,10 +732,7 @@ export class GridView {
         this.selection.col === col &&
         this.isRowInSelection(row)
       if (!inRange) {
-        this.selection = { col, anchorRow: row, activeRow: row }
-        this.editing = null
-        this.refreshSelectionClasses()
-        this.emitSelection()
+        this.select(row, col)
         return
       }
       this.editing = null
@@ -723,29 +742,33 @@ export class GridView {
   }
 
   private refreshSelectionClasses() {
-    this.root.querySelectorAll('td.is-selected, th.row-num.is-active, th.col-letter.is-active').forEach((node) => {
-      node.classList.remove('is-selected', 'is-active')
-    })
+    this.root
+      .querySelectorAll('td.is-selected, th.row-num.is-active, th.col-letter.is-active, tr.row-selected')
+      .forEach((node) => {
+        node.classList.remove('is-selected', 'is-active', 'row-selected')
+      })
     if (!this.selection) return
 
+    const col = this.selection.col
+    const markRow = (r: number) => {
+      const cell = this.root.querySelector<HTMLElement>(`td[data-row="${r}"][data-col="${col}"]`)
+      if (!cell) return
+      cell.classList.add('is-selected')
+      const tr = cell.parentElement as HTMLElement | null
+      tr?.classList.add('row-selected')
+      tr?.querySelector<HTMLElement>('th.row-num')?.classList.add('is-active')
+    }
+
+    // Range principal
     const anchorPos = this.visibleOrder.indexOf(this.selection.anchorRow)
     const activePos = this.visibleOrder.indexOf(this.selection.activeRow)
-    if (anchorPos < 0 || activePos < 0) return
-
-    const lo = Math.min(anchorPos, activePos)
-    const hi = Math.max(anchorPos, activePos)
-    const col = this.selection.col
-
-    for (let pos = lo; pos <= hi; pos++) {
-      const r = this.visibleOrder[pos]
-      const cell = this.root.querySelector<HTMLElement>(`td[data-row="${r}"][data-col="${col}"]`)
-      if (cell) {
-        cell.classList.add('is-selected')
-        const tr = cell.parentElement
-        const rowNum = tr?.querySelector<HTMLElement>('th.row-num')
-        rowNum?.classList.add('is-active')
-      }
+    if (anchorPos >= 0 && activePos >= 0) {
+      const lo = Math.min(anchorPos, activePos)
+      const hi = Math.max(anchorPos, activePos)
+      for (let pos = lo; pos <= hi; pos++) markRow(this.visibleOrder[pos])
     }
+    // Linhas extras do Ctrl-click
+    for (const r of this.extraRows) markRow(r)
 
     const firstHeaderRow = this.root.querySelector('thead tr:first-child')
     firstHeaderRow?.children[col + 1]?.classList.add('is-active')
@@ -1156,6 +1179,7 @@ export class GridView {
   private select(row: number, col: number) {
     const wasEditing = this.editing !== null
     this.selection = { col, anchorRow: row, activeRow: row }
+    this.extraRows.clear()
     this.editing = null
     if (wasEditing) {
       this.render()
@@ -1222,16 +1246,24 @@ export class GridView {
     if (!this.selection) return []
     const anchorPos = this.visibleOrder.indexOf(this.selection.anchorRow)
     const activePos = this.visibleOrder.indexOf(this.selection.activeRow)
+    let rangeRows: number[]
     if (anchorPos < 0 || activePos < 0) {
-      return [this.selection.activeRow]
+      rangeRows = [this.selection.activeRow]
+    } else {
+      const lo = Math.min(anchorPos, activePos)
+      const hi = Math.max(anchorPos, activePos)
+      rangeRows = this.visibleOrder.slice(lo, hi + 1)
     }
-    const lo = Math.min(anchorPos, activePos)
-    const hi = Math.max(anchorPos, activePos)
-    return this.visibleOrder.slice(lo, hi + 1)
+    if (this.extraRows.size === 0) return rangeRows
+    // Combina range + extras; dedup; mantém ordem do visibleOrder.
+    const set = new Set<number>(rangeRows)
+    for (const r of this.extraRows) set.add(r)
+    return this.visibleOrder.filter((r) => set.has(r))
   }
 
   private isRowInSelection(row: number): boolean {
     if (!this.selection) return false
+    if (this.extraRows.has(row)) return true
     const anchorPos = this.visibleOrder.indexOf(this.selection.anchorRow)
     const activePos = this.visibleOrder.indexOf(this.selection.activeRow)
     const rowPos = this.visibleOrder.indexOf(row)
@@ -1239,6 +1271,22 @@ export class GridView {
     const lo = Math.min(anchorPos, activePos)
     const hi = Math.max(anchorPos, activePos)
     return rowPos >= lo && rowPos <= hi
+  }
+
+  // Ctrl-click: toggle row na seleção extra (não-contígua). Garante mesma
+  // coluna da seleção atual; se col diferente, reinicia a seleção nessa col.
+  private toggleExtraRow(row: number, col: number) {
+    if (!this.selection || this.selection.col !== col) {
+      this.extraRows.clear()
+      this.selection = { col, anchorRow: row, activeRow: row }
+    } else if (this.extraRows.has(row)) {
+      this.extraRows.delete(row)
+    } else {
+      this.extraRows.add(row)
+    }
+    this.editing = null
+    this.refreshSelectionClasses()
+    this.emitSelection()
   }
 
   private renderEmpty() {

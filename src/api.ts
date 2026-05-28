@@ -19,7 +19,7 @@ export interface ServerOrder {
   sheetDate?: string
   position: number
   updatedAt: number
-  images: Array<{ col: number; url: string; fileName: string; mime: string }>
+  images: Array<{ col: number; url: string; fileName: string; mime: string; size?: number; updatedAt?: number }>
 }
 
 export interface ServerWorkbook {
@@ -213,7 +213,7 @@ export async function deleteOrdersBySheetDate(
 export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook): WorkbookData {
   const rows: CellValue[][] = []
   const rowDates: string[] = []
-  const images: Record<string, { url: string; fileName: string }> = {}
+  const images: Record<string, { url: string; fileName: string; updatedAt?: number }> = {}
   const cellStyles: Record<string, CellStyle> = {}
   const rowFlags: Record<number, { disappeared?: boolean }> = {}
 
@@ -225,7 +225,7 @@ export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook
     }
     if (order.disappeared) rowFlags[idx] = { disappeared: true }
     for (const img of order.images) {
-      images[`${idx}:${img.col}`] = { url: img.url, fileName: img.fileName }
+      images[`${idx}:${img.col}`] = { url: img.url, fileName: img.fileName, updatedAt: img.updatedAt }
     }
   })
 
