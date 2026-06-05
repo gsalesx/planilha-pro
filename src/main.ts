@@ -66,6 +66,7 @@ function buildShell() {
         </div>
       </header>
       <div class="etiqueta-bar" role="toolbar" aria-label="Etiquetas">
+        <span id="selection-count" style="margin-right:auto;font-size:12px;color:#475569;font-weight:600;">1 linha selecionada</span>
         <div class="zoom-controls" role="group" aria-label="Zoom da planilha">
           <button type="button" class="zoom-btn" id="zoom-out" title="Diminuir zoom" aria-label="Diminuir zoom">−</button>
           <span class="zoom-display" id="zoom-display">100%</span>
@@ -184,15 +185,17 @@ function bindZoomControls() {
 const WEEKDAY_FMT = new Intl.DateTimeFormat('pt-BR', { weekday: 'short' })
 
 function parseSheetDate(raw: string): Date | null {
-  // Aceita DD-MM-YYYY (formato novo) e YYYY_MM_DD (legado).
+  // Aceita DD-MM-YYYY (formato novo), DD_MM_YYYY e YYYY_MM_DD (legados).
   let m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(raw)
+  if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+  m = /^(\d{2})_(\d{2})_(\d{4})$/.exec(raw)
   if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
   m = /^(\d{4})_(\d{2})_(\d{2})/.exec(raw)
   if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
   return null
 }
 
-/** Sempre exibe DD-MM-YYYY mesmo pra dados antigos no banco salvos como YYYY_MM_DD. */
+/** Sempre exibe DD-MM-YYYY Dia mesmo pra dados antigos salvos com underscores. */
 function formatDateForDisplay(raw: string): string {
   const date = parseSheetDate(raw)
   if (!date || Number.isNaN(date.getTime())) return raw
@@ -200,7 +203,8 @@ function formatDateForDisplay(raw: string): string {
   const mm = String(date.getMonth() + 1).padStart(2, '0')
   const yyyy = date.getFullYear()
   const weekday = WEEKDAY_FMT.format(date).replace(/\.$/, '')
-  return `${dd}-${mm}-${yyyy} ${weekday}`
+  const weekdayLabel = weekday.charAt(0).toUpperCase() + weekday.slice(1)
+  return `${dd}-${mm}-${yyyy} ${weekdayLabel}`
 }
 
 function renderDateSelect() {
@@ -305,8 +309,18 @@ async function handleCellChange(changes: ChangeBatch) {
   })
 }
 
-function handleSelect(_ref: string, _value: CellValue) {
-  // no-op (sem formula bar)
+function selectedLineCountFromRef(ref: string): number {
+  const match = /^[A-Z]+(\d+)(?::[A-Z]+(\d+))?$/.exec(ref)
+  if (!match) return 1
+  const start = Number(match[1])
+  const end = Number(match[2] ?? match[1])
+  return Math.max(1, Math.abs(end - start) + 1)
+}
+
+function handleSelect(ref: string, _value: CellValue) {
+  const count = selectedLineCountFromRef(ref)
+  el<HTMLSpanElement>('#selection-count').textContent =
+    `${count} linha${count === 1 ? '' : 's'} selecionada${count === 1 ? '' : 's'}`
 }
 
 async function handleEtiqueta(color: string | null) {
@@ -890,7 +904,13 @@ async function enterWorkbook(workbookId: string) {
     onCellImageChange: () => {
       // not used here; image ops go through uploadAndSetImage/deleteImageAt
     },
-    onImageDelete: (row, col) => void deleteImageAt(row, col),
+    onImageDelete: (row, col) => openConfirmDialog({
+      title: 'Excluir imagem?',
+      body: 'Esta imagem será removida do pedido. Esta ação não pode ser desfeita.',
+      confirmLabel: 'Excluir',
+      danger: true,
+      onConfirm: () => deleteImageAt(row, col),
+    }),
   })
   renderSheetLoading()
   bindFileInput()

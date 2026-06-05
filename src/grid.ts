@@ -125,6 +125,7 @@ export class GridView {
   // de inatividade. Concatena chars enquanto o user digita rápido.
   private typeBuffer = ''
   private typeBufferAt = 0
+  private dragSelectionCol: number | null = null
 
   constructor(root: HTMLElement, callbacks: GridCallbacks) {
     this.root = root
@@ -746,6 +747,18 @@ export class GridView {
 
     if (isSelected) td.classList.add('is-selected')
 
+    td.addEventListener('mousedown', (event) => {
+      if (!this.canStartDragSelection(event)) return
+      event.preventDefault()
+      this.select(row, col)
+      this.dragSelectionCol = col
+      window.addEventListener('mouseup', this.stopDragSelection, { once: true })
+    })
+    td.addEventListener('mouseenter', () => {
+      if (this.dragSelectionCol !== col) return
+      this.extendSelection(row)
+    })
+
     td.addEventListener('click', (event) => {
       if (col === STATUS_COLUMN_INDEX) return
       event.stopPropagation()
@@ -1112,7 +1125,7 @@ export class GridView {
 
     const MIN_SCALE = 0.4
     const MAX_SCALE = 2
-    let scale = 1
+    let scale = MAX_SCALE
     let tx = 0
     let ty = 0
     let dragging = false
@@ -1330,6 +1343,16 @@ export class GridView {
     const lo = Math.min(anchorPos, activePos)
     const hi = Math.max(anchorPos, activePos)
     return rowPos >= lo && rowPos <= hi
+  }
+
+  private canStartDragSelection(event: MouseEvent): boolean {
+    if (event.button !== 0 || event.shiftKey || event.ctrlKey || event.metaKey) return false
+    const target = event.target as HTMLElement | null
+    return !target?.closest('button, input, textarea, select, img, .status-pill')
+  }
+
+  private stopDragSelection = () => {
+    this.dragSelectionCol = null
   }
 
   // Ctrl-click: toggle row na seleção extra (não-contígua). Garante mesma
