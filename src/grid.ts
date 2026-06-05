@@ -2,11 +2,14 @@ import { findStatusOption, STATUS_COLUMN_INDEX, STATUS_OPTIONS } from './status'
 import type { CellValue, SheetData, WorkbookData } from './types'
 
 const ID_COLUMN_INDEX = 0 // coluna A (ID do pedido — chave única)
+export const MODEL_COLUMN_INDEX = 2 // coluna C (Modelo)
 const USER_COLUMN_INDEX = 4 // coluna E (Nome de usuário)
-const IMAGE_COLUMN_INDICES = new Set([7, 8, 9]) // colunas H, I, J (Foto, Foto 2, + Fotos)
-const FILTERABLE_COLS = new Set<number>([2, STATUS_COLUMN_INDEX]) // C (Modelo) e F (Status)
+export const PHOTO_COLUMN_INDEX = 7
+export const PHOTO_COLUMN_INDICES = Array.from({ length: 10 }, (_, i) => PHOTO_COLUMN_INDEX + i)
+const IMAGE_COLUMN_INDICES = new Set(PHOTO_COLUMN_INDICES) // Foto 1 até Foto 10
+const FILTERABLE_COLS = new Set<number>([MODEL_COLUMN_INDEX, STATUS_COLUMN_INDEX]) // C (Modelo) e F (Status)
 const SORTABLE_COL = 6 // coluna G (Nome do destinatário)
-const MIN_COLUMN_COUNT = 15 // até coluna O — espaço extra pra anotações
+const MIN_COLUMN_COUNT = 17 // até coluna Q — Foto 1 até Foto 10
 const DEFAULT_COL_WIDTH = 110
 const ROW_NUMBER_WIDTH = 44
 const DEFAULT_ROW_HEIGHT = 28
@@ -78,16 +81,14 @@ export interface CellChange {
 }
 
 export interface GridCallbacks {
-  onSelectCell(ref: string, value: CellValue): void
+  onSelectCell(ref: string, value: CellValue, selectedRows: number): void
   onCellChange(changes: CellChange[]): void
   onSheetChange?(sheetId: string): void
   onImageRequest?(rowIndex: number, colIndex: number): void
   onCellImageChange?(rowIndex: number, colIndex: number): void
   onImageDelete?(rowIndex: number, colIndex: number): void
+  onViewStateChange?(): void
 }
-
-export const PHOTO_COLUMN_INDEX = 7
-export const PHOTO_COLUMN_INDICES = [7, 8, 9]
 
 interface SelectionState {
   col: number
@@ -100,9 +101,19 @@ interface EditingState {
   col: number
 }
 
-interface SortState {
+export interface GridSortState {
   col: number
   dir: 'asc' | 'desc'
+}
+
+export interface GridFilterState {
+  col: number
+  values: string[]
+}
+
+export interface GridViewState {
+  filters: GridFilterState[]
+  sort: GridSortState | null
 }
 
 export class GridView {
@@ -114,7 +125,7 @@ export class GridView {
   private editing: EditingState | null = null
   private imageUrlCache = new Map<Blob, string>()
   private filters = new Map<string, Map<number, Set<string>>>()
-  private sorts = new Map<string, SortState>()
+  private sorts = new Map<string, GridSortState>()
   private visibleOrder: number[] = []
   private dateFilter: string | null = null
   private loading = false
@@ -197,6 +208,7 @@ export class GridView {
     if (!this.visibleOrder.includes(safeRow)) {
       this.filters.get(sheetId)?.clear()
       this.recomputeOrder()
+      this.emitViewStateChange()
     }
     this.render()
     this.emitSelection()
@@ -218,6 +230,36 @@ export class GridView {
       this.filters.set(sheetId, map)
     }
     return map
+  }
+
+  getViewState(): GridViewState {
+    const filters = this.activeSheetId ? this.filters.get(this.activeSheetId) : undefined
+    const sort = this.activeSheetId ? this.sorts.get(this.activeSheetId) : undefined
+    return {
+      filters: filters
+        ? [...filters.entries()].map(([col, values]) => ({ col, values: [...values] }))
+        : [],
+      sort: sort ? { ...sort } : null,
+    }
+  }
+
+  setViewState(state: GridViewState): void {
+    if (!this.activeSheetId) return
+    const filters = this.getSheetFilters(this.activeSheetId)
+    filters.clear()
+    for (const filter of state.filters) {
+      if (!FILTERABLE_COLS.has(filter.col)) continue
+      const values = filter.values
+      if (values.length > 0) filters.set(filter.col, new Set(values))
+    }
+    if (state.sort && state.sort.col === SORTABLE_COL) {
+      this.sorts.set(this.activeSheetId, { col: state.sort.col, dir: state.sort.dir })
+    } else {
+      this.sorts.delete(this.activeSheetId)
+    }
+    this.recomputeOrder()
+    this.render()
+    this.emitSelection()
   }
 
   private recomputeOrder() {
@@ -644,6 +686,7 @@ export class GridView {
         img.decoding = 'async'
         img.addEventListener('click', (event) => {
           event.stopPropagation()
+          this.select(row, col)
           this.openLightbox(fullUrl, meta.fileName)
         })
         const copyBtn = document.createElement('button')
@@ -944,6 +987,7 @@ export class GridView {
           this.sorts.delete(this.activeSheetId!)
           this.recomputeOrder()
           this.render()
+          this.emitViewStateChange()
           popover.remove()
         })
       }
@@ -952,12 +996,14 @@ export class GridView {
         this.sorts.set(this.activeSheetId!, { col, dir: 'asc' })
         this.recomputeOrder()
         this.render()
+        this.emitViewStateChange()
         popover.remove()
       })
       sortDesc.addEventListener('click', () => {
         this.sorts.set(this.activeSheetId!, { col, dir: 'desc' })
         this.recomputeOrder()
         this.render()
+        this.emitViewStateChange()
         popover.remove()
       })
     } else {
@@ -970,7 +1016,7 @@ export class GridView {
       const sortedValues = [...valueCounts.keys()].sort((a, b) =>
         a.localeCompare(b, 'pt-BR', { sensitivity: 'base', numeric: true }),
       )
-      const checkedSet = currentFilter ?? new Set<string>()
+      const checkedSet = currentFilter ?? new Set(sortedValues)
 
       const searchInput = document.createElement('input')
       searchInput.type = 'search'
@@ -982,7 +1028,7 @@ export class GridView {
       selectAllLabel.className = 'filter-select-all-label'
       const selectAll = document.createElement('input')
       selectAll.type = 'checkbox'
-      selectAll.checked = !!currentFilter && currentFilter.size === sortedValues.length
+      selectAll.checked = !currentFilter || currentFilter.size === sortedValues.length
       selectAll.indeterminate = !!currentFilter && currentFilter.size > 0 && currentFilter.size < sortedValues.length
       selectAllLabel.appendChild(selectAll)
       const selectAllText = document.createElement('span')
@@ -1045,6 +1091,7 @@ export class GridView {
         filtersMap.delete(col)
         this.recomputeOrder()
         this.render()
+        this.emitViewStateChange()
         popover.remove()
       })
       applyBtn.addEventListener('click', () => {
@@ -1059,6 +1106,7 @@ export class GridView {
         }
         this.recomputeOrder()
         this.render()
+        this.emitViewStateChange()
         popover.remove()
       })
     }
@@ -1300,7 +1348,11 @@ export class GridView {
     const ref = rows.length > 1
       ? `${formatCellRef(rows[0], col)}:${formatCellRef(rows[rows.length - 1], col)}`
       : formatCellRef(activeRow, col)
-    this.callbacks.onSelectCell(ref, value)
+    this.callbacks.onSelectCell(ref, value, rows.length)
+  }
+
+  private emitViewStateChange() {
+    this.callbacks.onViewStateChange?.()
   }
 
   private focusSelection() {

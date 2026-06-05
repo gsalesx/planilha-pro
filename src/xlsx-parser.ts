@@ -13,9 +13,7 @@ export const FIXED_HEADERS = [
   'Nome de usuário',
   'Status',
   'Nome do destinatário',
-  'Foto',
-  'Foto 2',
-  '+ Fotos',
+  ...Array.from({ length: 10 }, (_, i) => `Foto ${i + 1}`),
 ]
 const COLUMN_COUNT = FIXED_HEADERS.length
 
@@ -165,14 +163,16 @@ function normalizeCell(value: unknown): CellValue {
 }
 
 function isDateSheet(name: string): boolean {
-  // Aceita DD-MM-YYYY (formato novo do Zoho Sheets) ou YYYY_MM_DD (legado).
-  return /^\d{2}-\d{2}-\d{4}$/.test(name) || /^\d{4}_\d{2}_\d{2}/.test(name)
+  // Aceita DD-MM-YYYY (formato novo do Zoho Sheets), DD_MM_YYYY ou YYYY_MM_DD (legados).
+  return /^\d{2}-\d{2}-\d{4}$/.test(name) || /^\d{2}_\d{2}_\d{4}$/.test(name) || /^\d{4}_\d{2}_\d{2}/.test(name)
 }
 
 /** Normaliza o nome da aba pra formato canonico DD-MM-YYYY antes de salvar como sheet_date. */
 function normalizeSheetDate(name: string): string {
-  const m = /^(\d{4})_(\d{2})_(\d{2})/.exec(name)
+  let m = /^(\d{4})_(\d{2})_(\d{2})/.exec(name)
   if (m) return `${m[3]}-${m[2]}-${m[1]}`
+  m = /^(\d{2})_(\d{2})_(\d{4})$/.exec(name)
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`
   return name
 }
 

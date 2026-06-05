@@ -14,9 +14,15 @@ import {
   uploadImage,
 } from './api'
 import { openConfirmDialog } from './dialog'
-import { GridView, PHOTO_COLUMN_INDICES } from './grid'
+import {
+  GridView,
+  MODEL_COLUMN_INDEX,
+  PHOTO_COLUMN_INDICES,
+  type GridViewState,
+} from './grid'
 import { showLoginScreen } from './login'
 import { formatHitRef, highlightMatch, searchWorkbook, type SearchHit } from './search'
+import { STATUS_COLUMN_INDEX } from './status'
 import type { CellValue, WorkbookData } from './types'
 import { showWorkbooksList } from './workbooks-list'
 import { FIXED_HEADERS, parseXlsx } from './xlsx-parser'
@@ -207,6 +213,81 @@ function formatDateForDisplay(raw: string): string {
   return `${dd}-${mm}-${yyyy} ${weekdayLabel}`
 }
 
+function formatDateForUrl(raw: string): string {
+  const date = parseSheetDate(raw)
+  if (!date || Number.isNaN(date.getTime())) return raw
+  const dd = String(date.getDate()).padStart(2, '0')
+  const mm = String(date.getMonth() + 1).padStart(2, '0')
+  const yyyy = date.getFullYear()
+  return `${dd}-${mm}-${yyyy}`
+}
+
+function getUrlDate(): string | null {
+  const raw = new URLSearchParams(location.search).get('date')?.trim()
+  return raw ? formatDateForUrl(raw) : null
+}
+
+function setUrlDate(date: string | null) {
+  const url = new URL(location.href)
+  if (date) url.searchParams.set('date', formatDateForUrl(date))
+  else url.searchParams.delete('date')
+  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
+function applyUrlDateFilter() {
+  const requested = getUrlDate()
+  if (!requested) return
+  const match = grid.getAvailableDates().find((d) => formatDateForUrl(d) === requested)
+  if (!match) {
+    setUrlDate(null)
+    return
+  }
+  if (grid.getDateFilter() !== match) grid.setDateFilter(match)
+  setUrlDate(match)
+}
+
+function getUrlGridViewState(): GridViewState {
+  const params = new URLSearchParams(location.search)
+  const filters: GridViewState['filters'] = []
+  const modelos = params.getAll('modelo')
+  const statuses = params.getAll('status')
+  if (modelos.length > 0) filters.push({ col: MODEL_COLUMN_INDEX, values: modelos })
+  if (statuses.length > 0) filters.push({ col: STATUS_COLUMN_INDEX, values: statuses })
+
+  const sortRaw = params.get('sort')
+  const sortMatch = /^(\d+):(asc|desc)$/.exec(sortRaw ?? '')
+  return {
+    filters,
+    sort: sortMatch
+      ? { col: Number(sortMatch[1]), dir: sortMatch[2] as 'asc' | 'desc' }
+      : null,
+  }
+}
+
+function setUrlGridViewState(state: GridViewState) {
+  const url = new URL(location.href)
+  url.searchParams.delete('modelo')
+  url.searchParams.delete('status')
+  url.searchParams.delete('sort')
+
+  for (const filter of state.filters) {
+    const param = filter.col === MODEL_COLUMN_INDEX
+      ? 'modelo'
+      : filter.col === STATUS_COLUMN_INDEX
+        ? 'status'
+        : null
+    if (!param) continue
+    for (const value of filter.values) url.searchParams.append(param, value)
+  }
+  if (state.sort) url.searchParams.set('sort', `${state.sort.col}:${state.sort.dir}`)
+  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
+function applyUrlGridViewState() {
+  grid.setViewState(getUrlGridViewState())
+  setUrlGridViewState(grid.getViewState())
+}
+
 function renderDateSelect() {
   const wrap = el<HTMLDivElement>('#date-select-wrap')
   const select = el<HTMLSelectElement>('#date-select')
@@ -215,6 +296,7 @@ function renderDateSelect() {
   if (dates.length === 0) {
     wrap.hidden = true
     select.innerHTML = ''
+    setUrlDate(null)
     return
   }
   wrap.hidden = false
@@ -233,6 +315,7 @@ function renderDateSelect() {
     .join('')
   select.onchange = () => {
     grid.setDateFilter(select.value)
+    setUrlDate(select.value)
     updateStatusCounts()
   }
   deleteBtn.onclick = () => {
@@ -309,16 +392,7 @@ async function handleCellChange(changes: ChangeBatch) {
   })
 }
 
-function selectedLineCountFromRef(ref: string): number {
-  const match = /^[A-Z]+(\d+)(?::[A-Z]+(\d+))?$/.exec(ref)
-  if (!match) return 1
-  const start = Number(match[1])
-  const end = Number(match[2] ?? match[1])
-  return Math.max(1, Math.abs(end - start) + 1)
-}
-
-function handleSelect(ref: string, _value: CellValue) {
-  const count = selectedLineCountFromRef(ref)
+function handleSelect(_ref: string, _value: CellValue, count: number) {
   el<HTMLSpanElement>('#selection-count').textContent =
     `${count} linha${count === 1 ? '' : 's'} selecionada${count === 1 ? '' : 's'}`
 }
@@ -447,7 +521,7 @@ function bindClipboardPaste() {
       event.preventDefault()
       const sel = grid.getSelection()
       if (!sel || !PHOTO_COLUMN_INDICES.includes(sel.col)) {
-        setStatusText('Selecione uma célula de Foto (H, I ou J) para colar a imagem')
+        setStatusText('Selecione uma célula de Foto 1 a Foto 10 para colar a imagem')
         return
       }
       const fileName = `clipboard-${Date.now()}.jpg`
@@ -509,6 +583,7 @@ function renderSearchResults(query: string) {
       // dias e o navigateTo so funciona em rows visiveis no filtro atual.
       if (hit.sheetDate && grid.getDateFilter() !== hit.sheetDate) {
         grid.setDateFilter(hit.sheetDate)
+        setUrlDate(hit.sheetDate)
         renderDateSelect()
       }
       grid.navigateTo(hit.sheetId, hit.rowIndex < 0 ? 0 : hit.rowIndex, hit.colIndex)
@@ -840,6 +915,8 @@ async function refreshFromServer(options: { force?: boolean } = {}): Promise<voi
     }
     workbook = serverWorkbookToLocal(currentWorkbookId, response)
     grid.setWorkbook(workbook)
+    applyUrlDateFilter()
+    applyUrlGridViewState()
     renderDateSelect()
     updateStatusCounts()
     setFilename(workbook.name)
@@ -911,6 +988,10 @@ async function enterWorkbook(workbookId: string) {
       danger: true,
       onConfirm: () => deleteImageAt(row, col),
     }),
+    onViewStateChange: () => {
+      setUrlGridViewState(grid.getViewState())
+      updateStatusCounts()
+    },
   })
   renderSheetLoading()
   bindFileInput()

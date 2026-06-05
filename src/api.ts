@@ -264,7 +264,5 @@ const FIXED_HEADERS = [
   'Nome de usuário',
   'Status',
   'Nome do destinatário',
-  'Foto',
-  'Foto 2',
-  '+ Fotos',
+  ...Array.from({ length: 10 }, (_, i) => `Foto ${i + 1}`),
 ]
