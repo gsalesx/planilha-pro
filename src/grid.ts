@@ -12,14 +12,19 @@ const FILTERABLE_COLS = new Set<number>([MODEL_COLUMN_INDEX, STATUS_COLUMN_INDEX
 const SORTABLE_COL = RECIPIENT_COLUMN_INDEX // coluna G (Nome do destinatário)
 const MIN_COLUMN_COUNT = 17 // até coluna Q — Foto 1 até Foto 10
 const DEFAULT_COL_WIDTH = 110
+const PHOTO_COLUMN_WIDTH = 92
 const ROW_NUMBER_WIDTH = 44
 const DEFAULT_ROW_HEIGHT = 28
+const PHOTO_COLUMN_WIDTH_OVERRIDES = Object.fromEntries(
+  PHOTO_COLUMN_INDICES.map((col) => [col, PHOTO_COLUMN_WIDTH]),
+) as Record<number, number>
 const COLUMN_WIDTH_OVERRIDES: Record<number, number> = {
+  ...PHOTO_COLUMN_WIDTH_OVERRIDES,
   1: 220, // B — Nome do Produto
   3: 56, // D — Qnt.
   6: 220, // G — Nome do destinatário
 }
-const CENTERED_COLUMNS = new Set([3]) // D — Qnt.
+const CENTERED_COLUMNS = new Set([3, ...PHOTO_COLUMN_INDICES]) // D — Qnt. e Foto 1-10
 const TYPEAHEAD_MS = 900 // ms — reset do buffer estilo Windows Explorer
 void ID_COLUMN_INDEX
 
@@ -353,6 +358,17 @@ export class GridView {
     return { sheetId: this.activeSheetId, row: this.selection.activeRow, col: this.selection.col }
   }
 
+  restoreSelection(row: number, col: number) {
+    const sheet = this.getActiveSheet()
+    if (!sheet?.rows[row]) return
+    const safeCol = Math.max(0, col)
+    this.selection = { col: safeCol, anchorRow: row, activeRow: row }
+    this.extraRows.clear()
+    this.editing = null
+    this.refreshSelectionClasses()
+    this.emitSelection()
+  }
+
   setCellImage(row: number, col: number, blob: Blob, fileName: string) {
     const sheet = this.getActiveSheet()
     if (!sheet) return
@@ -541,6 +557,7 @@ export class GridView {
     for (let c = 0; c < columnCount; c++) {
       const th = document.createElement('th')
       th.className = 'col-letter'
+      if (IMAGE_COLUMN_INDICES.has(c)) th.classList.add('cell-image-header')
       th.textContent = colLetter(c)
       if (this.selection?.col === c) th.classList.add('is-active')
       letterRow.appendChild(th)
@@ -557,6 +574,7 @@ export class GridView {
     for (let c = 0; c < columnCount; c++) {
       const th = document.createElement('th')
       if (CENTERED_COLUMNS.has(c)) th.classList.add('cell-center')
+      if (IMAGE_COLUMN_INDICES.has(c)) th.classList.add('cell-image-header')
       const headerText = sheet.headers[c] || ''
       const span = document.createElement('span')
       span.className = 'header-text'

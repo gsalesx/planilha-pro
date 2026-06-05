@@ -41,6 +41,19 @@ let lastSearchHits: SearchHit[] = []
 let searchHighlightIndex = -1
 let currentWorkbookId: string | null = null
 
+interface PendingMutation {
+  id: string
+  workbookId: string
+  kind: 'cell' | 'style' | 'comment' | 'image'
+  orderId: string
+  rowIndex: number
+  col: number
+  sheetDate?: string
+  description: string
+  error: string
+  createdAt: number
+}
+
 function el<T extends HTMLElement>(selector: string): T {
   const node = document.querySelector<T>(selector)
   if (!node) throw new Error(`Elemento não encontrado: ${selector}`)
@@ -74,7 +87,9 @@ function buildShell() {
         </div>
       </header>
       <div class="etiqueta-bar" role="toolbar" aria-label="Etiquetas">
-        <span id="selection-count" style="margin-right:auto;font-size:12px;color:#475569;font-weight:600;">1 linha selecionada</span>
+        <span id="selection-count" style="font-size:12px;color:#475569;font-weight:600;">1 linha selecionada</span>
+        <button type="button" class="pending-mutations-btn" id="pending-mutations-btn" hidden>Pendências: 0</button>
+        <span style="margin-right:auto"></span>
         <div class="zoom-controls" role="group" aria-label="Zoom da planilha">
           <button type="button" class="zoom-btn" id="zoom-out" title="Diminuir zoom" aria-label="Diminuir zoom">−</button>
           <span class="zoom-display" id="zoom-display">100%</span>
@@ -143,6 +158,144 @@ function updateStatusCounts() {
   const visible = grid.getVisibleRowCount()
   const total = sheet.rows.length
   target.textContent = visible === total ? `${total} pedidos` : `${visible} de ${total} pedidos`
+}
+
+const PENDING_MUTATIONS_KEY_PREFIX = 'planilha-pro-pending-mutations'
+
+function pendingMutationsKey(workbookId = currentWorkbookId): string | null {
+  return workbookId ? `${PENDING_MUTATIONS_KEY_PREFIX}:${workbookId}` : null
+}
+
+function readPendingMutations(): PendingMutation[] {
+  const key = pendingMutationsKey()
+  if (!key) return []
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) ?? '[]') as PendingMutation[]
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+function writePendingMutations(items: PendingMutation[]) {
+  const key = pendingMutationsKey()
+  if (!key) return
+  try {
+    localStorage.setItem(key, JSON.stringify(items))
+  } catch {
+    // Se o navegador bloquear storage, ainda mantemos a UI funcionando.
+  }
+  updatePendingMutationsButton()
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error || 'Erro desconhecido')
+}
+
+function addPendingMutation(input: Omit<PendingMutation, 'id' | 'workbookId' | 'error' | 'createdAt'> & { error: unknown }) {
+  if (!currentWorkbookId) return
+  const items = readPendingMutations()
+  items.unshift({
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    workbookId: currentWorkbookId,
+    kind: input.kind,
+    orderId: input.orderId,
+    rowIndex: input.rowIndex,
+    col: input.col,
+    sheetDate: input.sheetDate,
+    description: input.description,
+    error: errorMessage(input.error),
+    createdAt: Date.now(),
+  })
+  writePendingMutations(items.slice(0, 50))
+}
+
+function removePendingMutation(id: string) {
+  writePendingMutations(readPendingMutations().filter((item) => item.id !== id))
+}
+
+function updatePendingMutationsButton() {
+  const button = document.querySelector<HTMLButtonElement>('#pending-mutations-btn')
+  if (!button) return
+  const count = readPendingMutations().length
+  button.hidden = count === 0
+  button.textContent = `Pendências: ${count}`
+}
+
+function navigateToPendingMutation(item: PendingMutation) {
+  if (!workbook) return
+  const sheetId = workbook.sheetOrder[0]
+  const sheet = workbook.sheets[sheetId]
+  if (!sheet) return
+  const rowIndex = sheet.rows.findIndex((row) => String(row[ID_COL] ?? '').trim() === item.orderId)
+  if (rowIndex < 0) {
+    setStatusText('Pedido da pendência não está na planilha atual')
+    return
+  }
+  const sheetDate = sheet.rowDates?.[rowIndex]
+  if (sheetDate && grid.getDateFilter() !== sheetDate) {
+    grid.setDateFilter(sheetDate)
+    setUrlDate(sheetDate)
+    renderDateSelect()
+  }
+  grid.navigateTo(sheetId, rowIndex, item.col)
+  setStatusText('Pendência localizada')
+}
+
+function openPendingMutationsPanel() {
+  const items = readPendingMutations()
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal-card pending-mutations-panel" role="dialog" aria-modal="true" aria-labelledby="pending-mutations-title">
+      <h2 id="pending-mutations-title">Pendências locais</h2>
+      <p>Alterações que falharam neste navegador para conferência.</p>
+      <div class="pending-mutations-list">
+        ${items.length === 0 ? '<div class="pending-mutations-empty">Nenhuma pendência.</div>' : items.map((item) => `
+          <div class="pending-mutations-item" data-id="${escapeHtml(item.id)}">
+            <div>
+              <strong>${escapeHtml(item.description)}</strong>
+              <span>Pedido ${escapeHtml(item.orderId)} · coluna ${item.col + 1}</span>
+              <small>${new Date(item.createdAt).toLocaleString('pt-BR')} · ${escapeHtml(item.error)}</small>
+            </div>
+            <div class="pending-mutations-actions">
+              <button type="button" class="btn pending-go">Ir para célula</button>
+              <button type="button" class="btn pending-remove">Remover</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary pending-close">Fechar</button>
+      </div>
+    </div>
+  `
+  const close = () => overlay.remove()
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) close()
+  })
+  overlay.querySelector<HTMLButtonElement>('.pending-close')?.addEventListener('click', close)
+  overlay.querySelectorAll<HTMLElement>('.pending-mutations-item').forEach((node) => {
+    const id = node.dataset.id
+    const item = items.find((entry) => entry.id === id)
+    if (!id || !item) return
+    node.querySelector<HTMLButtonElement>('.pending-go')?.addEventListener('click', () => {
+      close()
+      navigateToPendingMutation(item)
+    })
+    node.querySelector<HTMLButtonElement>('.pending-remove')?.addEventListener('click', () => {
+      removePendingMutation(id)
+      node.remove()
+      if (readPendingMutations().length === 0) close()
+    })
+  })
+  document.body.appendChild(overlay)
+}
+
+function bindPendingMutationsButton() {
+  el<HTMLButtonElement>('#pending-mutations-btn').addEventListener('click', openPendingMutationsPanel)
+  updatePendingMutationsButton()
 }
 
 /* ===========================================================
@@ -377,13 +530,20 @@ type ChangeBatch = ReadonlyArray<{ row: number; col: number; value: CellValue }>
 
 async function handleCellChange(changes: ChangeBatch) {
   if (!workbook || !currentWorkbookId || changes.length === 0) return
+  const sheetId = grid.getActiveSheetId()
+  if (!sheetId) return
+  const sheet = workbook.sheets[sheetId]
+  if (!sheet) return
 
   const byRow = new Map<number, Array<{ col: number; value: CellValue }>>()
   for (const { row, col, value } of changes) {
+    if (!sheet.rows[row]) sheet.rows[row] = []
+    sheet.rows[row][col] = value
     const list = byRow.get(row) ?? []
     list.push({ col, value })
     byRow.set(row, list)
   }
+  grid.render()
 
   await Promise.all([...byRow.entries()].map(([row, cells]) =>
     enqueueMutation(async () => {
@@ -391,9 +551,19 @@ async function handleCellChange(changes: ChangeBatch) {
       const id = getOrderId(row)
       if (!id) return
       try {
-        await patchOrderDelta(currentWorkbookId, id, { cells })
-        if (await refreshFromServer({ force: true })) setStatusText('Alteração salva')
+        const result = await patchOrderDelta(currentWorkbookId, id, { cells })
+        serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
+        setStatusText('Alteração salva')
       } catch (error) {
+        addPendingMutation({
+          kind: 'cell',
+          orderId: id,
+          rowIndex: row,
+          col: cells[0]?.col ?? 0,
+          sheetDate: sheet.rowDates?.[row] ?? '',
+          description: `Alteração em ${cells.length} célula${cells.length === 1 ? '' : 's'}`,
+          error,
+        })
         handleApiError(error, 'Falha ao salvar alteração')
       }
     }),
@@ -412,15 +582,27 @@ async function handleEtiqueta(color: string | null) {
   const rows = getCurrentSelectedRows()
   const col = sel.col
   const stylePatch: OrderStyleDelta = color ? { col, bg: color } : { col, clearBg: true }
+  grid.applyCellBackground(color)
+  const sheet = workbook.sheets[workbook.sheetOrder[0]]
   await Promise.all(rows.map((row) =>
     enqueueMutation(async () => {
       if (!workbook || !currentWorkbookId) return
       const id = getOrderId(row)
       if (!id) return
       try {
-        await patchOrderDelta(currentWorkbookId, id, { stylePatches: [stylePatch] })
-        if (await refreshFromServer({ force: true })) setStatusText('Etiqueta salva')
+        const result = await patchOrderDelta(currentWorkbookId, id, { stylePatches: [stylePatch] })
+        serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
+        setStatusText('Etiqueta salva')
       } catch (error) {
+        addPendingMutation({
+          kind: 'style',
+          orderId: id,
+          rowIndex: row,
+          col,
+          sheetDate: sheet?.rowDates?.[row] ?? '',
+          description: color ? 'Aplicar etiqueta' : 'Limpar etiqueta',
+          error,
+        })
         handleApiError(error, 'Falha ao salvar etiqueta')
       }
     }),
@@ -441,14 +623,35 @@ function handleCommentRequest(row: number, col: number) {
     onConfirm: async (value) => {
       const next = value.trim()
       const stylePatch: OrderStyleDelta = next ? { col, comment: next } : { col, clearComment: true }
+      sheet.cellStyles ||= {}
+      if (next) {
+        sheet.cellStyles[key] = { ...(sheet.cellStyles[key] ?? {}), comment: next }
+      } else {
+        const style = sheet.cellStyles[key]
+        if (style) {
+          delete style.comment
+          if (Object.keys(style).length === 0) delete sheet.cellStyles[key]
+        }
+      }
+      grid.render()
       await enqueueMutation(async () => {
         if (!workbook || !currentWorkbookId) return
         const id = getOrderId(row)
         if (!id) return
         try {
-          await patchOrderDelta(currentWorkbookId, id, { stylePatches: [stylePatch] })
-          if (await refreshFromServer({ force: true })) setStatusText('Comentário salvo')
+          const result = await patchOrderDelta(currentWorkbookId, id, { stylePatches: [stylePatch] })
+          serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
+          setStatusText('Comentário salvo')
         } catch (error) {
+          addPendingMutation({
+            kind: 'comment',
+            orderId: id,
+            rowIndex: row,
+            col,
+            sheetDate: sheet.rowDates?.[row] ?? '',
+            description: next ? 'Salvar comentário' : 'Limpar comentário',
+            error,
+          })
           handleApiError(error, 'Falha ao salvar comentário')
         }
       })
@@ -511,15 +714,33 @@ async function uploadAndSetImage(row: number, col: number, blob: Blob, fileName:
     setStatusText('Pedido sem ID — não pode ter foto')
     return
   }
+  grid.setCellImage(row, col, blob, fileName)
   setStatusText('Convertendo e enviando foto...')
   try {
     const jpeg = await blobToJpeg(blob)
     const safeName = fileName.replace(/\.[^.]+$/, '') + '.jpg'
     await enqueueMutation(async () => {
       if (!currentWorkbookId) return
-      await uploadImage(currentWorkbookId, id, col, jpeg, safeName)
-      if (await refreshFromServer({ force: true })) {
+      try {
+        const result = await uploadImage(currentWorkbookId, id, col, jpeg, safeName)
+        if (!workbook) return
+        const sheet = workbook.sheets[workbook.sheetOrder[0]]
+        if (!sheet) return
+        sheet.images[`${row}:${col}`] = { url: result.url, fileName: safeName, updatedAt: result.updatedAt }
+        grid.render()
+        serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
         setStatusText(`Foto enviada (${Math.round(jpeg.size / 1024)} KB)`)
+      } catch (error) {
+        addPendingMutation({
+          kind: 'image',
+          orderId: id,
+          rowIndex: row,
+          col,
+          sheetDate: workbook?.sheets[workbook.sheetOrder[0]]?.rowDates?.[row] ?? '',
+          description: `Enviar foto ${col - PHOTO_COLUMN_INDICES[0] + 1}`,
+          error,
+        })
+        handleApiError(error, 'Falha ao enviar foto')
       }
     })
   } catch (error) {
@@ -531,12 +752,24 @@ async function deleteImageAt(row: number, col: number) {
   if (!currentWorkbookId) return
   const id = getOrderId(row)
   if (!id) return
+  const sheetDate = workbook?.sheets[workbook.sheetOrder[0]]?.rowDates?.[row] ?? ''
+  grid.removeCellImage(row, col)
   await enqueueMutation(async () => {
     if (!currentWorkbookId) return
     try {
-      await deleteImage(currentWorkbookId, id, col)
-      if (await refreshFromServer({ force: true })) setStatusText('Foto removida')
+      const result = await deleteImage(currentWorkbookId, id, col)
+      serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
+      setStatusText('Foto removida')
     } catch (error) {
+      addPendingMutation({
+        kind: 'image',
+        orderId: id,
+        rowIndex: row,
+        col,
+        sheetDate,
+        description: `Remover foto ${col - PHOTO_COLUMN_INDICES[0] + 1}`,
+        error,
+      })
       handleApiError(error, 'Falha ao remover foto')
     }
   })
@@ -942,6 +1175,7 @@ function bindBackButton() {
 async function refreshFromServer(options: { force?: boolean } = {}): Promise<boolean> {
   if (!currentWorkbookId) return false
   try {
+    const previousSelection = grid.getSelection()
     const response = await fetchWorkbook(
       currentWorkbookId,
       options.force ? undefined : serverUpdatedAt || undefined,
@@ -954,6 +1188,9 @@ async function refreshFromServer(options: { force?: boolean } = {}): Promise<boo
     grid.setWorkbook(workbook)
     applyUrlDateFilter()
     applyUrlGridViewState()
+    if (previousSelection && previousSelection.sheetId === workbook.sheetOrder[0]) {
+      grid.restoreSelection(previousSelection.row, previousSelection.col)
+    }
     renderDateSelect()
     updateStatusCounts()
     setFilename(workbook.name)
@@ -1058,6 +1295,7 @@ async function enterWorkbook(workbookId: string) {
   bindLogout()
   bindBackButton()
   bindZoomControls()
+  bindPendingMutationsButton()
   try {
     await refreshFromServer({ force: true })
   } finally {

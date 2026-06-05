@@ -546,6 +546,24 @@ button {
   background: #b91c1c;
   border-color: #b91c1c;
 }
+.modal-card {
+  background: #fff;
+  color: #0f172a;
+  border-radius: 8px;
+  padding: 20px 22px 16px;
+  max-width: 560px;
+  width: calc(100% - 32px);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.25);
+}
+.modal-card h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+.modal-card p {
+  margin: 0 0 14px;
+  color: #475569;
+  font-size: 13px;
+}
 
 /* ============================================================
    Etiqueta bar (label colors)
@@ -567,6 +585,69 @@ button {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-right: 4px;
+}
+.pending-mutations-btn {
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+  color: #c2410c;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.pending-mutations-btn:hover {
+  background: #ffedd5;
+  border-color: #fb923c;
+}
+.pending-mutations-panel {
+  max-width: 640px;
+}
+.pending-mutations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(52vh, 420px);
+  overflow: auto;
+  margin-bottom: 16px;
+}
+.pending-mutations-empty {
+  padding: 14px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  color: #64748b;
+  font-size: 13px;
+  text-align: center;
+}
+.pending-mutations-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+.pending-mutations-item strong,
+.pending-mutations-item span,
+.pending-mutations-item small {
+  display: block;
+}
+.pending-mutations-item span {
+  margin-top: 3px;
+  color: #475569;
+  font-size: 12px;
+}
+.pending-mutations-item small {
+  margin-top: 4px;
+  color: #991b1b;
+  font-size: 11px;
+}
+.pending-mutations-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 .etiqueta-btn {
   display: inline-flex;
@@ -854,6 +935,13 @@ table.sheet tbody td.cell-multiline {
 table.sheet tbody td.cell-center,
 table.sheet thead th.cell-center {
   text-align: center;
+}
+table.sheet thead .header-row-2 th.cell-image-header {
+  padding: 4px 6px;
+  text-align: center;
+}
+table.sheet thead .header-row-2 th.cell-image-header .header-text {
+  display: block;
 }
 
 table.sheet tbody td.cell-image {
