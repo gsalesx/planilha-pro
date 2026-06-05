@@ -8,10 +8,11 @@ import {
   deleteOrdersBySheetDate,
   fetchWorkbook,
   logout,
-  patchOrder,
+  patchOrderDelta,
   replaceWorkbook,
   serverWorkbookToLocal,
   uploadImage,
+  type OrderStyleDelta,
 } from './api'
 import { openConfirmDialog, openTextareaDialog } from './dialog'
 import {
@@ -250,6 +251,25 @@ function applyUrlDateFilter() {
   setUrlDate(match)
 }
 
+function getUrlWorkbookId(): string | null {
+  const raw = new URLSearchParams(location.search).get('workbook')?.trim()
+  return raw || null
+}
+
+function setUrlWorkbookId(workbookId: string | null) {
+  const url = new URL(location.href)
+  if (workbookId) {
+    url.searchParams.set('workbook', workbookId)
+  } else {
+    url.searchParams.delete('workbook')
+    url.searchParams.delete('date')
+    url.searchParams.delete('modelo')
+    url.searchParams.delete('status')
+    url.searchParams.delete('sort')
+  }
+  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
 function getUrlGridViewState(): GridViewState {
   const params = new URLSearchParams(location.search)
   const filters: GridViewState['filters'] = []
@@ -353,47 +373,31 @@ function getOrderId(rowIndex: number): string | null {
   return id == null ? null : String(id).trim() || null
 }
 
-function getRowStylesAsRecord(rowIndex: number): Record<string, { bg?: string }> {
-  if (!workbook) return {}
-  const sheet = workbook.sheets[workbook.sheetOrder[0]]
-  const out: Record<string, { bg?: string }> = {}
-  for (const [key, val] of Object.entries(sheet?.cellStyles ?? {})) {
-    const [r, c] = key.split(':').map(Number)
-    if (r === rowIndex && val?.bg) out[c] = val
-  }
-  return out
-}
-
 type ChangeBatch = ReadonlyArray<{ row: number; col: number; value: CellValue }>
 
 async function handleCellChange(changes: ChangeBatch) {
   if (!workbook || !currentWorkbookId || changes.length === 0) return
-  const sheetId = grid.getActiveSheetId()
-  if (!sheetId) return
-  const sheet = workbook.sheets[sheetId]
-  if (!sheet) return
 
-  const byRow = new Map<number, { row: number; cols: number[] }>()
+  const byRow = new Map<number, Array<{ col: number; value: CellValue }>>()
   for (const { row, col, value } of changes) {
-    if (!sheet.rows[row]) sheet.rows[row] = []
-    sheet.rows[row][col] = value
-    if (!byRow.has(row)) byRow.set(row, { row, cols: [] })
-    byRow.get(row)!.cols.push(col)
+    const list = byRow.get(row) ?? []
+    list.push({ col, value })
+    byRow.set(row, list)
   }
-  grid.render()
 
-  await withPollingPaused(async () => {
-    for (const { row } of byRow.values()) {
+  await Promise.all([...byRow.entries()].map(([row, cells]) =>
+    enqueueMutation(async () => {
+      if (!workbook || !currentWorkbookId) return
       const id = getOrderId(row)
-      if (!id) continue
+      if (!id) return
       try {
-        const result = await patchOrder(currentWorkbookId!, id, { row: sheet.rows[row] })
-        serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
+        await patchOrderDelta(currentWorkbookId, id, { cells })
+        if (await refreshFromServer({ force: true })) setStatusText('Alteração salva')
       } catch (error) {
         handleApiError(error, 'Falha ao salvar alteração')
       }
-    }
-  })
+    }),
+  ))
 }
 
 function handleSelect(_ref: string, _value: CellValue, count: number) {
@@ -405,24 +409,22 @@ async function handleEtiqueta(color: string | null) {
   if (!workbook || !currentWorkbookId) return
   const sel = grid.getSelection()
   if (!sel) return
-  // Captura linhas ANTES do applyCellBackground/render — evita perder
-  // a selecao se algo (re-render, polling tardio) mexer no DOM no meio.
   const rows = getCurrentSelectedRows()
-  grid.applyCellBackground(color)
-  const sheet = workbook.sheets[workbook.sheetOrder[0]]
-  if (!sheet) return
-  await withPollingPaused(async () => {
-    for (const row of rows) {
+  const col = sel.col
+  const stylePatch: OrderStyleDelta = color ? { col, bg: color } : { col, clearBg: true }
+  await Promise.all(rows.map((row) =>
+    enqueueMutation(async () => {
+      if (!workbook || !currentWorkbookId) return
       const id = getOrderId(row)
-      if (!id) continue
+      if (!id) return
       try {
-        const result = await patchOrder(currentWorkbookId!, id, { styles: getRowStylesAsRecord(row) })
-        serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
+        await patchOrderDelta(currentWorkbookId, id, { stylePatches: [stylePatch] })
+        if (await refreshFromServer({ force: true })) setStatusText('Etiqueta salva')
       } catch (error) {
         handleApiError(error, 'Falha ao salvar etiqueta')
       }
-    }
-  })
+    }),
+  ))
 }
 
 function handleCommentRequest(row: number, col: number) {
@@ -437,26 +439,19 @@ function handleCommentRequest(row: number, col: number) {
     defaultValue: current,
     confirmLabel: 'Salvar',
     onConfirm: async (value) => {
-      sheet.cellStyles ||= {}
       const next = value.trim()
-      if (next) {
-        sheet.cellStyles[key] = { ...(sheet.cellStyles[key] ?? {}), comment: next }
-      } else {
-        const style = sheet.cellStyles[key]
-        if (style) {
-          delete style.comment
-          if (Object.keys(style).length === 0) delete sheet.cellStyles[key]
+      const stylePatch: OrderStyleDelta = next ? { col, comment: next } : { col, clearComment: true }
+      await enqueueMutation(async () => {
+        if (!workbook || !currentWorkbookId) return
+        const id = getOrderId(row)
+        if (!id) return
+        try {
+          await patchOrderDelta(currentWorkbookId, id, { stylePatches: [stylePatch] })
+          if (await refreshFromServer({ force: true })) setStatusText('Comentário salvo')
+        } catch (error) {
+          handleApiError(error, 'Falha ao salvar comentário')
         }
-      }
-      grid.render()
-      const id = getOrderId(row)
-      if (!id) return
-      try {
-        const result = await patchOrder(currentWorkbookId!, id, { styles: getRowStylesAsRecord(row) })
-        serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
-      } catch (error) {
-        handleApiError(error, 'Falha ao salvar comentário')
-      }
+      })
     },
   })
 }
@@ -516,19 +511,17 @@ async function uploadAndSetImage(row: number, col: number, blob: Blob, fileName:
     setStatusText('Pedido sem ID — não pode ter foto')
     return
   }
-  grid.setCellImage(row, col, blob, fileName)
   setStatusText('Convertendo e enviando foto...')
   try {
     const jpeg = await blobToJpeg(blob)
     const safeName = fileName.replace(/\.[^.]+$/, '') + '.jpg'
-    const result = await uploadImage(currentWorkbookId, id, col, jpeg, safeName)
-    if (!workbook) return
-    const sheet = workbook.sheets[workbook.sheetOrder[0]]
-    if (!sheet) return
-    sheet.images[`${row}:${col}`] = { url: result.url, fileName: safeName, updatedAt: result.updatedAt }
-    grid.render()
-    serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
-    setStatusText(`Foto enviada (${Math.round(jpeg.size / 1024)} KB)`)
+    await enqueueMutation(async () => {
+      if (!currentWorkbookId) return
+      await uploadImage(currentWorkbookId, id, col, jpeg, safeName)
+      if (await refreshFromServer({ force: true })) {
+        setStatusText(`Foto enviada (${Math.round(jpeg.size / 1024)} KB)`)
+      }
+    })
   } catch (error) {
     handleApiError(error, 'Falha ao enviar foto')
   }
@@ -538,12 +531,15 @@ async function deleteImageAt(row: number, col: number) {
   if (!currentWorkbookId) return
   const id = getOrderId(row)
   if (!id) return
-  grid.removeCellImage(row, col)
-  try {
-    await deleteImage(currentWorkbookId, id, col)
-  } catch (error) {
-    handleApiError(error, 'Falha ao remover foto')
-  }
+  await enqueueMutation(async () => {
+    if (!currentWorkbookId) return
+    try {
+      await deleteImage(currentWorkbookId, id, col)
+      if (await refreshFromServer({ force: true })) setStatusText('Foto removida')
+    } catch (error) {
+      handleApiError(error, 'Falha ao remover foto')
+    }
+  })
 }
 
 function bindClipboardPaste() {
@@ -938,12 +934,13 @@ function bindLogout() {
 function bindBackButton() {
   el<HTMLButtonElement>('#back-btn').addEventListener('click', () => {
     leaveWorkbook()
+    setUrlWorkbookId(null)
     showHome()
   })
 }
 
-async function refreshFromServer(options: { force?: boolean } = {}): Promise<void> {
-  if (!currentWorkbookId) return
+async function refreshFromServer(options: { force?: boolean } = {}): Promise<boolean> {
+  if (!currentWorkbookId) return false
   try {
     const response = await fetchWorkbook(
       currentWorkbookId,
@@ -951,7 +948,7 @@ async function refreshFromServer(options: { force?: boolean } = {}): Promise<voi
     )
     if (response.unchanged) {
       serverUpdatedAt = response.updatedAt
-      return
+      return true
     }
     workbook = serverWorkbookToLocal(currentWorkbookId, response)
     grid.setWorkbook(workbook)
@@ -961,8 +958,10 @@ async function refreshFromServer(options: { force?: boolean } = {}): Promise<voi
     updateStatusCounts()
     setFilename(workbook.name)
     serverUpdatedAt = response.updatedAt
+    return true
   } catch (error) {
     handleApiError(error, 'Falha ao sincronizar')
+    return false
   }
 }
 
@@ -990,6 +989,20 @@ async function withPollingPaused<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+let mutationQueue: Promise<void> = Promise.resolve()
+
+function enqueueMutation(fn: () => Promise<void>): Promise<void> {
+  mutationQueue = mutationQueue
+    .catch(() => {
+      // A próxima gravação da fila não deve ficar presa por falha anterior.
+    })
+    .then(() => withPollingPaused(async () => {
+      setStatusText('Salvando...')
+      await fn()
+    }))
+  return mutationQueue
+}
+
 function handleApiError(error: unknown, fallback?: string) {
   if (error instanceof AuthRequiredError) {
     stopPolling()
@@ -1011,6 +1024,7 @@ function leaveWorkbook() {
 
 async function enterWorkbook(workbookId: string) {
   currentWorkbookId = workbookId
+  setUrlWorkbookId(workbookId)
   serverUpdatedAt = 0
   workbook = null
   buildShell()
@@ -1089,6 +1103,11 @@ async function init() {
     showLoginScreen(() => {
       void init()
     })
+    return
+  }
+  const workbookId = getUrlWorkbookId()
+  if (workbookId) {
+    await enterWorkbook(workbookId)
     return
   }
   showHome()

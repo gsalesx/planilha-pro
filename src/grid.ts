@@ -1359,6 +1359,7 @@ export class GridView {
 
   private commitEdit(row: number, col: number, value: string) {
     this.editing = null
+    this.render()
     this.callbacks.onCellChange([{ row, col, value: value === '' ? null : value }])
   }
 

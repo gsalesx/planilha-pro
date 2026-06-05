@@ -27,6 +27,24 @@ interface ImageRow {
   updated_at: number
 }
 
+interface CellStyle {
+  bg?: string
+  comment?: string
+}
+
+interface CellPatch {
+  col?: unknown
+  value?: unknown
+}
+
+interface StylePatch {
+  col?: unknown
+  bg?: unknown
+  comment?: unknown
+  clearBg?: unknown
+  clearComment?: unknown
+}
+
 function fileSize(p: string): number {
   try {
     return statSync(p).size
@@ -160,40 +178,100 @@ router.post('/workbooks/:workbookId/replace', requireAuth, (req, res) => {
 router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
   const workbookId = req.params.workbookId
   const id = req.params.id
-  const existing = db
+  const exists = db
     .prepare('SELECT id FROM orders WHERE workbook_id = ? AND id = ?')
     .get(workbookId, id) as { id: string } | undefined
-  if (!existing) {
+  if (!exists) {
     res.status(404).json({ error: 'Pedido não encontrado' })
     return
   }
   const patch = req.body as {
     row?: unknown[]
-    styles?: Record<string, { bg?: string }>
+    cells?: CellPatch[]
+    styles?: Record<string, CellStyle>
+    stylePatches?: StylePatch[]
     disappeared?: boolean
   }
-  const sets: string[] = []
-  const params: unknown[] = []
-  if (Array.isArray(patch.row)) {
-    sets.push('row_json = ?')
-    params.push(JSON.stringify(patch.row))
+
+  const cellPatches = Array.isArray(patch.cells) ? patch.cells : null
+  const stylePatches = Array.isArray(patch.stylePatches) ? patch.stylePatches : null
+  if (cellPatches) {
+    for (const item of cellPatches) {
+      const col = Number(item.col)
+      if (!Number.isInteger(col) || col < 0 || col > 200) {
+        res.status(400).json({ error: 'Coluna inválida em cells[]' })
+        return
+      }
+    }
   }
-  if (patch.styles && typeof patch.styles === 'object') {
-    sets.push('styles_json = ?')
-    params.push(JSON.stringify(patch.styles))
+
+  if (stylePatches) {
+    for (const item of stylePatches) {
+      const col = Number(item.col)
+      if (!Number.isInteger(col) || col < 0 || col > 200) {
+        res.status(400).json({ error: 'Coluna inválida em stylePatches[]' })
+        return
+      }
+    }
   }
-  if (typeof patch.disappeared === 'boolean') {
-    sets.push('disappeared = ?')
-    params.push(patch.disappeared ? 1 : 0)
-  }
-  if (sets.length === 0) {
+
+  const hasRowPatch = cellPatches !== null || Array.isArray(patch.row)
+  const hasStylePatch = stylePatches !== null || (!!patch.styles && typeof patch.styles === 'object' && !Array.isArray(patch.styles))
+  const hasDisappearedPatch = typeof patch.disappeared === 'boolean'
+  if (!hasRowPatch && !hasStylePatch && !hasDisappearedPatch) {
     res.status(400).json({ error: 'Nada para atualizar' })
     return
   }
+
   const now = nowMs()
-  sets.push('updated_at = ?')
-  params.push(now, workbookId, id)
   const txn = db.transaction(() => {
+    const current = db
+      .prepare('SELECT row_json, styles_json FROM orders WHERE workbook_id = ? AND id = ?')
+      .get(workbookId, id) as { row_json: string; styles_json: string } | undefined
+    if (!current) throw new Error('Pedido não encontrado')
+
+    const sets: string[] = []
+    const params: unknown[] = []
+    if (cellPatches) {
+      const row = JSON.parse(current.row_json || '[]') as unknown[]
+      for (const item of cellPatches) {
+        const col = Number(item.col)
+        while (row.length <= col) row.push(null)
+        row[col] = item.value ?? null
+      }
+      sets.push('row_json = ?')
+      params.push(JSON.stringify(row))
+    } else if (Array.isArray(patch.row)) {
+      sets.push('row_json = ?')
+      params.push(JSON.stringify(patch.row))
+    }
+
+    if (stylePatches) {
+      const styles = JSON.parse(current.styles_json || '{}') as Record<string, CellStyle>
+      for (const item of stylePatches) {
+        const key = String(Number(item.col))
+        const next = { ...(styles[key] ?? {}) }
+        if (typeof item.bg === 'string') next.bg = item.bg
+        if (item.clearBg === true) delete next.bg
+        if (typeof item.comment === 'string') next.comment = item.comment
+        if (item.clearComment === true) delete next.comment
+        if (Object.keys(next).length === 0) delete styles[key]
+        else styles[key] = next
+      }
+      sets.push('styles_json = ?')
+      params.push(JSON.stringify(styles))
+    } else if (patch.styles && typeof patch.styles === 'object' && !Array.isArray(patch.styles)) {
+      sets.push('styles_json = ?')
+      params.push(JSON.stringify(patch.styles))
+    }
+
+    if (hasDisappearedPatch) {
+      sets.push('disappeared = ?')
+      params.push(patch.disappeared ? 1 : 0)
+    }
+
+    sets.push('updated_at = ?')
+    params.push(now, workbookId, id)
     db.prepare(
       `UPDATE orders SET ${sets.join(', ')} WHERE workbook_id = ? AND id = ?`,
     ).run(...params)

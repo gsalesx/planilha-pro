@@ -163,6 +163,37 @@ export async function patchOrder(
   )
 }
 
+export interface OrderCellDelta {
+  col: number
+  value: CellValue
+}
+
+export interface OrderStyleDelta {
+  col: number
+  bg?: string
+  comment?: string
+  clearBg?: boolean
+  clearComment?: boolean
+}
+
+export async function patchOrderDelta(
+  workbookId: string,
+  orderId: string,
+  patch: {
+    cells?: OrderCellDelta[]
+    stylePatches?: OrderStyleDelta[]
+    disappeared?: boolean
+  },
+): Promise<{ updatedAt: number }> {
+  return request(
+    `/workbooks/${encodeURIComponent(workbookId)}/orders/${encodeURIComponent(orderId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    },
+  )
+}
+
 export async function uploadImage(
   workbookId: string,
   orderId: string,
