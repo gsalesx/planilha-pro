@@ -4,11 +4,12 @@ import type { CellValue, SheetData, WorkbookData } from './types'
 const ID_COLUMN_INDEX = 0 // coluna A (ID do pedido — chave única)
 export const MODEL_COLUMN_INDEX = 2 // coluna C (Modelo)
 const USER_COLUMN_INDEX = 4 // coluna E (Nome de usuário)
+export const RECIPIENT_COLUMN_INDEX = 6 // coluna G (Nome do destinatário)
 export const PHOTO_COLUMN_INDEX = 7
 export const PHOTO_COLUMN_INDICES = Array.from({ length: 10 }, (_, i) => PHOTO_COLUMN_INDEX + i)
 const IMAGE_COLUMN_INDICES = new Set(PHOTO_COLUMN_INDICES) // Foto 1 até Foto 10
 const FILTERABLE_COLS = new Set<number>([MODEL_COLUMN_INDEX, STATUS_COLUMN_INDEX]) // C (Modelo) e F (Status)
-const SORTABLE_COL = 6 // coluna G (Nome do destinatário)
+const SORTABLE_COL = RECIPIENT_COLUMN_INDEX // coluna G (Nome do destinatário)
 const MIN_COLUMN_COUNT = 17 // até coluna Q — Foto 1 até Foto 10
 const DEFAULT_COL_WIDTH = 110
 const ROW_NUMBER_WIDTH = 44
@@ -87,6 +88,7 @@ export interface GridCallbacks {
   onImageRequest?(rowIndex: number, colIndex: number): void
   onCellImageChange?(rowIndex: number, colIndex: number): void
   onImageDelete?(rowIndex: number, colIndex: number): void
+  onCommentRequest?(rowIndex: number, colIndex: number): void
   onViewStateChange?(): void
 }
 
@@ -671,6 +673,31 @@ export class GridView {
       wrap.appendChild(text)
       wrap.appendChild(btn)
       td.appendChild(wrap)
+    } else if (col === RECIPIENT_COLUMN_INDEX && !isEditing) {
+      td.classList.add('cell-user', 'cell-recipient')
+      const comment = style?.comment?.trim() ?? ''
+      const wrap = document.createElement('div')
+      wrap.className = 'user-cell-wrap'
+      const text = document.createElement('span')
+      text.className = 'user-cell-text'
+      text.textContent = value == null ? '' : String(value)
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'user-cell-copy recipient-comment-btn' + (comment ? ' has-comment' : '')
+      btn.title = comment || 'Adicionar comentário'
+      btn.innerHTML = `
+        <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2h7A2.5 2.5 0 0 1 16 4.5v5A2.5 2.5 0 0 1 13.5 12H9l-4.2 3.15A.5.5 0 0 1 4 14.75V4.5Z" />
+        </svg>
+      `
+      btn.addEventListener('click', (event) => {
+        event.stopPropagation()
+        this.select(row, col)
+        this.callbacks.onCommentRequest?.(row, col)
+      })
+      wrap.appendChild(text)
+      wrap.appendChild(btn)
+      td.appendChild(wrap)
     } else if (IMAGE_COLUMN_INDICES.has(col)) {
       td.classList.add('cell-image')
       const meta = sheet.images[`${row}:${col}`]
@@ -1008,7 +1035,9 @@ export class GridView {
       })
     } else {
       const valueCounts = new Map<string, number>()
+      const rowDates = sheet.rowDates ?? []
       for (let r = 0; r < sheet.rows.length; r++) {
+        if (this.dateFilter && (rowDates[r] ?? '') !== this.dateFilter) continue
         const v = sheet.rows[r]?.[col]
         const key = v == null ? '' : String(v)
         valueCounts.set(key, (valueCounts.get(key) ?? 0) + 1)
@@ -1016,7 +1045,7 @@ export class GridView {
       const sortedValues = [...valueCounts.keys()].sort((a, b) =>
         a.localeCompare(b, 'pt-BR', { sensitivity: 'base', numeric: true }),
       )
-      const checkedSet = currentFilter ?? new Set(sortedValues)
+      const checkedSet = currentFilter ?? new Set<string>()
 
       const searchInput = document.createElement('input')
       searchInput.type = 'search'
@@ -1028,7 +1057,7 @@ export class GridView {
       selectAllLabel.className = 'filter-select-all-label'
       const selectAll = document.createElement('input')
       selectAll.type = 'checkbox'
-      selectAll.checked = !currentFilter || currentFilter.size === sortedValues.length
+      selectAll.checked = !!currentFilter && currentFilter.size === sortedValues.length
       selectAll.indeterminate = !!currentFilter && currentFilter.size > 0 && currentFilter.size < sortedValues.length
       selectAllLabel.appendChild(selectAll)
       const selectAllText = document.createElement('span')

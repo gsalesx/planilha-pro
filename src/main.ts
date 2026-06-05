@@ -13,11 +13,12 @@ import {
   serverWorkbookToLocal,
   uploadImage,
 } from './api'
-import { openConfirmDialog } from './dialog'
+import { openConfirmDialog, openTextareaDialog } from './dialog'
 import {
   GridView,
   MODEL_COLUMN_INDEX,
   PHOTO_COLUMN_INDICES,
+  RECIPIENT_COLUMN_INDEX,
   type GridViewState,
 } from './grid'
 import { showLoginScreen } from './login'
@@ -94,6 +95,9 @@ function buildShell() {
         </button>
         <button class="etiqueta-btn" data-bg="#86efac" title="Marcar como Correto">
           <span class="etiqueta-dot" style="background:#86efac"></span>Correto
+        </button>
+        <button class="etiqueta-btn" data-bg="#fca5a5" title="Marcar como Erro">
+          <span class="etiqueta-dot" style="background:#fca5a5"></span>Erro
         </button>
         <button class="etiqueta-btn" data-bg="#c084fc" title="Marcar como Conjuntos">
           <span class="etiqueta-dot" style="background:#c084fc"></span>Conjuntos
@@ -418,6 +422,42 @@ async function handleEtiqueta(color: string | null) {
         handleApiError(error, 'Falha ao salvar etiqueta')
       }
     }
+  })
+}
+
+function handleCommentRequest(row: number, col: number) {
+  if (!workbook || !currentWorkbookId || col !== RECIPIENT_COLUMN_INDEX) return
+  const sheet = workbook.sheets[workbook.sheetOrder[0]]
+  if (!sheet) return
+  const key = `${row}:${col}`
+  const current = sheet.cellStyles?.[key]?.comment ?? ''
+  openTextareaDialog({
+    title: 'Comentário do destinatário',
+    label: 'Comentário',
+    defaultValue: current,
+    confirmLabel: 'Salvar',
+    onConfirm: async (value) => {
+      sheet.cellStyles ||= {}
+      const next = value.trim()
+      if (next) {
+        sheet.cellStyles[key] = { ...(sheet.cellStyles[key] ?? {}), comment: next }
+      } else {
+        const style = sheet.cellStyles[key]
+        if (style) {
+          delete style.comment
+          if (Object.keys(style).length === 0) delete sheet.cellStyles[key]
+        }
+      }
+      grid.render()
+      const id = getOrderId(row)
+      if (!id) return
+      try {
+        const result = await patchOrder(currentWorkbookId!, id, { styles: getRowStylesAsRecord(row) })
+        serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
+      } catch (error) {
+        handleApiError(error, 'Falha ao salvar comentário')
+      }
+    },
   })
 }
 
@@ -988,6 +1028,7 @@ async function enterWorkbook(workbookId: string) {
       danger: true,
       onConfirm: () => deleteImageAt(row, col),
     }),
+    onCommentRequest: handleCommentRequest,
     onViewStateChange: () => {
       setUrlGridViewState(grid.getViewState())
       updateStatusCounts()

@@ -27,6 +27,7 @@ export interface CellImage {
 
 export interface CellStyle {
   bg?: string
+  comment?: string
 }
 
 export type CellValue = string | number | null

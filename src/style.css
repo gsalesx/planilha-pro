@@ -485,6 +485,12 @@ button {
 .modal-prompt-input:focus {
   border-color: #2563eb;
 }
+.modal-textarea {
+  min-height: 110px;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.4;
+}
 
 /* ============================================================
    Modal (confirmation dialog)
@@ -1153,6 +1159,22 @@ table.sheet tbody tr:hover .user-cell-copy {
   background: #d1fae5;
   color: #047857;
   opacity: 1 !important;
+}
+.recipient-comment-btn svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+.recipient-comment-btn.has-comment {
+  background: #fb923c;
+  border-color: #ea580c;
+  color: #fff;
+  opacity: 1 !important;
+}
+.recipient-comment-btn.has-comment:hover {
+  background: #f97316;
+  border-color: #c2410c;
+  color: #fff;
 }
 
 table.sheet tbody td.is-editing {
