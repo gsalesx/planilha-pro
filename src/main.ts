@@ -526,6 +526,12 @@ function getOrderId(rowIndex: number): string | null {
   return id == null ? null : String(id).trim() || null
 }
 
+function getOrderKey(rowIndex: number): string | null {
+  if (!workbook) return null
+  const sheet = workbook.sheets[workbook.sheetOrder[0]]
+  return sheet?.rowKeys?.[rowIndex] ?? getOrderId(rowIndex)
+}
+
 type ChangeBatch = ReadonlyArray<{ row: number; col: number; value: CellValue }>
 
 async function handleCellChange(changes: ChangeBatch) {
@@ -548,16 +554,17 @@ async function handleCellChange(changes: ChangeBatch) {
   await Promise.all([...byRow.entries()].map(([row, cells]) =>
     enqueueMutation(async () => {
       if (!workbook || !currentWorkbookId) return
-      const id = getOrderId(row)
-      if (!id) return
+      const orderKey = getOrderKey(row)
+      const orderId = getOrderId(row) ?? orderKey
+      if (!orderKey) return
       try {
-        const result = await patchOrderDelta(currentWorkbookId, id, { cells })
+        const result = await patchOrderDelta(currentWorkbookId, orderKey, { cells })
         serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
         setStatusText('Alteração salva')
       } catch (error) {
         addPendingMutation({
           kind: 'cell',
-          orderId: id,
+          orderId: orderId ?? '',
           rowIndex: row,
           col: cells[0]?.col ?? 0,
           sheetDate: sheet.rowDates?.[row] ?? '',
@@ -587,16 +594,17 @@ async function handleEtiqueta(color: string | null) {
   await Promise.all(rows.map((row) =>
     enqueueMutation(async () => {
       if (!workbook || !currentWorkbookId) return
-      const id = getOrderId(row)
-      if (!id) return
+      const orderKey = getOrderKey(row)
+      const orderId = getOrderId(row) ?? orderKey
+      if (!orderKey) return
       try {
-        const result = await patchOrderDelta(currentWorkbookId, id, { stylePatches: [stylePatch] })
+        const result = await patchOrderDelta(currentWorkbookId, orderKey, { stylePatches: [stylePatch] })
         serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
         setStatusText('Etiqueta salva')
       } catch (error) {
         addPendingMutation({
           kind: 'style',
-          orderId: id,
+          orderId: orderId ?? '',
           rowIndex: row,
           col,
           sheetDate: sheet?.rowDates?.[row] ?? '',
@@ -636,16 +644,17 @@ function handleCommentRequest(row: number, col: number) {
       grid.render()
       await enqueueMutation(async () => {
         if (!workbook || !currentWorkbookId) return
-        const id = getOrderId(row)
-        if (!id) return
+        const orderKey = getOrderKey(row)
+        const orderId = getOrderId(row) ?? orderKey
+        if (!orderKey) return
         try {
-          const result = await patchOrderDelta(currentWorkbookId, id, { stylePatches: [stylePatch] })
+          const result = await patchOrderDelta(currentWorkbookId, orderKey, { stylePatches: [stylePatch] })
           serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
           setStatusText('Comentário salvo')
         } catch (error) {
           addPendingMutation({
             kind: 'comment',
-            orderId: id,
+            orderId: orderId ?? '',
             rowIndex: row,
             col,
             sheetDate: sheet.rowDates?.[row] ?? '',
@@ -709,8 +718,9 @@ async function pickImageFile(row: number, col: number) {
 
 async function uploadAndSetImage(row: number, col: number, blob: Blob, fileName: string) {
   if (!currentWorkbookId) return
-  const id = getOrderId(row)
-  if (!id) {
+  const orderKey = getOrderKey(row)
+  const orderId = getOrderId(row) ?? orderKey
+  if (!orderKey) {
     setStatusText('Pedido sem ID — não pode ter foto')
     return
   }
@@ -722,7 +732,7 @@ async function uploadAndSetImage(row: number, col: number, blob: Blob, fileName:
     await enqueueMutation(async () => {
       if (!currentWorkbookId) return
       try {
-        const result = await uploadImage(currentWorkbookId, id, col, jpeg, safeName)
+        const result = await uploadImage(currentWorkbookId, orderKey, col, jpeg, safeName)
         if (!workbook) return
         const sheet = workbook.sheets[workbook.sheetOrder[0]]
         if (!sheet) return
@@ -733,7 +743,7 @@ async function uploadAndSetImage(row: number, col: number, blob: Blob, fileName:
       } catch (error) {
         addPendingMutation({
           kind: 'image',
-          orderId: id,
+          orderId: orderId ?? '',
           rowIndex: row,
           col,
           sheetDate: workbook?.sheets[workbook.sheetOrder[0]]?.rowDates?.[row] ?? '',
@@ -750,20 +760,21 @@ async function uploadAndSetImage(row: number, col: number, blob: Blob, fileName:
 
 async function deleteImageAt(row: number, col: number) {
   if (!currentWorkbookId) return
-  const id = getOrderId(row)
-  if (!id) return
+  const orderKey = getOrderKey(row)
+  const orderId = getOrderId(row) ?? orderKey
+  if (!orderKey) return
   const sheetDate = workbook?.sheets[workbook.sheetOrder[0]]?.rowDates?.[row] ?? ''
   grid.removeCellImage(row, col)
   await enqueueMutation(async () => {
     if (!currentWorkbookId) return
     try {
-      const result = await deleteImage(currentWorkbookId, id, col)
+      const result = await deleteImage(currentWorkbookId, orderKey, col)
       serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
       setStatusText('Foto removida')
     } catch (error) {
       addPendingMutation({
         kind: 'image',
-        orderId: id,
+        orderId: orderId ?? '',
         rowIndex: row,
         col,
         sheetDate,
@@ -987,6 +998,7 @@ async function loadFile(file: File) {
     }
 
     const orders = sheet.rows.map((row, idx) => ({
+      key: sheet.rowKeys?.[idx],
       id: String(row[ID_COL] ?? '').trim() || `order-${idx}-${Date.now()}`,
       row,
       styles: Object.fromEntries(
@@ -1005,13 +1017,13 @@ async function loadFile(file: File) {
     serverUpdatedAt = result.updatedAt
 
     for (const item of blobImages) {
-      const orderId = orders[item.row]?.id
-      if (!orderId) continue
+      const orderKey = orders[item.row]?.key ?? orders[item.row]?.id
+      if (!orderKey) continue
       try {
         const jpeg = await blobToJpeg(item.blob)
         await uploadImage(
           currentWorkbookId,
-          orderId,
+          orderKey,
           item.col,
           jpeg,
           item.fileName.replace(/\.[^.]+$/, '') + '.jpg',

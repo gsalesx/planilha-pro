@@ -72,13 +72,27 @@ const upload = multer({
   limits: { fileSize: 12 * 1024 * 1024 },
 })
 
+function resolveOrderKey(workbookId: string, ref: string): { ok: true; key: string } | { ok: false; status: number; error: string } {
+  const exact = db
+    .prepare('SELECT order_key FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(workbookId, ref) as { order_key: string } | undefined
+  if (exact) return { ok: true, key: exact.order_key }
+
+  const matches = db
+    .prepare('SELECT order_key FROM orders WHERE workbook_id = ? AND id = ?')
+    .all(workbookId, ref) as Array<{ order_key: string }>
+  if (matches.length === 1) return { ok: true, key: matches[0].order_key }
+  if (matches.length > 1) return { ok: false, status: 409, error: 'ID de pedido duplicado; use a chave interna da linha' }
+  return { ok: false, status: 404, error: 'Pedido não encontrado' }
+}
+
 router.post(
   '/workbooks/:workbookId/images/:orderId/:col',
   requireAuth,
   upload.single('image'),
   (req, res) => {
     const workbookId = req.params.workbookId
-    const orderId = req.params.orderId
+    const orderRef = req.params.orderId
     const col = Number(req.params.col)
     if (!req.file) {
       res.status(400).json({ error: 'Envie multipart "image"' })
@@ -93,13 +107,12 @@ router.post(
       return
     }
 
-    const orderExists = db
-      .prepare('SELECT id FROM orders WHERE workbook_id = ? AND id = ?')
-      .get(workbookId, orderId)
-    if (!orderExists) {
-      res.status(404).json({ error: 'Pedido não encontrado' })
+    const resolved = resolveOrderKey(workbookId, orderRef)
+    if (!resolved.ok) {
+      res.status(resolved.status).json({ error: resolved.error })
       return
     }
+    const orderId = resolved.key
 
     const extension =
       req.file.mimetype === 'image/png' ? '.png' : req.file.mimetype === 'image/webp' ? '.webp' : '.jpg'
@@ -143,8 +156,14 @@ router.post(
 
 router.delete('/workbooks/:workbookId/images/:orderId/:col', requireAuth, (req, res) => {
   const workbookId = req.params.workbookId
-  const orderId = req.params.orderId
+  const orderRef = req.params.orderId
   const col = Number(req.params.col)
+  const resolved = resolveOrderKey(workbookId, orderRef)
+  if (!resolved.ok) {
+    res.status(resolved.status).json({ error: resolved.error })
+    return
+  }
+  const orderId = resolved.key
   const existing = db
     .prepare('SELECT storage_path FROM images WHERE workbook_id = ? AND order_id = ? AND col = ?')
     .get(workbookId, orderId, col) as { storage_path: string } | undefined
@@ -173,8 +192,14 @@ router.delete('/workbooks/:workbookId/images/:orderId/:col', requireAuth, (req, 
 
 router.get('/workbooks/:workbookId/images/:orderId/:col', requireAuth, async (req, res) => {
   const workbookId = req.params.workbookId
-  const orderId = req.params.orderId
+  const orderRef = req.params.orderId
   const col = Number(req.params.col)
+  const resolved = resolveOrderKey(workbookId, orderRef)
+  if (!resolved.ok) {
+    res.status(resolved.status).end()
+    return
+  }
+  const orderId = resolved.key
   const row = db
     .prepare('SELECT storage_path, mime FROM images WHERE workbook_id = ? AND order_id = ? AND col = ?')
     .get(workbookId, orderId, col) as { storage_path: string; mime: string } | undefined

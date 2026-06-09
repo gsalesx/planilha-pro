@@ -12,6 +12,7 @@ export interface WorkbookSummary {
 }
 
 export interface ServerOrder {
+  key: string
   id: string
   row: CellValue[]
   styles: Record<string, CellStyle>
@@ -134,6 +135,7 @@ export async function replaceWorkbook(
   workbookId: string,
   payload: {
     orders: Array<{
+      key?: string
       id: string
       row: CellValue[]
       styles?: Record<string, CellStyle>
@@ -243,6 +245,7 @@ export async function deleteOrdersBySheetDate(
 /** Converte payload do servidor pra WorkbookData (formato que a grid usa) */
 export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook): WorkbookData {
   const rows: CellValue[][] = []
+  const rowKeys: string[] = []
   const rowDates: string[] = []
   const images: Record<string, { url: string; fileName: string; updatedAt?: number }> = {}
   const cellStyles: Record<string, CellStyle> = {}
@@ -250,6 +253,7 @@ export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook
 
   server.orders.forEach((order, idx) => {
     rows.push(order.row)
+    rowKeys.push(order.key ?? order.id)
     rowDates.push(order.sheetDate ?? '')
     for (const [colKey, style] of Object.entries(order.styles ?? {})) {
       cellStyles[`${idx}:${colKey}`] = style
@@ -277,6 +281,7 @@ export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook
         name: server.name,
         headers: FIXED_HEADERS,
         rows,
+        rowKeys,
         rowDates,
         images,
         cellStyles,

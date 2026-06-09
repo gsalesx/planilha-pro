@@ -9,6 +9,7 @@ import { env } from '../env.js'
 const router = Router()
 
 interface OrderRow {
+  order_key: string
   id: string
   row_json: string
   styles_json: string
@@ -66,6 +67,33 @@ function getWorkbook(id: string): WorkbookRow | undefined {
     .get(id) as WorkbookRow | undefined
 }
 
+function uniqueOrderKey(rawKey: unknown, visibleId: string, position: number, used: Set<string>): string {
+  const baseRaw = typeof rawKey === 'string' && rawKey.trim() ? rawKey.trim() : visibleId
+  const base = (baseRaw || `order-${position}`).replace(/\s+/g, ' ').trim()
+  let key = base
+  let suffix = 2
+  while (used.has(key)) {
+    key = `${base}__${suffix}`
+    suffix++
+  }
+  used.add(key)
+  return key
+}
+
+function resolveOrderKey(workbookId: string, ref: string): { ok: true; key: string } | { ok: false; status: number; error: string } {
+  const exact = db
+    .prepare('SELECT order_key FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(workbookId, ref) as { order_key: string } | undefined
+  if (exact) return { ok: true, key: exact.order_key }
+
+  const matches = db
+    .prepare('SELECT order_key FROM orders WHERE workbook_id = ? AND id = ?')
+    .all(workbookId, ref) as Array<{ order_key: string }>
+  if (matches.length === 1) return { ok: true, key: matches[0].order_key }
+  if (matches.length > 1) return { ok: false, status: 409, error: 'ID de pedido duplicado; use a chave interna da linha' }
+  return { ok: false, status: 404, error: 'Pedido não encontrado' }
+}
+
 function buildWorkbookPayload(workbookId: string, since?: number) {
   const wb = getWorkbook(workbookId)
   if (!wb) return null
@@ -75,7 +103,7 @@ function buildWorkbookPayload(workbookId: string, since?: number) {
 
   const orders = db
     .prepare(
-      'SELECT id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders WHERE workbook_id = ? ORDER BY position ASC',
+      'SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders WHERE workbook_id = ? ORDER BY position ASC',
     )
     .all(workbookId) as OrderRow[]
 
@@ -95,6 +123,7 @@ function buildWorkbookPayload(workbookId: string, since?: number) {
     name: wb.name,
     columnWidths: JSON.parse(wb.column_widths || '{}') as Record<string, number>,
     orders: orders.map((o) => ({
+      key: o.order_key,
       id: o.id,
       row: JSON.parse(o.row_json),
       styles: JSON.parse(o.styles_json || '{}'),
@@ -102,9 +131,9 @@ function buildWorkbookPayload(workbookId: string, since?: number) {
       sheetDate: o.sheet_date || '',
       position: o.position,
       updatedAt: o.updated_at,
-      images: (imagesByOrder.get(o.id) ?? []).map((i) => ({
+      images: (imagesByOrder.get(o.order_key) ?? []).map((i) => ({
         col: i.col,
-        url: `/api/workbooks/${encodeURIComponent(workbookId)}/images/${encodeURIComponent(o.id)}/${i.col}`,
+        url: `/api/workbooks/${encodeURIComponent(workbookId)}/images/${encodeURIComponent(o.order_key)}/${i.col}`,
         fileName: i.file_name,
         mime: i.mime,
         size: fileSize(i.storage_path),
@@ -132,9 +161,10 @@ router.post('/workbooks/:workbookId/replace', requireAuth, (req, res) => {
   }
   const { orders, columnWidths } = req.body as {
     orders?: Array<{
+      key?: string
       id: string
       row: unknown[]
-      styles?: Record<string, { bg?: string }>
+      styles?: Record<string, CellStyle>
       disappeared?: boolean
       sheetDate?: string
     }>
@@ -147,15 +177,22 @@ router.post('/workbooks/:workbookId/replace', requireAuth, (req, res) => {
   }
 
   const now = nowMs()
+  const existingImages = db
+    .prepare('SELECT order_id, col, file_name, mime, storage_path, updated_at FROM images WHERE workbook_id = ?')
+    .all(workbookId) as ImageRow[]
   const txn = db.transaction(() => {
     db.prepare('DELETE FROM orders WHERE workbook_id = ?').run(workbookId)
     const insertOrder = db.prepare(
-      'INSERT INTO orders (workbook_id, id, row_json, styles_json, disappeared, sheet_date, position, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO orders (workbook_id, order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
+    const usedKeys = new Set<string>()
     orders.forEach((order, position) => {
+      const visibleId = String(order.id || '').trim() || `order-${position}-${now}`
+      const key = uniqueOrderKey(order.key, visibleId, position, usedKeys)
       insertOrder.run(
         workbookId,
-        order.id,
+        key,
+        visibleId,
         JSON.stringify(order.row ?? []),
         JSON.stringify(order.styles ?? {}),
         order.disappeared ? 1 : 0,
@@ -164,6 +201,13 @@ router.post('/workbooks/:workbookId/replace', requireAuth, (req, res) => {
         now,
       )
     })
+    const insertImage = db.prepare(
+      'INSERT INTO images (workbook_id, order_id, col, file_name, mime, storage_path, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    )
+    for (const img of existingImages) {
+      if (!usedKeys.has(img.order_id)) continue
+      insertImage.run(workbookId, img.order_id, img.col, img.file_name, img.mime, img.storage_path, img.updated_at)
+    }
     db.prepare('UPDATE workbooks SET updated_at = ?, column_widths = ? WHERE id = ?').run(
       now,
       JSON.stringify(columnWidths ?? {}),
@@ -178,11 +222,9 @@ router.post('/workbooks/:workbookId/replace', requireAuth, (req, res) => {
 router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
   const workbookId = req.params.workbookId
   const id = req.params.id
-  const exists = db
-    .prepare('SELECT id FROM orders WHERE workbook_id = ? AND id = ?')
-    .get(workbookId, id) as { id: string } | undefined
-  if (!exists) {
-    res.status(404).json({ error: 'Pedido não encontrado' })
+  const resolved = resolveOrderKey(workbookId, id)
+  if (!resolved.ok) {
+    res.status(resolved.status).json({ error: resolved.error })
     return
   }
   const patch = req.body as {
@@ -226,8 +268,8 @@ router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
   const now = nowMs()
   const txn = db.transaction(() => {
     const current = db
-      .prepare('SELECT row_json, styles_json FROM orders WHERE workbook_id = ? AND id = ?')
-      .get(workbookId, id) as { row_json: string; styles_json: string } | undefined
+      .prepare('SELECT row_json, styles_json FROM orders WHERE workbook_id = ? AND order_key = ?')
+      .get(workbookId, resolved.key) as { row_json: string; styles_json: string } | undefined
     if (!current) throw new Error('Pedido não encontrado')
 
     const sets: string[] = []
@@ -271,9 +313,9 @@ router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
     }
 
     sets.push('updated_at = ?')
-    params.push(now, workbookId, id)
+    params.push(now, workbookId, resolved.key)
     db.prepare(
-      `UPDATE orders SET ${sets.join(', ')} WHERE workbook_id = ? AND id = ?`,
+      `UPDATE orders SET ${sets.join(', ')} WHERE workbook_id = ? AND order_key = ?`,
     ).run(...params)
     db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
   })
@@ -289,6 +331,7 @@ const STATUS_COL = 5
 
 function serializeOrderRow(workbookId: string, o: OrderRow) {
   return {
+    key: o.order_key,
     id: o.id,
     row: JSON.parse(o.row_json) as unknown[],
     styles: JSON.parse(o.styles_json || '{}'),
@@ -298,9 +341,9 @@ function serializeOrderRow(workbookId: string, o: OrderRow) {
     updatedAt: o.updated_at,
     images: (db
       .prepare('SELECT col, file_name, mime, storage_path, updated_at FROM images WHERE workbook_id = ? AND order_id = ?')
-      .all(workbookId, o.id) as ImageRow[]).map((i) => ({
+      .all(workbookId, o.order_key) as ImageRow[]).map((i) => ({
       col: i.col,
-      url: `/api/workbooks/${encodeURIComponent(workbookId)}/images/${encodeURIComponent(o.id)}/${i.col}`,
+      url: `/api/workbooks/${encodeURIComponent(workbookId)}/images/${encodeURIComponent(o.order_key)}/${i.col}`,
       fileName: i.file_name,
       mime: i.mime,
       size: fileSize(i.storage_path),
@@ -327,7 +370,7 @@ router.get('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
   }
   const rows = db
     .prepare(
-      `SELECT id, row_json, styles_json, disappeared, sheet_date, position, updated_at
+      `SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at
          FROM orders WHERE ${where.join(' AND ')} ORDER BY position ASC`,
     )
     .all(...params) as OrderRow[]
@@ -366,23 +409,21 @@ router.post('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
     res.status(400).json({ error: 'row[] obrigatório' })
     return
   }
-  const exists = db
-    .prepare('SELECT id FROM orders WHERE workbook_id = ? AND id = ?')
-    .get(workbookId, id)
-  if (exists) {
-    res.status(409).json({ error: 'Pedido com este id já existe' })
-    return
-  }
   const sheetDate = typeof body.sheetDate === 'string' ? body.sheetDate : ''
   const now = nowMs()
   const maxPos = (db
     .prepare('SELECT COALESCE(MAX(position), -1) AS m FROM orders WHERE workbook_id = ?')
     .get(workbookId) as { m: number }).m
   const txn = db.transaction(() => {
+    const orderKey = uniqueOrderKey(undefined, id, maxPos + 1, new Set(
+      (db.prepare('SELECT order_key FROM orders WHERE workbook_id = ?').all(workbookId) as Array<{ order_key: string }>)
+        .map((row) => row.order_key),
+    ))
     db.prepare(
-      'INSERT INTO orders (workbook_id, id, row_json, styles_json, disappeared, sheet_date, position, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO orders (workbook_id, order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     ).run(
       workbookId,
+      orderKey,
       id,
       JSON.stringify(body.row),
       JSON.stringify(body.styles ?? {}),
@@ -395,8 +436,8 @@ router.post('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
   })
   txn()
   const created = db
-    .prepare('SELECT id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders WHERE workbook_id = ? AND id = ?')
-    .get(workbookId, id) as OrderRow
+    .prepare('SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders WHERE workbook_id = ? ORDER BY position DESC LIMIT 1')
+    .get(workbookId) as OrderRow
   res.status(201).json(serializeOrderRow(workbookId, created))
 })
 
@@ -427,19 +468,26 @@ router.patch('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
         results.push({ id, ok: false, error: 'status (string) obrigatório' })
         continue
       }
-      const existing = db
-        .prepare('SELECT row_json FROM orders WHERE workbook_id = ? AND id = ?')
-        .get(workbookId, id) as { row_json: string } | undefined
-      if (!existing) {
+      let matches = db
+        .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ? AND id = ?')
+        .all(workbookId, id) as Array<{ order_key: string; row_json: string }>
+      if (matches.length === 0) {
+        matches = db
+          .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
+          .all(workbookId, id) as Array<{ order_key: string; row_json: string }>
+      }
+      if (matches.length === 0) {
         results.push({ id, ok: false, error: 'não encontrado' })
         continue
       }
-      const row = JSON.parse(existing.row_json) as unknown[]
-      while (row.length <= STATUS_COL) row.push(null)
-      row[STATUS_COL] = upd.status
-      db.prepare(
-        'UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND id = ?',
-      ).run(JSON.stringify(row), now, workbookId, id)
+      for (const existing of matches) {
+        const row = JSON.parse(existing.row_json) as unknown[]
+        while (row.length <= STATUS_COL) row.push(null)
+        row[STATUS_COL] = upd.status
+        db.prepare(
+          'UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
+        ).run(JSON.stringify(row), now, workbookId, existing.order_key)
+      }
       results.push({ id, ok: true })
     }
     db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
@@ -468,7 +516,7 @@ router.delete('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
     .prepare(
       `SELECT i.storage_path AS storage_path
          FROM images i
-         INNER JOIN orders o ON o.workbook_id = i.workbook_id AND o.id = i.order_id
+         INNER JOIN orders o ON o.workbook_id = i.workbook_id AND o.order_key = i.order_id
          WHERE i.workbook_id = ? AND o.sheet_date = ?`,
     )
     .all(workbookId, sheetDate) as Array<{ storage_path: string }>

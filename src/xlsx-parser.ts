@@ -1,7 +1,7 @@
 import JSZip from 'jszip'
 import * as XLSX from 'xlsx'
 
-import type { CellImage, CellStyle, CellValue, RowFlags, SheetData, WorkbookData } from './types'
+import type { CellImage, CellStyle, CellValue, SheetData, WorkbookData } from './types'
 
 const ID_COL = 0
 const STATUS_COL = 5
@@ -202,10 +202,48 @@ function buildHeaderColumnMap(sheetHeaders: string[]): number[] {
   return map
 }
 
+function occurrenceKey(sheetDate: string, id: string): string {
+  return `${sheetDate}\u0000${id}`
+}
+
+function matchKey(sheetDate: string, id: string, occurrence: number): string {
+  return `${occurrenceKey(sheetDate, id)}\u0000${occurrence}`
+}
+
+function nextOccurrence(counts: Map<string, number>, sheetDate: string, id: string): number {
+  const key = occurrenceKey(sheetDate, id)
+  const next = (counts.get(key) ?? 0) + 1
+  counts.set(key, next)
+  return next
+}
+
+function uniqueOrderKey(sheetDate: string, id: string, occurrence: number, used: Set<string>): string {
+  const base = occurrence === 1
+    ? id
+    : `${sheetDate || 'sem-data'}__${id || 'pedido'}__${occurrence}`
+  let key = base
+  let suffix = 2
+  while (used.has(key)) {
+    key = `${base}__${suffix}`
+    suffix++
+  }
+  used.add(key)
+  return key
+}
+
 interface NewPedido {
   id: string
   row: CellValue[]
   sheetDate: string
+  occurrence: number
+  images: Map<number, CellImage>
+}
+
+interface ExistingPedido {
+  key: string
+  row: CellValue[]
+  sheetDate: string
+  styles: Map<number, CellStyle>
   images: Map<number, CellImage>
 }
 
@@ -274,44 +312,45 @@ export async function parseXlsx(file: File, options: ParseOptions = {}): Promise
       }
 
       if (hasValue && id) {
-        newPedidos.push({ id, row, sheetDate: normalizeSheetDate(sheetName), images })
+        newPedidos.push({ id, row, sheetDate: normalizeSheetDate(sheetName), occurrence: 0, images })
       }
       bodyRowIndex++
     }
   }
 
-  // dedupe new pedidos by ID — last in wins
-  const newById = new Map<string, NewPedido>()
+  const newOccurrences = new Map<string, number>()
   for (const pedido of newPedidos) {
-    newById.set(pedido.id, pedido)
+    pedido.occurrence = nextOccurrence(newOccurrences, pedido.sheetDate, pedido.id)
   }
 
-  // build existing index by ID
-  const existingById = new Map<string, {
-    row: CellValue[]
-    sheetDate: string
-    styles: Map<number, CellStyle>
-    images: Map<number, CellImage>
-  }>()
+  // build existing index by data + ID + occurrence
+  const existingByMatch = new Map<string, ExistingPedido>()
+  const usedOrderKeys = new Set<string>()
   if (existing && existing.sheetOrder.length > 0) {
     const sheet = existing.sheets[existing.sheetOrder[0]]
     if (sheet) {
+      const existingOccurrences = new Map<string, number>()
       for (let r = 0; r < sheet.rows.length; r++) {
         const id = String(sheet.rows[r]?.[ID_COL] ?? '').trim()
         if (!id) continue
+        const sheetDate = sheet.rowDates?.[r] ?? ''
+        const occurrence = nextOccurrence(existingOccurrences, sheetDate, id)
+        const orderKey = sheet.rowKeys?.[r] ?? id
+        usedOrderKeys.add(orderKey)
         const styles = new Map<number, CellStyle>()
         for (const [key, val] of Object.entries(sheet.cellStyles ?? {})) {
           const [rr, cc] = key.split(':').map(Number)
-          if (rr === r && val?.bg) styles.set(cc, val)
+          if (rr === r) styles.set(cc, val)
         }
         const images = new Map<number, CellImage>()
         for (const [key, val] of Object.entries(sheet.images)) {
           const [rr, cc] = key.split(':').map(Number)
           if (rr === r) images.set(cc, val)
         }
-        existingById.set(id, {
+        existingByMatch.set(matchKey(sheetDate, id, occurrence), {
+          key: orderKey,
           row: sheet.rows[r],
-          sheetDate: sheet.rowDates?.[r] ?? '',
+          sheetDate,
           styles,
           images,
         })
@@ -321,48 +360,39 @@ export async function parseXlsx(file: File, options: ParseOptions = {}): Promise
 
   // merge
   const finalRows: CellValue[][] = []
+  const finalRowKeys: string[] = []
   const finalRowDates: string[] = []
   const finalImages: Record<string, CellImage> = {}
   const finalStyles: Record<string, CellStyle> = {}
-  const finalFlags: Record<number, RowFlags> = {}
 
-  for (const [id, pedido] of newById) {
+  for (const pedido of newPedidos) {
     const idx = finalRows.length
     const row = [...pedido.row]
-    const prior = existingById.get(id)
+    const prior = existingByMatch.get(matchKey(pedido.sheetDate, pedido.id, pedido.occurrence))
     if (prior) {
       const priorStatus = prior.row[STATUS_COL]
       if (priorStatus != null && priorStatus !== '') {
         row[STATUS_COL] = priorStatus
       }
       finalRows.push(row)
-      finalRowDates.push(pedido.sheetDate) // data nova vence
+      finalRowKeys.push(prior.key)
+      finalRowDates.push(pedido.sheetDate)
       for (const [col, style] of prior.styles) {
         finalStyles[`${idx}:${col}`] = style
       }
       for (const [col, img] of prior.images) {
         finalImages[`${idx}:${col}`] = img
       }
+      for (const [col, img] of pedido.images) {
+        if (!finalImages[`${idx}:${col}`]) finalImages[`${idx}:${col}`] = img
+      }
     } else {
       finalRows.push(row)
+      finalRowKeys.push(uniqueOrderKey(pedido.sheetDate, pedido.id, pedido.occurrence, usedOrderKeys))
       finalRowDates.push(pedido.sheetDate)
       for (const [col, img] of pedido.images) {
         finalImages[`${idx}:${col}`] = img
       }
-    }
-  }
-
-  for (const [id, prior] of existingById) {
-    if (newById.has(id)) continue
-    const idx = finalRows.length
-    finalRows.push([...prior.row])
-    finalRowDates.push(prior.sheetDate)
-    finalFlags[idx] = { disappeared: true }
-    for (const [col, style] of prior.styles) {
-      finalStyles[`${idx}:${col}`] = style
-    }
-    for (const [col, img] of prior.images) {
-      finalImages[`${idx}:${col}`] = img
     }
   }
 
@@ -384,10 +414,10 @@ export async function parseXlsx(file: File, options: ParseOptions = {}): Promise
     name: 'Relatórios',
     headers: FIXED_HEADERS,
     rows: finalRows,
+    rowKeys: finalRowKeys,
     rowDates: finalRowDates,
     images: finalImages,
     cellStyles: finalStyles,
-    rowFlags: finalFlags,
     columnWidths,
   }
 

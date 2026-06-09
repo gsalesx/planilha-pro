@@ -129,9 +129,10 @@ router.post('/workbooks/:id/duplicate', requireAuth, (req, res) => {
   // Buscar dados ANTES da transação pra montar lista de cópias de arquivo.
   const orders = db
     .prepare(
-      'SELECT id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders WHERE workbook_id = ?',
+      'SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders WHERE workbook_id = ?',
     )
     .all(sourceId) as Array<{
+      order_key: string
       id: string
       row_json: string
       styles_json: string
@@ -174,10 +175,10 @@ router.post('/workbooks/:id/duplicate', requireAuth, (req, res) => {
     ).run(newId, newName, now, now, source.column_widths)
 
     const insertOrder = db.prepare(
-      'INSERT INTO orders (workbook_id, id, row_json, styles_json, disappeared, sheet_date, position, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO orders (workbook_id, order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
     for (const o of orders) {
-      insertOrder.run(newId, o.id, o.row_json, o.styles_json, o.disappeared, o.sheet_date, o.position, now)
+      insertOrder.run(newId, o.order_key, o.id, o.row_json, o.styles_json, o.disappeared, o.sheet_date, o.position, now)
     }
 
     const insertImage = db.prepare(

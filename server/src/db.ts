@@ -161,6 +161,71 @@ db.exec(`
   }
 }
 
+// Chave interna por linha: permite IDs visíveis repetidos sem misturar status/fotos.
+{
+  const cols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>
+  const hasWorkbookId = cols.some((c) => c.name === 'workbook_id')
+  const hasOrderKey = cols.some((c) => c.name === 'order_key')
+  if (hasWorkbookId && !hasOrderKey) {
+    const migrate = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE orders_new (
+          workbook_id TEXT NOT NULL,
+          order_key TEXT NOT NULL,
+          id TEXT NOT NULL,
+          row_json TEXT NOT NULL,
+          styles_json TEXT NOT NULL DEFAULT '{}',
+          disappeared INTEGER NOT NULL DEFAULT 0,
+          sheet_date TEXT NOT NULL DEFAULT '',
+          position INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (workbook_id, order_key),
+          FOREIGN KEY (workbook_id) REFERENCES workbooks(id) ON DELETE CASCADE
+        );
+      `)
+      db.prepare(
+        `INSERT INTO orders_new (workbook_id, order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at)
+         SELECT workbook_id, id, id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders`,
+      ).run()
+
+      db.exec('ALTER TABLE images RENAME TO images_old')
+      db.exec('DROP TABLE orders')
+      db.exec('ALTER TABLE orders_new RENAME TO orders')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_orders_workbook_position ON orders (workbook_id, position)')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_orders_workbook_updated_at ON orders (workbook_id, updated_at)')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_orders_workbook_sheet_date ON orders (workbook_id, sheet_date)')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_orders_workbook_visible_id ON orders (workbook_id, id)')
+
+      db.exec(`
+        CREATE TABLE images (
+          workbook_id TEXT NOT NULL,
+          order_id TEXT NOT NULL,
+          col INTEGER NOT NULL,
+          file_name TEXT NOT NULL,
+          mime TEXT NOT NULL DEFAULT 'image/jpeg',
+          storage_path TEXT NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (workbook_id, order_id, col),
+          FOREIGN KEY (workbook_id, order_id) REFERENCES orders(workbook_id, order_key) ON DELETE CASCADE
+        );
+      `)
+      db.prepare(
+        `INSERT INTO images (workbook_id, order_id, col, file_name, mime, storage_path, updated_at)
+         SELECT workbook_id, order_id, col, file_name, mime, storage_path, updated_at FROM images_old`,
+      ).run()
+      db.exec('DROP TABLE images_old')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_images_workbook_order ON images (workbook_id, order_id)')
+    })
+    db.pragma('foreign_keys = OFF')
+    try {
+      migrate()
+    } finally {
+      db.pragma('foreign_keys = ON')
+    }
+    console.log('[migration] order_key schema aplicada com sucesso')
+  }
+}
+
 export function nowMs(): number {
   return Date.now()
 }

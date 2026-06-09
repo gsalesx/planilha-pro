@@ -42,6 +42,8 @@ export interface SheetData {
   name: string
   headers: string[]
   rows: CellValue[][]
+  /** internal order key used by the backend, indexed by row */
+  rowKeys?: string[]
   /** sheet name (date) of origin, indexed by row */
   rowDates?: string[]
   /** keyed by `${rowIndex}:${colIndex}` */
