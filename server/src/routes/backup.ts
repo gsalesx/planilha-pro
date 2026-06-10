@@ -115,6 +115,137 @@ router.get('/backup', requireAuth, async (req, res) => {
   }
 })
 
+/** GET /api/workbooks/:workbookId/backup
+ *  Exporta um workbook específico como JSON (pedidos + metadados de imagem).
+ *  Não inclui os arquivos de imagem — esses podem ser re-subidos pelo script
+ *  planilha_upload_previews.py se necessário.
+ *  Não fecha o banco nem reinicia o servidor (operação leve, sem side effects).
+ */
+router.get('/workbooks/:workbookId/backup', requireAuth, (req, res) => {
+  const { workbookId } = req.params
+
+  const wb = db
+    .prepare('SELECT id, name, created_at, updated_at, column_widths FROM workbooks WHERE id = ?')
+    .get(workbookId) as { id: string; name: string; created_at: number; updated_at: number; column_widths: string } | undefined
+
+  if (!wb) {
+    res.status(404).json({ error: 'workbook não encontrado' })
+    return
+  }
+
+  const orders = db
+    .prepare('SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders WHERE workbook_id = ? ORDER BY position')
+    .all(workbookId) as Array<Record<string, unknown>>
+
+  const images = db
+    .prepare('SELECT order_id, col, file_name, mime, storage_path, updated_at FROM images WHERE workbook_id = ?')
+    .all(workbookId) as Array<Record<string, unknown>>
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  res.setHeader('content-type', 'application/json')
+  res.setHeader('content-disposition', `attachment; filename="wb-${workbookId}-${stamp}.json"`)
+  res.json({ version: 2, workbookId, exportedAt: new Date().toISOString(), workbook: wb, orders, images })
+})
+
+/** POST /api/workbooks/:workbookId/restore
+ *  Restaura um workbook a partir de um dump JSON gerado pelo endpoint acima.
+ *  Substitui APENAS os dados desse workbook (pedidos + metadados de imagem).
+ *  Os outros workbooks não são tocados. Não reinicia o servidor.
+ *
+ *  Body: JSON no formato { version, workbookId, workbook, orders, images }
+ *  Query: ?mode=full (default) | orders-only (preserva metadados de imagem atuais)
+ */
+router.post('/workbooks/:workbookId/restore', requireAuth, (req, res) => {
+  const { workbookId } = req.params
+  const mode = req.query.mode === 'orders-only' ? 'orders-only' : 'full'
+
+  const body = req.body as {
+    version?: number
+    workbookId?: string
+    workbook?: { id: string; name: string; created_at: number; updated_at: number; column_widths: string }
+    orders?: Array<Record<string, unknown>>
+    images?: Array<Record<string, unknown>>
+  }
+
+  if (!body?.orders || !Array.isArray(body.orders)) {
+    res.status(400).json({ error: 'body.orders é obrigatório (array)' })
+    return
+  }
+  if (body.workbookId && body.workbookId !== workbookId) {
+    res.status(400).json({ error: `workbookId do dump (${body.workbookId}) ≠ URL (${workbookId})` })
+    return
+  }
+
+  const wb = db
+    .prepare('SELECT id FROM workbooks WHERE id = ?')
+    .get(workbookId) as { id: string } | undefined
+
+  if (!wb) {
+    res.status(404).json({ error: 'workbook não encontrado; crie-o antes de restaurar' })
+    return
+  }
+
+  const insertOrder = db.prepare(`
+    INSERT OR REPLACE INTO orders
+      (workbook_id, order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const insertImage = db.prepare(`
+    INSERT OR REPLACE INTO images
+      (workbook_id, order_id, col, file_name, mime, storage_path, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
+
+  const doRestore = db.transaction(() => {
+    // Remove dados atuais desse workbook
+    db.prepare('DELETE FROM images WHERE workbook_id = ?').run(workbookId)
+    db.prepare('DELETE FROM orders WHERE workbook_id = ?').run(workbookId)
+
+    // Insere pedidos do dump
+    for (const o of body.orders!) {
+      insertOrder.run(
+        workbookId,
+        o.order_key ?? o.id,
+        o.id,
+        o.row_json ?? '[]',
+        o.styles_json ?? '{}',
+        o.disappeared ?? 0,
+        o.sheet_date ?? '',
+        o.position ?? 0,
+        o.updated_at ?? Date.now(),
+      )
+    }
+
+    // Insere metadados de imagem (só se mode=full e o arquivo ainda existir no disco)
+    if (mode === 'full' && body.images && Array.isArray(body.images)) {
+      for (const img of body.images) {
+        const storagePath = img.storage_path as string
+        if (storagePath && existsSync(path.join(env.dataDir, storagePath))) {
+          insertImage.run(
+            workbookId,
+            img.order_id,
+            img.col,
+            img.file_name,
+            img.mime ?? 'image/jpeg',
+            storagePath,
+            img.updated_at ?? Date.now(),
+          )
+        }
+      }
+    }
+  })
+
+  try {
+    doRestore()
+    const ordersCount = (db.prepare('SELECT COUNT(*) AS c FROM orders WHERE workbook_id = ?').get(workbookId) as { c: number }).c
+    const imagesCount = (db.prepare('SELECT COUNT(*) AS c FROM images WHERE workbook_id = ?').get(workbookId) as { c: number }).c
+    res.json({ ok: true, mode, workbookId, orders: ordersCount, images: imagesCount })
+  } catch (error) {
+    console.error('[workbook-restore] erro:', error)
+    res.status(500).json({ error: (error as Error).message })
+  }
+})
+
 /** POST /api/restore
  *  Restaura um backup gerado pelo GET /api/backup.
  *  Body: multipart/form-data com campo "backup" (arquivo tar.gz).

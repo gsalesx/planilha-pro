@@ -17,6 +17,15 @@ set -eu
 : "${BACKUP_PATH:=planilha-pro-backups}"
 : "${KEEP_BACKUPS:=3}"
 
+# Dokploy recria o arquivo de conf a cada restart com o conteúdo armazenado,
+# tornando-o imutável para o rclone escrever o token renovado. Copia para um
+# path temporário gravável para que o rclone possa persistir o refresh.
+RCLONE_CONF_ORIG="${RCLONE_CONFIG:-/root/.config/rclone/rclone.conf}"
+RCLONE_CONF_TMP=$(mktemp)
+cp "${RCLONE_CONF_ORIG}" "${RCLONE_CONF_TMP}"
+export RCLONE_CONFIG="${RCLONE_CONF_TMP}"
+trap 'rm -f "${RCLONE_CONF_TMP}"' EXIT
+
 DATE=$(date +%Y-%m-%d_%H%M)
 FILENAME="planilha-${DATE}.tar.gz"
 REMOTE_PATH="${RCLONE_REMOTE}:${BACKUP_PATH}"
