@@ -19,6 +19,13 @@ export const env = {
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS ?? 30),
   /** Opcional. Se definida, requests com Authorization: Bearer <key> ou X-API-Key: <key> autenticam. */
   apiKey: process.env.API_KEY ?? '',
+  /** Shopee Open Platform — Test/Live Partner Key para validar push. */
+  shopeePartnerKey: process.env.SHOPEE_PARTNER_KEY ?? '',
+  /**
+   * URL exata cadastrada no console Shopee (Test Call Back URL).
+   * Se vazio, monta a partir do request (protocol + host + path).
+   */
+  shopeePushCallbackUrl: process.env.SHOPEE_PUSH_CALLBACK_URL ?? '',
 }
 
 export const isProd = env.nodeEnv === 'production'

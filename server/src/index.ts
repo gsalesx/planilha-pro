@@ -11,6 +11,7 @@ import { env, isProd } from './env.js'
 import backupRouter from './routes/backup.js'
 import imagesRouter from './routes/images.js'
 import loginRouter from './routes/login.js'
+import shopeePushRouter, { handleShopeePushPost } from './routes/shopee-push.js'
 import workbookRouter from './routes/workbook.js'
 import workbooksRouter from './routes/workbooks.js'
 
@@ -28,6 +29,14 @@ app.use(
   }),
 )
 app.use(cookieParser())
+
+// Shopee push: body bruto para HMAC (antes do express.json)
+app.post(
+  '/api/shopee/push',
+  express.raw({ type: () => true, limit: '1mb' }),
+  handleShopeePushPost,
+)
+
 app.use(express.json({ limit: '10mb' }))
 
 app.use('/api', loginRouter)
@@ -35,6 +44,7 @@ app.use('/api', workbooksRouter)
 app.use('/api', workbookRouter)
 app.use('/api', imagesRouter)
 app.use('/api', backupRouter)
+app.use('/api', shopeePushRouter)
 
 // healthcheck público
 app.get('/healthz', (_req, res) => res.json({ ok: true }))
