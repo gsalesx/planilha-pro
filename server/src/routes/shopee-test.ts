@@ -52,13 +52,34 @@ router.get('/shopee/auth-url', requireAuth, (_req, res) => {
   res.json({ ok: true, url: buildAuthPartnerUrl() })
 })
 
+function parseOAuthInput(body: {
+  code?: unknown
+  shopId?: unknown
+  callbackUrl?: unknown
+}): { code: string; shopId: number } | { error: string } {
+  let code = typeof body.code === 'string' ? body.code.trim() : ''
+  let shopId = Number(body.shopId)
+  if (typeof body.callbackUrl === 'string' && body.callbackUrl.trim()) {
+    try {
+      const url = new URL(body.callbackUrl.trim())
+      code = url.searchParams.get('code') ?? code
+      shopId = Number(url.searchParams.get('shop_id') ?? shopId)
+    } catch {
+      return { error: 'callbackUrl inválida' }
+    }
+  }
+  if (!code || !shopId) return { error: 'code e shop_id obrigatórios' }
+  return { code, shopId }
+}
+
 /** GET /api/shopee/oauth/callback — redirect público após autorização na Shopee */
 router.get('/shopee/oauth/callback', async (req: Request, res: Response) => {
-  const code = typeof req.query.code === 'string' ? req.query.code : ''
-  const shopIdRaw = typeof req.query.shop_id === 'string' ? req.query.shop_id : ''
-  const shopId = Number(shopIdRaw)
-  if (!code || !shopId) {
-    res.status(400).send('Parâmetros code e shop_id obrigatórios.')
+  const parsed = parseOAuthInput({
+    code: req.query.code,
+    shopId: req.query.shop_id,
+  })
+  if ('error' in parsed) {
+    res.status(400).send(parsed.error)
     return
   }
   if (!shopeeConfigured()) {
@@ -66,11 +87,33 @@ router.get('/shopee/oauth/callback', async (req: Request, res: Response) => {
     return
   }
   try {
-    await exchangeAuthCode(code, shopId)
+    await exchangeAuthCode(parsed.code, parsed.shopId)
     res.redirect('/shopee-test.html?connected=1')
   } catch (error) {
     const msg = error instanceof Error ? error.message : 'Falha ao trocar código'
     res.status(500).send(msg)
+  }
+})
+
+/** POST /api/shopee/oauth/exchange — colar URL ou code+shop_id (login) */
+router.post('/shopee/oauth/exchange', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const parsed = parseOAuthInput(req.body as { code?: unknown; shopId?: unknown; callbackUrl?: unknown })
+  if ('error' in parsed) {
+    res.status(400).json({ error: parsed.error })
+    return
+  }
+  try {
+    const record = await exchangeAuthCode(parsed.code, parsed.shopId)
+    res.json({ ok: true, shopId: record.shopId, accessExpireAt: record.accessExpireAt })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Falha ao trocar código',
+    })
   }
 })
 

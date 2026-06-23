@@ -90,6 +90,12 @@ async function boot(): Promise<void> {
       <button type="button" class="btn" id="btn-shop">Testar get_shop_info</button>
       <button type="button" class="btn" id="btn-disconnect">Desconectar loja</button>
     </div>
+    <div class="shopee-test-paste">
+      <label>Colar URL de callback (use logo após autorizar — code expira em ~10 min)
+        <input type="text" id="callback-url" placeholder="https://planilha.guilhermesales.com/api/shopee/oauth/callback?code=...&shop_id=..." />
+      </label>
+      <button type="button" class="btn btn-primary" id="btn-exchange">Trocar code por token</button>
+    </div>
   `
   wrap.appendChild(authBox)
 
@@ -170,6 +176,20 @@ async function boot(): Promise<void> {
     await api('/shopee/disconnect', { method: 'POST' })
     await refreshStatus()
     out.textContent = 'Loja desconectada.'
+  })
+
+  authBox.querySelector('#btn-exchange')!.addEventListener('click', () => {
+    const callbackUrl = (authBox.querySelector('#callback-url') as HTMLInputElement).value.trim()
+    void run('oauth/exchange', () =>
+      api('/shopee/oauth/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ callbackUrl }),
+      }).then(async (data) => {
+        await refreshStatus()
+        return data
+      }),
+    )
   })
 
   ordersBox.querySelector('#btn-orders')!.addEventListener('click', () => {
