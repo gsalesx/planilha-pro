@@ -57,11 +57,42 @@ async function parseShopeeJson<T>(response: Response): Promise<ShopeeApiResponse
   }
 }
 
-function assertShopeeOk<T>(data: ShopeeApiResponse<T>, context: string): T {
-  if (data.error) {
+function hasShopeeError(data: ShopeeApiResponse): boolean {
+  return Boolean(data.error && data.error !== '')
+}
+
+function unwrapShopeeResponse<T extends Record<string, unknown>>(
+  data: ShopeeApiResponse<T>,
+  context: string,
+): T {
+  if (hasShopeeError(data)) {
     throw new Error(`${context}: ${data.error}${data.message ? ` — ${data.message}` : ''}`)
   }
-  return data.response as T
+  if (data.response != null && typeof data.response === 'object') {
+    return data.response as T
+  }
+  const meta = new Set(['error', 'message', 'request_id'])
+  const flat = Object.fromEntries(Object.entries(data).filter(([k]) => !meta.has(k))) as T
+  if (Object.keys(flat).length === 0) {
+    throw new Error(`${context}: resposta vazia — ${JSON.stringify(data).slice(0, 300)}`)
+  }
+  return flat
+}
+
+function assertShopeeOk<T extends Record<string, unknown>>(data: ShopeeApiResponse<T>, context: string): T {
+  return unwrapShopeeResponse(data, context)
+}
+
+type TokenPayload = Record<string, unknown> & {
+  access_token?: string
+  refresh_token?: string
+  expire_in?: number
+  expires_in?: number
+  shop_id?: number
+}
+
+function tokenExpireSeconds(payload: TokenPayload): number {
+  return payload.expire_in ?? payload.expires_in ?? 4 * 3600
 }
 
 export function buildAuthPartnerUrl(): string {
@@ -86,19 +117,17 @@ export async function exchangeAuthCode(code: string, shopId: number): Promise<Sh
       partner_id: Number(env.shopeePartnerId),
     }),
   })
-  const data = await parseShopeeJson<{
-    access_token: string
-    refresh_token: string
-    expire_in: number
-    shop_id: number
-  }>(response)
+  const data = await parseShopeeJson<TokenPayload>(response)
   const payload = assertShopeeOk(data, 'token/get')
+  if (!payload.access_token || !payload.refresh_token) {
+    throw new Error(`token/get: resposta incompleta — ${JSON.stringify(data).slice(0, 300)}`)
+  }
   const now = Date.now()
   const record: ShopeeAuthRecord = {
     shopId: payload.shop_id ?? shopId,
     accessToken: payload.access_token,
     refreshToken: payload.refresh_token,
-    accessExpireAt: now + (payload.expire_in ?? 4 * 3600) * 1000,
+    accessExpireAt: now + tokenExpireSeconds(payload) * 1000,
     updatedAt: now,
   }
   saveShopeeAuth(record)
@@ -119,19 +148,17 @@ export async function refreshShopAccessToken(record: ShopeeAuthRecord): Promise<
       partner_id: Number(env.shopeePartnerId),
     }),
   })
-  const data = await parseShopeeJson<{
-    access_token: string
-    refresh_token: string
-    expire_in: number
-    shop_id: number
-  }>(response)
+  const data = await parseShopeeJson<TokenPayload>(response)
   const payload = assertShopeeOk(data, 'access_token/get')
+  if (!payload.access_token || !payload.refresh_token) {
+    throw new Error(`access_token/get: resposta incompleta — ${JSON.stringify(data).slice(0, 300)}`)
+  }
   const now = Date.now()
   const updated: ShopeeAuthRecord = {
     shopId: payload.shop_id ?? record.shopId,
     accessToken: payload.access_token,
     refreshToken: payload.refresh_token,
-    accessExpireAt: now + (payload.expire_in ?? 4 * 3600) * 1000,
+    accessExpireAt: now + tokenExpireSeconds(payload) * 1000,
     updatedAt: now,
   }
   saveShopeeAuth(updated)
