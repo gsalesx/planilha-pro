@@ -1729,3 +1729,82 @@ table.sheet tbody th.row-num.is-active {
 .lightbox-close:hover {
   background: rgba(255, 255, 255, 0.24);
 }
+
+/* Shopee test panel */
+.shopee-test-page {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+.shopee-test-header h1 {
+  margin: 8px 0 4px;
+  font-size: 1.5rem;
+}
+
+.shopee-test-sub {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.shopee-test-back {
+  color: #4f46e5;
+  text-decoration: none;
+  font-size: 0.85rem;
+}
+
+.shopee-test-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 16px 18px;
+  margin-top: 16px;
+}
+
+.shopee-test-card h2 {
+  margin: 0 0 10px;
+  font-size: 1rem;
+}
+
+.shopee-test-hint {
+  margin: 0 0 12px;
+  color: #64748b;
+  font-size: 0.85rem;
+}
+
+.shopee-test-actions,
+.shopee-test-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.shopee-test-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.shopee-test-form input,
+.shopee-test-form select {
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  min-width: 140px;
+}
+
+.shopee-test-output {
+  margin-top: 16px;
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 14px;
+  border-radius: 10px;
+  overflow: auto;
+  max-height: 55vh;
+  font-size: 12px;
+  line-height: 1.45;
+}

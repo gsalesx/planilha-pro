@@ -12,6 +12,7 @@ import backupRouter from './routes/backup.js'
 import imagesRouter from './routes/images.js'
 import loginRouter from './routes/login.js'
 import shopeePushRouter, { handleShopeePushPost } from './routes/shopee-push.js'
+import shopeeTestRouter from './routes/shopee-test.js'
 import workbookRouter from './routes/workbook.js'
 import workbooksRouter from './routes/workbooks.js'
 
@@ -45,6 +46,7 @@ app.use('/api', workbookRouter)
 app.use('/api', imagesRouter)
 app.use('/api', backupRouter)
 app.use('/api', shopeePushRouter)
+app.use('/api', shopeeTestRouter)
 
 // healthcheck público
 app.get('/healthz', (_req, res) => res.json({ ok: true }))

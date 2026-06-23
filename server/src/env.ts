@@ -8,6 +8,8 @@ function required(name: string, fallback?: string): string {
   return value
 }
 
+export type ShopeeRuntimeEnv = 'sandbox' | 'production'
+
 export const env = {
   port: Number(process.env.PORT ?? 3030),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -26,6 +28,12 @@ export const env = {
    * Se vazio, monta a partir do request (protocol + host + path).
    */
   shopeePushCallbackUrl: process.env.SHOPEE_PUSH_CALLBACK_URL ?? '',
+  /** Partner ID numérico do app na Shopee Open Platform */
+  shopeePartnerId: process.env.SHOPEE_PARTNER_ID ?? '',
+  /** sandbox | production */
+  shopeeEnv: (process.env.SHOPEE_ENV === 'sandbox' ? 'sandbox' : 'production') as ShopeeRuntimeEnv,
+  /** Redirect OAuth — ex. https://planilha.guilhermesales.com/api/shopee/oauth/callback */
+  shopeeRedirectUrl: process.env.SHOPEE_REDIRECT_URL ?? '',
 }
 
 export const isProd = env.nodeEnv === 'production'
