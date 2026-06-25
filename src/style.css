@@ -1767,6 +1767,17 @@ table.sheet tbody th.row-num.is-active {
   font-size: 1rem;
 }
 
+.shopee-test-subheading {
+  margin: 14px 0 6px;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.shopee-test-subheading:first-of-type {
+  margin-top: 0;
+}
+
 .shopee-test-hint {
   margin: 0 0 12px;
   color: #64748b;

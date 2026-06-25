@@ -157,6 +157,9 @@ async function boot(): Promise<void> {
   const messagesBox = el('section', 'shopee-test-card')
   messagesBox.innerHTML = `
     <h2>4. Mensagens (chat)</h2>
+
+    <h3 class="shopee-test-subheading">4a. Listar conversas</h3>
+    <p class="shopee-test-hint">Lista vários chats da loja. <strong>Ignora</strong> o conversation_id abaixo.</p>
     <div class="shopee-test-form">
       <label>Direção
         <select id="chat-direction">
@@ -174,19 +177,20 @@ async function boot(): Promise<void> {
       <label>Por página <input type="number" id="chat-page-size" value="20" min="1" max="50" /></label>
       <button type="button" class="btn btn-primary" id="btn-conversations">Listar conversas</button>
     </div>
+
+    <h3 class="shopee-test-subheading">4b. Mensagens de um chat</h3>
     <p class="shopee-test-hint">
-      A Shopee <strong>não devolve o chat inteiro de uma vez</strong>. Cada busca traz até
-      <strong>“Por página”</strong> mensagens. Offset vazio = as mais recentes; para mensagens
-      mais antigas use o <code>next_offset</code> que aparece no JSON (<code>page_result</code>).
+      Use o <code>conversation_id</code> copiado do passo 4a. Cada busca traz até “Por página” mensagens
+      (não o chat inteiro). Offset vazio = mais recentes; próxima página = <code>next_offset</code> do JSON.
     </p>
     <div class="shopee-test-form shopee-test-form--detail">
       <label>conversation_id
-        <input type="text" id="chat-conversation-id" placeholder="cole da lista acima" />
+        <input type="text" id="chat-conversation-id" placeholder="ex: 1403996256561827208" />
       </label>
-      <label>Próxima página (next_offset — deixe vazio na 1ª busca)
-        <input type="text" id="chat-offset" placeholder="vazio = mensagens mais recentes" />
+      <label>Próxima página (next_offset — vazio na 1ª busca)
+        <input type="text" id="chat-offset" placeholder="deixe vazio" />
       </label>
-      <button type="button" class="btn btn-primary" id="btn-messages">Buscar página</button>
+      <button type="button" class="btn btn-primary" id="btn-messages">Buscar página de mensagens</button>
       <button type="button" class="btn" id="btn-messages-all">Buscar histórico completo</button>
     </div>
   `
@@ -219,9 +223,9 @@ async function boot(): Promise<void> {
     out.textContent = `${label}…`
     try {
       const data = await fn()
-      out.textContent = JSON.stringify(data, null, 2)
+      out.textContent = `=== ${label} ===\n${JSON.stringify(data, null, 2)}`
     } catch (error) {
-      out.textContent = `Erro: ${(error as Error).message}`
+      out.textContent = `=== ${label} ===\nErro: ${(error as Error).message}`
     }
   }
 
