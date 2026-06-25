@@ -174,6 +174,19 @@ export async function ensureShopAuth(): Promise<ShopeeAuthRecord> {
   return record
 }
 
+async function shopApiGet(path: string, query: Record<string, string | number> = {}): Promise<ShopeeApiResponse> {
+  const auth = await ensureShopAuth()
+  const timestamp = Math.floor(Date.now() / 1000)
+  const sign = signShop(path, timestamp, auth.accessToken, auth.shopId)
+  const url = buildSignedUrl(path, sign, timestamp, {
+    access_token: auth.accessToken,
+    shop_id: auth.shopId,
+    ...query,
+  })
+  const response = await fetch(url, { method: 'GET' })
+  return parseShopeeJson(response)
+}
+
 export interface OrderListParams {
   timeFrom: number
   timeTo: number
@@ -184,13 +197,7 @@ export interface OrderListParams {
 }
 
 export async function getOrderList(params: OrderListParams): Promise<ShopeeApiResponse> {
-  const auth = await ensureShopAuth()
-  const path = '/api/v2/order/get_order_list'
-  const timestamp = Math.floor(Date.now() / 1000)
-  const sign = signShop(path, timestamp, auth.accessToken, auth.shopId)
   const query: Record<string, string | number> = {
-    access_token: auth.accessToken,
-    shop_id: auth.shopId,
     time_range_field: params.timeRangeField ?? 'create_time',
     time_from: params.timeFrom,
     time_to: params.timeTo,
@@ -199,20 +206,66 @@ export async function getOrderList(params: OrderListParams): Promise<ShopeeApiRe
   }
   if (params.orderStatus) query.order_status = params.orderStatus
   if (params.cursor) query.cursor = params.cursor
-  const url = buildSignedUrl(path, sign, timestamp, query)
-  const response = await fetch(url, { method: 'GET' })
-  return parseShopeeJson(response)
+  return shopApiGet('/api/v2/order/get_order_list', query)
 }
 
 export async function getShopInfo(): Promise<ShopeeApiResponse> {
-  const auth = await ensureShopAuth()
-  const path = '/api/v2/shop/get_shop_info'
-  const timestamp = Math.floor(Date.now() / 1000)
-  const sign = signShop(path, timestamp, auth.accessToken, auth.shopId)
-  const url = buildSignedUrl(path, sign, timestamp, {
-    access_token: auth.accessToken,
-    shop_id: auth.shopId,
+  return shopApiGet('/api/v2/shop/get_shop_info')
+}
+
+export interface ItemListParams {
+  offset?: number
+  pageSize?: number
+  itemStatus?: string
+  updateTimeFrom?: number
+  updateTimeTo?: number
+}
+
+export async function getItemList(params: ItemListParams = {}): Promise<ShopeeApiResponse> {
+  const query: Record<string, string | number> = {
+    offset: params.offset ?? 0,
+    page_size: params.pageSize ?? 20,
+    item_status: params.itemStatus ?? 'NORMAL',
+  }
+  if (params.updateTimeFrom != null) query.update_time_from = params.updateTimeFrom
+  if (params.updateTimeTo != null) query.update_time_to = params.updateTimeTo
+  return shopApiGet('/api/v2/product/get_item_list', query)
+}
+
+export async function getItemBaseInfo(itemIds: number[]): Promise<ShopeeApiResponse> {
+  if (!itemIds.length) throw new Error('itemIds obrigatório')
+  return shopApiGet('/api/v2/product/get_item_base_info', {
+    item_id_list: itemIds.join(','),
   })
-  const response = await fetch(url, { method: 'GET' })
-  return parseShopeeJson(response)
+}
+
+export interface ConversationListParams {
+  direction?: 'latest' | 'oldest'
+  type?: 'all' | 'pinned' | 'unread'
+  pageSize?: number
+  nextTimestamp?: number
+}
+
+export async function getConversationList(params: ConversationListParams = {}): Promise<ShopeeApiResponse> {
+  const query: Record<string, string | number> = {
+    direction: params.direction ?? 'latest',
+    type: params.type ?? 'all',
+    page_size: params.pageSize ?? 20,
+  }
+  if (params.nextTimestamp != null) query.next_timestamp_nano = params.nextTimestamp
+  return shopApiGet('/api/v2/sellerchat/get_conversation_list', query)
+}
+
+export interface MessageListParams {
+  conversationId: string
+  pageSize?: number
+  offset?: number
+}
+
+export async function getMessageList(params: MessageListParams): Promise<ShopeeApiResponse> {
+  return shopApiGet('/api/v2/sellerchat/get_message', {
+    conversation_id: params.conversationId,
+    page_size: params.pageSize ?? 20,
+    offset: params.offset ?? 0,
+  })
 }

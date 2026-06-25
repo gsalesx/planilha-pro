@@ -5,6 +5,10 @@ import { env } from '../env.js'
 import {
   buildAuthPartnerUrl,
   exchangeAuthCode,
+  getConversationList,
+  getItemBaseInfo,
+  getItemList,
+  getMessageList,
   getOrderList,
   getShopInfo,
 } from '../shopee-api.js'
@@ -155,6 +159,109 @@ router.get('/shopee/shop', requireAuth, async (_req, res) => {
   try {
     const data = await getShopInfo()
     res.json({ ok: true, shopee: data })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** GET /api/shopee/products — proxy get_item_list */
+router.get('/shopee/products', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const offset = Math.max(Number(req.query.offset ?? 0), 0)
+  const pageSize = Math.min(Math.max(Number(req.query.pageSize ?? 20), 1), 100)
+  const itemStatus = typeof req.query.itemStatus === 'string' ? req.query.itemStatus : 'NORMAL'
+  const hours = Number(req.query.hours ?? 0)
+  const now = Math.floor(Date.now() / 1000)
+  try {
+    const data = await getItemList({
+      offset,
+      pageSize,
+      itemStatus,
+      updateTimeFrom: hours > 0 ? now - hours * 3600 : undefined,
+      updateTimeTo: hours > 0 ? now : undefined,
+    })
+    res.json({
+      ok: true,
+      query: { offset, pageSize, itemStatus, hours: hours > 0 ? hours : null },
+      shopee: data,
+    })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** GET /api/shopee/products/detail — proxy get_item_base_info */
+router.get('/shopee/products/detail', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const raw = typeof req.query.itemIds === 'string' ? req.query.itemIds : ''
+  const itemIds = raw
+    .split(',')
+    .map((s) => Number(s.trim()))
+    .filter((n) => Number.isFinite(n) && n > 0)
+  if (!itemIds.length) {
+    res.status(400).json({ error: 'itemIds obrigatório (ex: ?itemIds=123,456)' })
+    return
+  }
+  try {
+    const data = await getItemBaseInfo(itemIds.slice(0, 50))
+    res.json({ ok: true, query: { itemIds: itemIds.slice(0, 50) }, shopee: data })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** GET /api/shopee/conversations — proxy get_conversation_list */
+router.get('/shopee/conversations', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const direction = req.query.direction === 'oldest' ? 'oldest' : 'latest'
+  const type =
+    req.query.type === 'pinned' || req.query.type === 'unread' ? req.query.type : 'all'
+  const pageSize = Math.min(Math.max(Number(req.query.pageSize ?? 20), 1), 50)
+  try {
+    const data = await getConversationList({ direction, type, pageSize })
+    res.json({ ok: true, query: { direction, type, pageSize }, shopee: data })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** GET /api/shopee/messages — proxy get_message */
+router.get('/shopee/messages', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const conversationId = typeof req.query.conversationId === 'string' ? req.query.conversationId.trim() : ''
+  if (!conversationId) {
+    res.status(400).json({ error: 'conversationId obrigatório' })
+    return
+  }
+  const pageSize = Math.min(Math.max(Number(req.query.pageSize ?? 20), 1), 50)
+  const offset = Math.max(Number(req.query.offset ?? 0), 0)
+  try {
+    const data = await getMessageList({ conversationId, pageSize, offset })
+    res.json({ ok: true, query: { conversationId, pageSize, offset }, shopee: data })
   } catch (error) {
     res.status(502).json({
       ok: false,
