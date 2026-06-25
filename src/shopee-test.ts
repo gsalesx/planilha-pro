@@ -71,8 +71,8 @@ async function boot(): Promise<void> {
   header.innerHTML = `
     <div>
       <a href="/" class="shopee-test-back">← Planilha</a>
-      <h1>Teste Shopee — pedidos</h1>
-      <p class="shopee-test-sub">Lista pedidos via <code>v2.order.get_order_list</code></p>
+      <h1>Teste Shopee — API</h1>
+      <p class="shopee-test-sub">Pedidos, produtos e mensagens via Open Platform</p>
     </div>
   `
   wrap.appendChild(header)
@@ -125,6 +125,34 @@ async function boot(): Promise<void> {
     </div>
   `
   wrap.appendChild(ordersBox)
+
+  const productsBox = el('section', 'shopee-test-card')
+  productsBox.innerHTML = `
+    <h2>3. Listar produtos</h2>
+    <div class="shopee-test-form">
+      <label>Offset <input type="number" id="product-offset" value="0" min="0" /></label>
+      <label>Por página <input type="number" id="product-page-size" value="20" min="1" max="100" /></label>
+      <label>Status
+        <select id="product-status">
+          <option value="NORMAL" selected>NORMAL</option>
+          <option value="UNLIST">UNLIST</option>
+          <option value="BANNED">BANNED</option>
+          <option value="DELETED">DELETED</option>
+        </select>
+      </label>
+      <label>Atualizados nas últimas horas (0 = todos)
+        <input type="number" id="product-hours" value="0" min="0" max="720" />
+      </label>
+      <button type="button" class="btn btn-primary" id="btn-products">Buscar produtos</button>
+    </div>
+    <div class="shopee-test-form shopee-test-form--detail">
+      <label>Detalhe por item_id (vírgula)
+        <input type="text" id="product-ids" placeholder="ex: 123456789,987654321" />
+      </label>
+      <button type="button" class="btn" id="btn-product-detail">get_item_base_info</button>
+    </div>
+  `
+  wrap.appendChild(productsBox)
 
   const out = el('pre', 'shopee-test-output')
   out.textContent = 'Resultado aparece aqui…'
@@ -199,6 +227,26 @@ async function boot(): Promise<void> {
     const qs = new URLSearchParams({ hours, timeRangeField })
     if (orderStatus) qs.set('orderStatus', orderStatus)
     void run('get_order_list', () => api(`/shopee/orders?${qs}`))
+  })
+
+  productsBox.querySelector('#btn-products')!.addEventListener('click', () => {
+    const offset = (productsBox.querySelector('#product-offset') as HTMLInputElement).value
+    const pageSize = (productsBox.querySelector('#product-page-size') as HTMLInputElement).value
+    const itemStatus = (productsBox.querySelector('#product-status') as HTMLSelectElement).value
+    const hours = (productsBox.querySelector('#product-hours') as HTMLInputElement).value
+    const qs = new URLSearchParams({ offset, pageSize, itemStatus })
+    if (Number(hours) > 0) qs.set('hours', hours)
+    void run('get_item_list', () => api(`/shopee/products?${qs}`))
+  })
+
+  productsBox.querySelector('#btn-product-detail')!.addEventListener('click', () => {
+    const itemIds = (productsBox.querySelector('#product-ids') as HTMLInputElement).value.trim()
+    if (!itemIds) {
+      out.textContent = 'Erro: informe pelo menos um item_id'
+      return
+    }
+    const qs = new URLSearchParams({ itemIds })
+    void run('get_item_base_info', () => api(`/shopee/products/detail?${qs}`))
   })
 
   if (new URLSearchParams(location.search).get('connected') === '1') {
