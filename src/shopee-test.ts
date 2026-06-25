@@ -154,6 +154,36 @@ async function boot(): Promise<void> {
   `
   wrap.appendChild(productsBox)
 
+  const messagesBox = el('section', 'shopee-test-card')
+  messagesBox.innerHTML = `
+    <h2>4. Mensagens (chat)</h2>
+    <div class="shopee-test-form">
+      <label>Direção
+        <select id="chat-direction">
+          <option value="latest" selected>latest</option>
+          <option value="oldest">oldest</option>
+        </select>
+      </label>
+      <label>Tipo
+        <select id="chat-type">
+          <option value="all" selected>all</option>
+          <option value="pinned">pinned</option>
+          <option value="unread">unread</option>
+        </select>
+      </label>
+      <label>Por página <input type="number" id="chat-page-size" value="20" min="1" max="50" /></label>
+      <button type="button" class="btn btn-primary" id="btn-conversations">Listar conversas</button>
+    </div>
+    <div class="shopee-test-form shopee-test-form--detail">
+      <label>conversation_id
+        <input type="text" id="chat-conversation-id" placeholder="cole da lista acima" />
+      </label>
+      <label>Offset <input type="number" id="chat-offset" value="0" min="0" /></label>
+      <button type="button" class="btn" id="btn-messages">Buscar mensagens</button>
+    </div>
+  `
+  wrap.appendChild(messagesBox)
+
   const out = el('pre', 'shopee-test-output')
   out.textContent = 'Resultado aparece aqui…'
   wrap.appendChild(out)
@@ -247,6 +277,26 @@ async function boot(): Promise<void> {
     }
     const qs = new URLSearchParams({ itemIds })
     void run('get_item_base_info', () => api(`/shopee/products/detail?${qs}`))
+  })
+
+  messagesBox.querySelector('#btn-conversations')!.addEventListener('click', () => {
+    const direction = (messagesBox.querySelector('#chat-direction') as HTMLSelectElement).value
+    const type = (messagesBox.querySelector('#chat-type') as HTMLSelectElement).value
+    const pageSize = (messagesBox.querySelector('#chat-page-size') as HTMLInputElement).value
+    const qs = new URLSearchParams({ direction, type, pageSize })
+    void run('get_conversation_list', () => api(`/shopee/conversations?${qs}`))
+  })
+
+  messagesBox.querySelector('#btn-messages')!.addEventListener('click', () => {
+    const conversationId = (messagesBox.querySelector('#chat-conversation-id') as HTMLInputElement).value.trim()
+    if (!conversationId) {
+      out.textContent = 'Erro: informe conversation_id'
+      return
+    }
+    const pageSize = (messagesBox.querySelector('#chat-page-size') as HTMLInputElement).value
+    const offset = (messagesBox.querySelector('#chat-offset') as HTMLInputElement).value
+    const qs = new URLSearchParams({ conversationId, pageSize, offset })
+    void run('get_message', () => api(`/shopee/messages?${qs}`))
   })
 
   if (new URLSearchParams(location.search).get('connected') === '1') {
