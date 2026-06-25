@@ -259,13 +259,19 @@ export async function getConversationList(params: ConversationListParams = {}): 
 export interface MessageListParams {
   conversationId: string
   pageSize?: number
-  offset?: number
+  /** message_id cursor — omita ou '' para as mais recentes (padrão Shopee) */
+  offset?: number | string
 }
 
 export async function getMessageList(params: MessageListParams): Promise<ShopeeApiResponse> {
-  return shopApiGet('/api/v2/sellerchat/get_message', {
+  const query: Record<string, string | number> = {
     conversation_id: params.conversationId,
     page_size: params.pageSize ?? 20,
-    offset: params.offset ?? 0,
-  })
+  }
+  if (params.offset != null && params.offset !== '') {
+    query.offset = params.offset
+  } else {
+    query.offset = ''
+  }
+  return shopApiGet('/api/v2/sellerchat/get_message', query)
 }

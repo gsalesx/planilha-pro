@@ -258,10 +258,22 @@ router.get('/shopee/messages', requireAuth, async (req, res) => {
     return
   }
   const pageSize = Math.min(Math.max(Number(req.query.pageSize ?? 20), 1), 50)
-  const offset = Math.max(Number(req.query.offset ?? 0), 0)
+  const rawOffset = req.query.offset
+  const offset =
+    rawOffset === undefined || rawOffset === '' || rawOffset === 'latest'
+      ? ''
+      : Math.max(Number(rawOffset), 0)
   try {
     const data = await getMessageList({ conversationId, pageSize, offset })
-    res.json({ ok: true, query: { conversationId, pageSize, offset }, shopee: data })
+    res.json({
+      ok: true,
+      query: {
+        conversationId,
+        pageSize,
+        offset: offset === '' ? 'latest' : offset,
+      },
+      shopee: data,
+    })
   } catch (error) {
     res.status(502).json({
       ok: false,

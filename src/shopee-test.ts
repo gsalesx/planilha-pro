@@ -174,11 +174,14 @@ async function boot(): Promise<void> {
       <label>Por página <input type="number" id="chat-page-size" value="20" min="1" max="50" /></label>
       <button type="button" class="btn btn-primary" id="btn-conversations">Listar conversas</button>
     </div>
+    <p class="shopee-test-hint">“latest” ordena as <strong>conversas</strong> mais recentes. Para mensagens dentro do chat, use o cursor abaixo.</p>
     <div class="shopee-test-form shopee-test-form--detail">
       <label>conversation_id
         <input type="text" id="chat-conversation-id" placeholder="cole da lista acima" />
       </label>
-      <label>Offset <input type="number" id="chat-offset" value="0" min="0" /></label>
+      <label>Cursor offset (vazio = mensagens mais recentes)
+        <input type="text" id="chat-offset" placeholder="latest" />
+      </label>
       <button type="button" class="btn" id="btn-messages">Buscar mensagens</button>
     </div>
   `
@@ -294,8 +297,9 @@ async function boot(): Promise<void> {
       return
     }
     const pageSize = (messagesBox.querySelector('#chat-page-size') as HTMLInputElement).value
-    const offset = (messagesBox.querySelector('#chat-offset') as HTMLInputElement).value
-    const qs = new URLSearchParams({ conversationId, pageSize, offset })
+    const offset = (messagesBox.querySelector('#chat-offset') as HTMLInputElement).value.trim()
+    const qs = new URLSearchParams({ conversationId, pageSize })
+    if (offset) qs.set('offset', offset)
     void run('get_message', () => api(`/shopee/messages?${qs}`))
   })
 
