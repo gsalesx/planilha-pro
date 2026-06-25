@@ -174,15 +174,20 @@ async function boot(): Promise<void> {
       <label>Por página <input type="number" id="chat-page-size" value="20" min="1" max="50" /></label>
       <button type="button" class="btn btn-primary" id="btn-conversations">Listar conversas</button>
     </div>
-    <p class="shopee-test-hint">“latest” ordena as <strong>conversas</strong> mais recentes. Para mensagens dentro do chat, use o cursor abaixo.</p>
+    <p class="shopee-test-hint">
+      A Shopee <strong>não devolve o chat inteiro de uma vez</strong>. Cada busca traz até
+      <strong>“Por página”</strong> mensagens. Offset vazio = as mais recentes; para mensagens
+      mais antigas use o <code>next_offset</code> que aparece no JSON (<code>page_result</code>).
+    </p>
     <div class="shopee-test-form shopee-test-form--detail">
       <label>conversation_id
         <input type="text" id="chat-conversation-id" placeholder="cole da lista acima" />
       </label>
-      <label>Cursor offset (vazio = mensagens mais recentes)
-        <input type="text" id="chat-offset" placeholder="latest" />
+      <label>Próxima página (next_offset — deixe vazio na 1ª busca)
+        <input type="text" id="chat-offset" placeholder="vazio = mensagens mais recentes" />
       </label>
-      <button type="button" class="btn" id="btn-messages">Buscar mensagens</button>
+      <button type="button" class="btn btn-primary" id="btn-messages">Buscar página</button>
+      <button type="button" class="btn" id="btn-messages-all">Buscar histórico completo</button>
     </div>
   `
   wrap.appendChild(messagesBox)
@@ -301,6 +306,46 @@ async function boot(): Promise<void> {
     const qs = new URLSearchParams({ conversationId, pageSize })
     if (offset) qs.set('offset', offset)
     void run('get_message', () => api(`/shopee/messages?${qs}`))
+  })
+
+  messagesBox.querySelector('#btn-messages-all')!.addEventListener('click', () => {
+    const conversationId = (messagesBox.querySelector('#chat-conversation-id') as HTMLInputElement).value.trim()
+    if (!conversationId) {
+      out.textContent = 'Erro: informe conversation_id'
+      return
+    }
+    const pageSize = (messagesBox.querySelector('#chat-page-size') as HTMLInputElement).value
+    void run('get_message (histórico completo)', async () => {
+      const all: unknown[] = []
+      let offset = ''
+      let pages = 0
+      const maxPages = 30
+      while (pages < maxPages) {
+        const qs = new URLSearchParams({ conversationId, pageSize })
+        if (offset) qs.set('offset', offset)
+        const data = await api<{
+          shopee?: {
+            response?: {
+              messages?: unknown[]
+              page_result?: { next_offset?: string }
+            }
+          }
+        }>(`/shopee/messages?${qs}`)
+        const batch = data.shopee?.response?.messages ?? []
+        all.push(...batch)
+        const next = data.shopee?.response?.page_result?.next_offset
+        pages++
+        if (!next || batch.length === 0) break
+        offset = next
+      }
+      return {
+        conversationId,
+        pages,
+        total: all.length,
+        truncated: pages >= maxPages,
+        messages: all,
+      }
+    })
   })
 
   if (new URLSearchParams(location.search).get('connected') === '1') {
