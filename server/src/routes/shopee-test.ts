@@ -27,6 +27,8 @@ function statusPayload() {
     env: env.shopeeEnv,
     partnerId: env.shopeePartnerId || null,
     hasPartnerKey: Boolean(env.shopeePartnerKey),
+    hasPushPartnerKey: Boolean(env.shopeePushPartnerKey),
+    pushCallbackUrl: env.shopeePushCallbackUrl || null,
     redirectUrl: env.shopeeRedirectUrl || null,
     shop: auth
       ? {

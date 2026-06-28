@@ -39,20 +39,25 @@ export function handleShopeePushPost(req: Request, res: Response): void {
     req.originalUrl,
   )
 
+  const pushPartnerKey = env.shopeePushPartnerKey || env.shopeePartnerKey
+
   let signatureOk: boolean | null = null
-  if (env.shopeePartnerKey && authorization) {
-    signatureOk = verifyShopeePushSignature(callbackUrl, rawBody, authorization, env.shopeePartnerKey)
+  if (pushPartnerKey && authorization) {
+    signatureOk = verifyShopeePushSignature(callbackUrl, rawBody, authorization, pushPartnerKey)
     if (!signatureOk) {
-      console.warn('[shopee-push] assinatura inválida', { callbackUrl })
+      console.warn('[shopee-push] assinatura inválida', {
+        callbackUrl,
+        usingPushKey: Boolean(env.shopeePushPartnerKey),
+      })
       res.status(401).end()
       return
     }
-  } else if (env.shopeePartnerKey && !authorization) {
+  } else if (pushPartnerKey && !authorization) {
     console.warn('[shopee-push] Authorization ausente')
     res.status(401).end()
     return
   } else {
-    console.warn('[shopee-push] SHOPEE_PARTNER_KEY não configurada — aceitando sem validar assinatura')
+    console.warn('[shopee-push] SHOPEE_PUSH_PARTNER_KEY não configurada — aceitando sem validar assinatura')
   }
 
   const parsed = parseJsonSafe(rawBody)

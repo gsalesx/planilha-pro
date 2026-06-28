@@ -7,6 +7,7 @@ import { Router } from 'express'
 import { requireAuth } from '../auth.js'
 import { db, nowMs } from '../db.js'
 import { env } from '../env.js'
+import { isShopeeWorkbookId, SHOPEE_WORKBOOK_ID } from '../shopee-workbook.js'
 
 const router = Router()
 const imagesDir = path.join(env.dataDir, 'images')
@@ -41,6 +42,7 @@ function serializeWorkbook(row: WorkbookRow & { count?: number }) {
     updatedAt: row.updated_at,
     columnWidths: JSON.parse(row.column_widths || '{}') as Record<string, number>,
     count: row.count ?? 0,
+    system: isShopeeWorkbookId(row.id),
   }
 }
 
@@ -50,9 +52,9 @@ router.get('/workbooks', requireAuth, (_req, res) => {
       `SELECT w.id, w.name, w.created_at, w.updated_at, w.column_widths,
               (SELECT COUNT(*) FROM orders o WHERE o.workbook_id = w.id) AS count
          FROM workbooks w
-         ORDER BY w.updated_at DESC`,
+         ORDER BY CASE WHEN w.id = ? THEN 0 ELSE 1 END, w.updated_at DESC`,
     )
-    .all() as Array<WorkbookRow & { count: number }>
+    .all(SHOPEE_WORKBOOK_ID) as Array<WorkbookRow & { count: number }>
   res.json(rows.map(serializeWorkbook))
 })
 
@@ -68,6 +70,10 @@ router.post('/workbooks', requireAuth, (req, res) => {
 
 router.patch('/workbooks/:id', requireAuth, (req, res) => {
   const id = req.params.id
+  if (isShopeeWorkbookId(id)) {
+    res.status(403).json({ error: 'A planilha Shopee automática não pode ser renomeada' })
+    return
+  }
   const name = String((req.body as { name?: unknown }).name ?? '').trim()
   if (!name) {
     res.status(400).json({ error: 'Nome obrigatório' })
@@ -86,6 +92,10 @@ router.patch('/workbooks/:id', requireAuth, (req, res) => {
 
 router.delete('/workbooks/:id', requireAuth, (req, res) => {
   const id = req.params.id
+  if (isShopeeWorkbookId(id)) {
+    res.status(403).json({ error: 'A planilha Shopee automática não pode ser excluída' })
+    return
+  }
   const exists = db.prepare('SELECT id FROM workbooks WHERE id = ?').get(id)
   if (!exists) {
     res.status(404).json({ error: 'Planilha não encontrada' })

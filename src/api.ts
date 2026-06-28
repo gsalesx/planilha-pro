@@ -9,6 +9,8 @@ export interface WorkbookSummary {
   updatedAt: number
   count: number
   columnWidths: Record<string, number>
+  /** Planilha fixa do sistema (ex.: sync Shopee) — não pode ser excluída. */
+  system?: boolean
 }
 
 export interface ServerOrder {

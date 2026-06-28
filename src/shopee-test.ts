@@ -207,7 +207,11 @@ async function boot(): Promise<void> {
     const lines: string[] = []
     lines.push(`Ambiente API: <strong>${st.env}</strong>`)
     lines.push(`Partner ID: ${st.partnerId ?? '<em>não configurado</em>'}`)
-    lines.push(`Partner Key: ${st.hasPartnerKey ? '✓ configurada' : '✗ falta SHOPEE_PARTNER_KEY'}`)
+    lines.push(`API Partner Key: ${st.hasPartnerKey ? '✓ configurada' : '✗ falta SHOPEE_PARTNER_KEY'}`)
+    lines.push(
+      `Push Partner Key: ${st.hasPushPartnerKey ? '✓ configurada' : '✗ falta SHOPEE_PUSH_PARTNER_KEY (Live Push Partner Key)'}`,
+    )
+    if (st.pushCallbackUrl) lines.push(`Push callback: ${st.pushCallbackUrl}`)
     lines.push(`Redirect OAuth: ${st.redirectUrl ?? '<em>falta SHOPEE_REDIRECT_URL</em>'}`)
     if (st.shop) {
       lines.push(`Loja conectada: shop_id <strong>${st.shop.shopId}</strong>`)

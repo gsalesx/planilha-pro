@@ -106,17 +106,18 @@ export function showWorkbooksList(opts: {
     grid.innerHTML = workbooks
       .map(
         (wb) => `
-        <article class="workbook-card" data-id="${escapeHtml(wb.id)}">
+        <article class="workbook-card${wb.system ? ' workbook-card--system' : ''}" data-id="${escapeHtml(wb.id)}">
           <header class="workbook-card-head">
             <h3 class="workbook-card-name" title="${escapeHtml(wb.name)}">${escapeHtml(wb.name)}</h3>
+            ${wb.system ? '<span class="workbook-card-badge">Automática</span>' : ''}
             <span class="workbook-card-count">${wb.count} pedidos</span>
           </header>
-          <p class="workbook-card-meta">Atualizada em ${formatTimestamp(wb.updatedAt)}</p>
+          <p class="workbook-card-meta">${wb.system ? 'Sincronizada com a Shopee · ' : ''}Atualizada em ${formatTimestamp(wb.updatedAt)}</p>
           <div class="workbook-card-actions">
             <button class="btn btn-primary wb-open">Abrir</button>
-            <button class="btn wb-rename" title="Renomear">Renomear</button>
+            ${wb.system ? '' : '<button class="btn wb-rename" title="Renomear">Renomear</button>'}
             <button class="btn wb-duplicate" title="Duplicar (backup)">Duplicar</button>
-            <button class="btn btn-danger wb-delete" title="Deletar planilha">Deletar</button>
+            ${wb.system ? '' : '<button class="btn btn-danger wb-delete" title="Deletar planilha">Deletar</button>'}
           </div>
         </article>
       `,
@@ -127,7 +128,8 @@ export function showWorkbooksList(opts: {
       const id = card.dataset.id!
       const wb = workbooks.find((w) => w.id === id)!
       card.querySelector<HTMLButtonElement>('.wb-open')!.addEventListener('click', () => onOpen(id))
-      card.querySelector<HTMLButtonElement>('.wb-rename')!.addEventListener('click', () =>
+      const renameBtn = card.querySelector<HTMLButtonElement>('.wb-rename')
+      renameBtn?.addEventListener('click', () =>
         openPromptDialog({
           title: 'Renomear planilha',
           label: 'Novo nome',
@@ -159,7 +161,8 @@ export function showWorkbooksList(opts: {
           },
         }),
       )
-      card.querySelector<HTMLButtonElement>('.wb-delete')!.addEventListener('click', () =>
+      const deleteBtn = card.querySelector<HTMLButtonElement>('.wb-delete')
+      deleteBtn?.addEventListener('click', () =>
         openConfirmDialog({
           title: `Deletar "${wb.name}"?`,
           body: `Vai apagar <strong>${wb.count} pedidos</strong>, etiquetas e fotos desta planilha. Esta ação não pode ser desfeita.`,

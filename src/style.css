@@ -406,11 +406,30 @@ button {
   border-color: #94a3b8;
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
 }
+.workbook-card--system {
+  border-color: #f97316;
+  background: linear-gradient(180deg, #fff7ed 0%, #fff 40%);
+}
+.workbook-card--system:hover {
+  border-color: #ea580c;
+}
 .workbook-card-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
+}
+.workbook-card-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #c2410c;
+  background: #ffedd5;
+  border: 1px solid #fdba74;
+  border-radius: 4px;
+  padding: 2px 6px;
 }
 .workbook-card-name {
   font-size: 16px;

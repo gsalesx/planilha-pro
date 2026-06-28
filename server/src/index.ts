@@ -8,6 +8,7 @@ import express from 'express'
 
 import { cleanupExpiredSessions } from './auth.js'
 import { env, isProd } from './env.js'
+import { ensureShopeeWorkbook } from './shopee-workbook.js'
 import backupRouter from './routes/backup.js'
 import imagesRouter from './routes/images.js'
 import loginRouter from './routes/login.js'
@@ -64,6 +65,7 @@ if (existsSync(publicDir)) {
 // limpar sessões expiradas a cada hora
 setInterval(cleanupExpiredSessions, 60 * 60 * 1000)
 cleanupExpiredSessions()
+ensureShopeeWorkbook()
 
 app.listen(env.port, () => {
   console.log(`Planilha Pro server on http://localhost:${env.port}`)
