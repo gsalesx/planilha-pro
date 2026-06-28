@@ -7,6 +7,8 @@ interface ShopeeStatus {
   env: string
   partnerId: string | null
   hasPartnerKey: boolean
+  hasPushPartnerKey: boolean
+  pushCallbackUrl: string | null
   redirectUrl: string | null
   shop: { shopId: number; accessExpireAt: number; updatedAt: number } | null
 }
