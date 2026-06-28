@@ -104,7 +104,7 @@ function openBulkSkuDialog(
                   (p) => `
                 <tr data-item-id="${p.itemId}">
                   <td class="shopee-products-bulk-name">${escapeHtml(p.name.slice(0, 60))}${p.name.length > 60 ? '…' : ''}</td>
-                  <td><code>${escapeHtml(p.sku || '—')}</code>${p.hasModel ? ` <span class="muted">(+${p.models.length} var.)</span>` : ''}</td>
+                  <td><code>${escapeHtml(p.sku || '—')}</code>${p.hasModel ? ' <span class="muted">(variantes)</span>' : ''}</td>
                   <td><input type="text" class="bulk-sku-input" value="${escapeHtml(p.sku)}" maxlength="100" /></td>
                 </tr>`,
                 )
@@ -241,7 +241,7 @@ async function boot(): Promise<void> {
         if (!product) return
         openPromptDialog({
           title: 'Editar SKU',
-          label: `Novo SKU (principal + ${product.hasModel ? product.models.length + ' variantes' : 'sem variantes'})`,
+          label: `Novo SKU (principal + ${product.hasModel ? 'variantes' : 'sem variantes'})`,
           defaultValue: product.sku,
           confirmLabel: 'Salvar',
           onConfirm: async (sku) => {

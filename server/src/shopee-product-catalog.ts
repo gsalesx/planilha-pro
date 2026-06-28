@@ -54,46 +54,32 @@ function formatStock(n: number | null | undefined): number | null {
   return n
 }
 
-function mapItemBase(
-  row: ItemBaseRow,
-  models: CatalogModel[],
-  variantStock: number | null,
-  variantPrice: number | null,
-): CatalogProduct {
+function mapItemBaseFromRow(row: ItemBaseRow): CatalogProduct {
   const imageUrl = row.image?.image_url_list?.[0] ?? row.image?.image_url ?? ''
-  const stock = row.has_model ? variantStock : formatStock(row.stock_info_v2?.summary_info?.total_available_stock)
-  const price = row.has_model ? variantPrice : readPrice(row.price_info)
-
   return {
     itemId: row.item_id ?? 0,
     name: row.item_name ?? '',
     imageUrl,
-    price,
-    stock,
+    price: readPrice(row.price_info),
+    stock: formatStock(row.stock_info_v2?.summary_info?.total_available_stock),
     sku: row.item_sku ?? '',
     hasModel: Boolean(row.has_model),
-    models,
+    models: [],
     status: row.item_status ?? '',
   }
 }
 
-async function fetchModels(itemId: number): Promise<{ models: CatalogModel[]; totalStock: number; minPrice: number | null }> {
+async function fetchModels(itemId: number): Promise<CatalogModel[]> {
   const data = await getModelList(itemId)
   const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_model_list') as {
     model?: ModelRow[]
   }
   const models: CatalogModel[] = []
-  let totalStock = 0
-  let minPrice: number | null = null
   for (const m of body.model ?? []) {
     if (typeof m.model_id !== 'number') continue
-    const stock = formatStock(m.stock_info_v2?.summary_info?.total_available_stock) ?? 0
-    totalStock += stock
-    const price = m.price_info?.[0]?.current_price ?? null
-    if (price != null && (minPrice == null || price < minPrice)) minPrice = price
     models.push({ modelId: m.model_id, modelSku: m.model_sku ?? '' })
   }
-  return { models, totalStock, minPrice }
+  return models
 }
 
 function parseItemList(data: ShopeeApiResponse): ItemBaseRow[] {
@@ -110,14 +96,9 @@ export async function fetchProductCatalog(): Promise<CatalogProduct[]> {
   for (let i = 0; i < itemIds.length; i += 50) {
     const batch = itemIds.slice(i, i + 50)
     const data = await getItemBaseInfo(batch)
-    const items = parseItemList(data)
-    for (const row of items) {
-      const itemId = row.item_id
-      if (!itemId) continue
-      const models = row.has_model ? await fetchModels(itemId) : { models: [], totalStock: null, minPrice: null }
-      products.push(
-        mapItemBase(row, models.models, models.totalStock, models.minPrice),
-      )
+    for (const row of parseItemList(data)) {
+      if (!row.item_id) continue
+      products.push(mapItemBaseFromRow(row))
     }
   }
 
@@ -140,30 +121,28 @@ export interface SkuUpdateResult {
 export async function applyProductSkuUpdate(
   itemId: number,
   sku: string,
-  catalog?: CatalogProduct,
+  _catalog?: CatalogProduct,
 ): Promise<void> {
   const trimmed = sku.trim()
   if (!trimmed) throw new Error('SKU obrigatório')
   if (trimmed.length > 100) throw new Error('SKU deve ter no máximo 100 caracteres')
 
-  let product = catalog
-  if (!product || product.itemId !== itemId) {
-    const data = await getItemBaseInfo([itemId])
-    const row = parseItemList(data)[0]
-    if (!row) throw new Error('Produto não encontrado')
-    const models = row.has_model ? await fetchModels(itemId) : { models: [], totalStock: null, minPrice: null }
-    product = mapItemBase(row, models.models, models.totalStock, models.minPrice)
-  }
+  const data = await getItemBaseInfo([itemId])
+  const row = parseItemList(data)[0]
+  if (!row) throw new Error('Produto não encontrado')
 
   const itemData = await updateItemSku(itemId, trimmed)
   assertShopeeOk(itemData as ShopeeApiResponse<Record<string, unknown>>, 'update_item')
 
-  if (product.hasModel && product.models.length) {
-    const modelData = await updateModelSkus(
-      itemId,
-      product.models.map((m) => ({ model_id: m.modelId, model_sku: trimmed })),
-    )
-    assertShopeeOk(modelData as ShopeeApiResponse<Record<string, unknown>>, 'update_model')
+  if (row.has_model) {
+    const models = await fetchModels(itemId)
+    if (models.length) {
+      const modelData = await updateModelSkus(
+        itemId,
+        models.map((m) => ({ model_id: m.modelId, model_sku: trimmed })),
+      )
+      assertShopeeOk(modelData as ShopeeApiResponse<Record<string, unknown>>, 'update_model')
+    }
   }
 }
 
