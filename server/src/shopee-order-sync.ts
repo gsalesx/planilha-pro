@@ -21,7 +21,9 @@ import { ensureShopeeWorkbook, SHOPEE_WORKBOOK_ID } from './shopee-workbook.js'
 
 interface ShopeeItemRow {
   item_name?: string
+  item_sku?: string
   model_name?: string
+  model_sku?: string
   model_quantity_purchased?: number
 }
 
@@ -61,11 +63,15 @@ function joinField(values: string[]): string {
   return values.filter(Boolean).join('; ')
 }
 
+function itemSku(item: ShopeeItemRow): string {
+  return (item.model_sku ?? item.item_sku ?? '').trim()
+}
+
 export function mapShopeeOrderToRow(order: ShopeeOrderDetail): string[] {
   const row = emptyShopeeRow()
   const items = order.item_list ?? []
   row[SHOPEE_COL_ORDER_ID] = order.order_sn ?? ''
-  row[SHOPEE_COL_PRODUCT] = joinField(items.map((i) => i.item_name ?? ''))
+  row[SHOPEE_COL_PRODUCT] = joinField(items.map(itemSku))
   row[SHOPEE_COL_MODEL] = joinField(items.map((i) => i.model_name ?? ''))
   row[SHOPEE_COL_QTY] = String(
     items.reduce((sum, i) => sum + (i.model_quantity_purchased ?? 0), 0) || '',

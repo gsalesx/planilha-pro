@@ -14,7 +14,7 @@ export const SHOPEE_ROW_COLS = SHOPEE_PHOTO_COL_START + SHOPEE_PHOTO_COUNT // 18
 
 export const SHOPEE_HEADERS = [
   'ID do pedido',
-  'Nome do Produto',
+  'SKU',
   'Modelo',
   'Qnt.',
   'Nome de usuário',

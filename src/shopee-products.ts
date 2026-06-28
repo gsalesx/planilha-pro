@@ -128,6 +128,7 @@ async function boot(): Promise<void> {
   const root = document.querySelector('#app')!
   root.innerHTML = `
     <div class="shopee-products-page">
+      <div class="shopee-products-sticky-top">
       <header class="app-header">
         <a href="/" class="shopee-test-back">← Planilhas</a>
         <h1>Produtos Shopee</h1>
@@ -156,6 +157,7 @@ async function boot(): Promise<void> {
           <p class="shopee-products-bulk-progress-text" id="bulk-progress-text"></p>
         </div>
       </section>
+      </div>
       <main class="shopee-products-main">
         <p class="shopee-products-status" id="status">Carregando produtos…</p>
         <div class="shopee-products-grid" id="grid"></div>

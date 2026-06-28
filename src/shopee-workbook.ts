@@ -12,7 +12,7 @@ export const SHOPEE_MIN_COLUMN_COUNT = 18
 
 export const SHOPEE_HEADERS = [
   'ID do pedido',
-  'Nome do Produto',
+  'SKU',
   'Modelo',
   'Qnt.',
   'Nome de usuário',
