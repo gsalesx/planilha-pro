@@ -5,10 +5,12 @@ import { Router, type Request, type Response } from 'express'
 import { requireAuth } from '../auth.js'
 import { env } from '../env.js'
 import {
+  callbackUrlCandidates,
   getRecentShopeePushes,
+  normalizePushAuthorization,
   recordShopeePush,
   resolveShopeeCallbackUrl,
-  verifyShopeePushSignature,
+  verifyShopeePushSignatureAny,
 } from '../shopee-push.js'
 
 const router = Router()
@@ -39,20 +41,40 @@ export function handleShopeePushPost(req: Request, res: Response): void {
     req.originalUrl,
   )
 
-  const pushPartnerKey = env.shopeePushPartnerKey || env.shopeePartnerKey
+  const partnerKeys = [...new Set([env.shopeePushPartnerKey, env.shopeePartnerKey].filter(Boolean))]
+  const urlCandidates = callbackUrlCandidates(
+    env.shopeePushCallbackUrl || undefined,
+    req.protocol,
+    req.get('host') ?? 'localhost',
+    req.originalUrl,
+  )
 
   let signatureOk: boolean | null = null
-  if (pushPartnerKey && authorization) {
-    signatureOk = verifyShopeePushSignature(callbackUrl, rawBody, authorization, pushPartnerKey)
+  if (partnerKeys.length && authorization) {
+    signatureOk = verifyShopeePushSignatureAny(urlCandidates, rawBody, authorization, partnerKeys)
     if (!signatureOk) {
+      const parsedFail = parseJsonSafe(rawBody)
+      recordShopeePush({
+        id: randomUUID(),
+        receivedAt: Date.now(),
+        callbackUrl,
+        authorization,
+        signatureOk: false,
+        body: rawBody,
+        parsed: parsedFail,
+      })
       console.warn('[shopee-push] assinatura inválida', {
         callbackUrl,
-        usingPushKey: Boolean(env.shopeePushPartnerKey),
+        urlCandidates,
+        authLen: authorization.length,
+        authNorm: normalizePushAuthorization(authorization),
+        bodyLen: rawBody.length,
+        body: rawBody.slice(0, 400),
       })
       res.status(401).end()
       return
     }
-  } else if (pushPartnerKey && !authorization) {
+  } else if (partnerKeys.length && !authorization) {
     console.warn('[shopee-push] Authorization ausente')
     res.status(401).end()
     return
