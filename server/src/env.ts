@@ -10,6 +10,10 @@ function required(name: string, fallback?: string): string {
 
 export type ShopeeRuntimeEnv = 'sandbox' | 'production'
 
+function envTrim(name: string): string {
+  return (process.env[name] ?? '').trim()
+}
+
 export const env = {
   port: Number(process.env.PORT ?? 3030),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -22,23 +26,23 @@ export const env = {
   /** Opcional. Se definida, requests com Authorization: Bearer <key> ou X-API-Key: <key> autenticam. */
   apiKey: process.env.API_KEY ?? '',
   /** Shopee Open Platform — Live API Partner Key (chamadas Open API). */
-  shopeePartnerKey: process.env.SHOPEE_PARTNER_KEY ?? '',
+  shopeePartnerKey: envTrim('SHOPEE_PARTNER_KEY'),
   /**
    * Live Push Partner Key — assinatura HMAC dos webhooks (Push Mechanism).
    * Diferente da Live API Partner Key; copie em Push Mechanism no console Shopee.
    */
-  shopeePushPartnerKey: process.env.SHOPEE_PUSH_PARTNER_KEY ?? '',
+  shopeePushPartnerKey: envTrim('SHOPEE_PUSH_PARTNER_KEY'),
   /**
    * URL exata cadastrada no console Shopee (Live Call Back URL).
    * Se vazio, monta a partir do request (protocol + host + path).
    */
-  shopeePushCallbackUrl: process.env.SHOPEE_PUSH_CALLBACK_URL ?? '',
+  shopeePushCallbackUrl: envTrim('SHOPEE_PUSH_CALLBACK_URL'),
   /** Partner ID numérico do app na Shopee Open Platform */
-  shopeePartnerId: process.env.SHOPEE_PARTNER_ID ?? '',
+  shopeePartnerId: envTrim('SHOPEE_PARTNER_ID'),
   /** sandbox | production */
   shopeeEnv: (process.env.SHOPEE_ENV === 'sandbox' ? 'sandbox' : 'production') as ShopeeRuntimeEnv,
   /** Redirect OAuth — ex. https://planilha.guilhermesales.com/api/shopee/oauth/callback */
-  shopeeRedirectUrl: process.env.SHOPEE_REDIRECT_URL ?? '',
+  shopeeRedirectUrl: envTrim('SHOPEE_REDIRECT_URL'),
 }
 
 export const isProd = env.nodeEnv === 'production'

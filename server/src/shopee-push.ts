@@ -73,6 +73,17 @@ export function callbackUrlCandidates(
     const trimmed = url.replace(/\/$/, '')
     set.add(trimmed)
     set.add(`${trimmed}/`)
+    try {
+      const parsed = new URL(trimmed)
+      if (parsed.protocol === 'https:' && !parsed.port) {
+        set.add(`${parsed.protocol}//${parsed.hostname}:443${parsed.pathname}`)
+      }
+      if (parsed.protocol === 'https:') {
+        set.add(trimmed.replace('https://', 'http://'))
+      }
+    } catch {
+      // ignore URL inválida
+    }
   }
   return [...set]
 }
