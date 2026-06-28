@@ -110,12 +110,25 @@ function openBulkSkuDialog(
   overlay.className = 'modal-overlay'
   overlay.innerHTML = `
     <div class="modal modal-wide" role="dialog" aria-modal="true">
-      <div class="modal-title">Editar SKU em massa</div>
+      <div class="modal-title">Editar SKU em massa (${selected.length})</div>
       <div class="modal-body">
         <p class="shopee-products-bulk-hint">
-          O novo SKU será aplicado ao SKU principal e a <strong>todas as variantes</strong> de cada produto.
-          Cada produto é salvo separadamente (1 por vez).
+          Um SKU para todos os selecionados — aplicado ao principal e às variantes de cada produto.
+          Salvamento <strong>um por vez</strong> na Shopee.
         </p>
+        <div class="shopee-products-bulk-apply-all">
+          <label class="shopee-products-bulk-apply-label">
+            <span>Novo SKU (todos)</span>
+            <input type="text" id="bulk-sku-all" maxlength="100" placeholder="Digite o SKU..." autofocus />
+          </label>
+          <button type="button" class="btn" id="bulk-apply-all">Aplicar a todos</button>
+        </div>
+        <div class="shopee-products-bulk-progress" id="bulk-progress" hidden>
+          <div class="shopee-products-bulk-progress-track">
+            <div class="shopee-products-bulk-progress-bar" id="bulk-progress-bar"></div>
+          </div>
+          <p class="shopee-products-bulk-progress-text" id="bulk-progress-text"></p>
+        </div>
         <div class="shopee-products-bulk-table-wrap">
           <table class="shopee-products-bulk-table">
             <thead>
@@ -131,8 +144,8 @@ function openBulkSkuDialog(
                   (p) => `
                 <tr data-item-id="${p.itemId}">
                   <td class="shopee-products-bulk-name">${escapeHtml(p.name.slice(0, 60))}${p.name.length > 60 ? '…' : ''}</td>
-                  <td><code>${escapeHtml(p.sku || '—')}</code>${p.hasModel ? ' <span class="muted">(variantes)</span>' : ''}</td>
-                  <td><input type="text" class="bulk-sku-input" value="${escapeHtml(p.sku)}" maxlength="100" /></td>
+                  <td><code>${escapeHtml(p.sku || '—')}</code>${p.hasModel ? ' <span class="muted">(var.)</span>' : ''}</td>
+                  <td><input type="text" class="bulk-sku-input" value="" maxlength="100" placeholder="—" /></td>
                 </tr>`,
                 )
                 .join('')}
@@ -148,36 +161,105 @@ function openBulkSkuDialog(
   `
   document.body.appendChild(overlay)
   const close = () => overlay.remove()
-  overlay.querySelector('.modal-cancel')!.addEventListener('click', close)
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) close()
-  })
+  const cancelBtn = overlay.querySelector<HTMLButtonElement>('.modal-cancel')!
   const confirmBtn = overlay.querySelector<HTMLButtonElement>('.modal-confirm')!
-  confirmBtn.addEventListener('click', async () => {
+  const applyAllInput = overlay.querySelector<HTMLInputElement>('#bulk-sku-all')!
+  const applyAllBtn = overlay.querySelector<HTMLButtonElement>('#bulk-apply-all')!
+  const progressWrap = overlay.querySelector<HTMLDivElement>('#bulk-progress')!
+  const progressBar = overlay.querySelector<HTMLDivElement>('#bulk-progress-bar')!
+  const progressText = overlay.querySelector<HTMLParagraphElement>('#bulk-progress-text')!
+
+  function applySkuToAllRows(sku: string): void {
+    overlay.querySelectorAll<HTMLInputElement>('.bulk-sku-input').forEach((input) => {
+      input.value = sku
+    })
+  }
+
+  function collectUpdates(): Array<{ itemId: number; sku: string }> {
     const updates: Array<{ itemId: number; sku: string }> = []
     overlay.querySelectorAll<HTMLTableRowElement>('tr[data-item-id]').forEach((tr) => {
       const itemId = Number(tr.dataset.itemId)
       const sku = tr.querySelector<HTMLInputElement>('.bulk-sku-input')?.value.trim() ?? ''
       if (itemId && sku) updates.push({ itemId, sku })
     })
-    if (!updates.length) return
-    confirmBtn.disabled = true
-    try {
-      const results = await saveProductSkusSequential(updates, (done, total) => {
-        confirmBtn.textContent = `Salvando ${done}/${total}…`
-      })
-      close()
-      const failed = results.filter((r) => !r.ok)
-      if (failed.length > 0) {
-        const errs = failed.map((r) => `#${r.itemId}: ${r.error}`).join('\n')
-        alert(`Atualizados: ${results.length - failed.length}. Falhas: ${failed.length}\n\n${errs}`)
-      }
-      onDone()
-    } catch (error) {
-      alert((error as Error).message)
-      confirmBtn.disabled = false
-      confirmBtn.textContent = 'Salvar na Shopee'
+    return updates
+  }
+
+  function setProgress(done: number, total: number, label?: string): void {
+    progressWrap.hidden = false
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0
+    progressBar.style.width = `${pct}%`
+    progressText.textContent = label ?? `Salvando ${done} de ${total}…`
+  }
+
+  applyAllBtn.addEventListener('click', () => {
+    const sku = applyAllInput.value.trim()
+    if (!sku) {
+      applyAllInput.focus()
+      return
     }
+    applySkuToAllRows(sku)
+  })
+
+  applyAllInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      applyAllBtn.click()
+    }
+  })
+
+  cancelBtn.addEventListener('click', close)
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay && !confirmBtn.disabled) close()
+  })
+
+  confirmBtn.addEventListener('click', async () => {
+    const topSku = applyAllInput.value.trim()
+    if (topSku) applySkuToAllRows(topSku)
+
+    const updates = collectUpdates()
+    if (!updates.length) {
+      alert('Informe o SKU no campo de cima ou em pelo menos um produto.')
+      applyAllInput.focus()
+      return
+    }
+
+    confirmBtn.disabled = true
+    cancelBtn.disabled = true
+    applyAllBtn.disabled = true
+    applyAllInput.disabled = true
+    overlay.querySelectorAll<HTMLInputElement>('.bulk-sku-input').forEach((i) => {
+      i.disabled = true
+    })
+    setProgress(0, updates.length, `Iniciando… 0 de ${updates.length}`)
+
+    const results = await saveProductSkusSequential(updates, (done, total) => {
+      setProgress(done, total, `Salvando ${done} de ${total}…`)
+      confirmBtn.textContent = `${done}/${total}`
+    })
+
+    const failed = results.filter((r) => !r.ok)
+    if (failed.length === 0) {
+      progressText.textContent = `Concluído — ${results.length} produto(s) atualizado(s).`
+      confirmBtn.textContent = 'Concluído'
+      setTimeout(() => {
+        close()
+        onDone()
+      }, 800)
+      return
+    }
+
+    progressText.textContent = `${results.length - failed.length} ok, ${failed.length} falha(s).`
+    confirmBtn.textContent = 'Salvar na Shopee'
+    confirmBtn.disabled = false
+    cancelBtn.disabled = false
+    applyAllBtn.disabled = false
+    applyAllInput.disabled = false
+    overlay.querySelectorAll<HTMLInputElement>('.bulk-sku-input').forEach((i) => {
+      i.disabled = false
+    })
+    const errs = failed.map((r) => `#${r.itemId}: ${r.error}`).join('\n')
+    alert(`Falhas:\n\n${errs}`)
   })
 }
 
@@ -300,41 +382,12 @@ async function boot(): Promise<void> {
   })
 
   bulkBtn.addEventListener('click', () => {
-    openBulkFieldPicker(() => {
-      openBulkSkuDialog(products, selected, () => void loadCatalog())
-    })
+    openBulkSkuDialog(products, selected, () => void loadCatalog())
   })
 
   root.querySelector('#btn-refresh')!.addEventListener('click', () => void loadCatalog())
 
   await loadCatalog()
-}
-
-function openBulkFieldPicker(onSku: () => void): void {
-  const overlay = document.createElement('div')
-  overlay.className = 'modal-overlay'
-  overlay.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true">
-      <div class="modal-title">Editar em massa</div>
-      <div class="modal-body">
-        <p>Qual campo deseja editar?</p>
-        <button type="button" class="btn btn-primary shopee-bulk-field" data-field="sku" style="width:100%;margin-top:12px">SKU (principal + variantes)</button>
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="btn modal-cancel">Cancelar</button>
-      </div>
-    </div>
-  `
-  document.body.appendChild(overlay)
-  const close = () => overlay.remove()
-  overlay.querySelector('.modal-cancel')!.addEventListener('click', close)
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) close()
-  })
-  overlay.querySelector('[data-field="sku"]')!.addEventListener('click', () => {
-    close()
-    onSku()
-  })
 }
 
 void checkAuth().then((ok) => {
