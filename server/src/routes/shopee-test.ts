@@ -12,6 +12,7 @@ import {
   getOrderList,
   getShopInfo,
 } from '../shopee-api.js'
+import { syncShopeeWorkbookOrders } from '../shopee-order-sync.js'
 import { clearShopeeAuth, loadShopeeAuth } from '../shopee-store.js'
 
 const router = Router()
@@ -119,6 +120,24 @@ router.post('/shopee/oauth/exchange', requireAuth, async (req, res) => {
     res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'Falha ao trocar código',
+    })
+  }
+})
+
+/** POST /api/shopee/sync-workbook — importa/atualiza pedidos na planilha wb_shopee */
+router.post('/shopee/sync-workbook', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const days = Math.min(Math.max(Number((req.body as { days?: unknown }).days ?? 90), 1), 365)
+  try {
+    const result = await syncShopeeWorkbookOrders({ days })
+    res.json({ ok: true, days, ...result })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao sincronizar planilha Shopee',
     })
   }
 })

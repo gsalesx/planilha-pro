@@ -128,6 +128,21 @@ async function boot(): Promise<void> {
   `
   wrap.appendChild(ordersBox)
 
+  const syncBox = el('section', 'shopee-test-card')
+  syncBox.innerHTML = `
+    <h2>2b. Sincronizar planilha automática</h2>
+    <p class="shopee-test-hint">
+      Importa pedidos de <strong>todos os status</strong> para a planilha fixa Shopee.
+      Se o pedido já existir, só atualiza a coluna H (Status Shopee).
+      <a href="/?workbook=wb_shopee">Abrir planilha Shopee</a>
+    </p>
+    <div class="shopee-test-form">
+      <label>Últimos dias <input type="number" id="sync-days" value="90" min="1" max="365" /></label>
+      <button type="button" class="btn btn-primary" id="btn-sync-workbook">Importar / atualizar pedidos</button>
+    </div>
+  `
+  wrap.appendChild(syncBox)
+
   const productsBox = el('section', 'shopee-test-card')
   productsBox.innerHTML = `
     <h2>3. Listar produtos</h2>
@@ -275,6 +290,17 @@ async function boot(): Promise<void> {
     const qs = new URLSearchParams({ hours, timeRangeField })
     if (orderStatus) qs.set('orderStatus', orderStatus)
     void run('get_order_list', () => api(`/shopee/orders?${qs}`))
+  })
+
+  syncBox.querySelector('#btn-sync-workbook')!.addEventListener('click', () => {
+    const days = (syncBox.querySelector('#sync-days') as HTMLInputElement).value
+    void run('sync-workbook', () =>
+      api('/shopee/sync-workbook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days: Number(days) || 90 }),
+      }),
+    )
   })
 
   productsBox.querySelector('#btn-products')!.addEventListener('click', () => {

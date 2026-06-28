@@ -120,10 +120,12 @@ export function verifyShopeePushSignatureAny(
   return false
 }
 
-export function isShopeeUrlVerificationPush(parsed: unknown): boolean {
+export function isShopeeUrlVerificationPush(parsed: unknown, rawBody = ''): boolean {
+  if (rawBody.includes('verify_info') && rawBody.includes('Verification message')) return true
   if (!parsed || typeof parsed !== 'object') return false
   const row = parsed as { code?: unknown; data?: unknown }
-  if (row.code !== 0) return false
+  const code = row.code
+  if (code !== 0 && code !== '0') return false
   if (!row.data || typeof row.data !== 'object') return false
   return 'verify_info' in row.data
 }

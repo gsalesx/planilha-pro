@@ -1,4 +1,5 @@
 import type { CellStyle, CellValue, WorkbookData } from './types'
+import { headersForWorkbook } from './shopee-workbook'
 
 const API_BASE = '/api'
 
@@ -244,6 +245,21 @@ export async function deleteOrdersBySheetDate(
   )
 }
 
+export async function syncShopeeWorkbook(days = 90): Promise<{
+  ok: boolean
+  days: number
+  listed: number
+  created: number
+  updated: number
+  errors: string[]
+}> {
+  return request('/shopee/sync-workbook', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ days }),
+  })
+}
+
 /** Converte payload do servidor pra WorkbookData (formato que a grid usa) */
 export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook): WorkbookData {
   const rows: CellValue[][] = []
@@ -281,7 +297,7 @@ export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook
       [sheetId]: {
         id: sheetId,
         name: server.name,
-        headers: FIXED_HEADERS,
+        headers: headersForWorkbook(workbookId, FIXED_HEADERS),
         rows,
         rowKeys,
         rowDates,

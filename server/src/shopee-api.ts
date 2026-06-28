@@ -79,7 +79,7 @@ function unwrapShopeeResponse<T extends Record<string, unknown>>(
   return flat
 }
 
-function assertShopeeOk<T extends Record<string, unknown>>(data: ShopeeApiResponse<T>, context: string): T {
+export function assertShopeeOk<T extends Record<string, unknown>>(data: ShopeeApiResponse<T>, context: string): T {
   return unwrapShopeeResponse(data, context)
 }
 
@@ -207,6 +207,54 @@ export async function getOrderList(params: OrderListParams): Promise<ShopeeApiRe
   if (params.orderStatus) query.order_status = params.orderStatus
   if (params.cursor) query.cursor = params.cursor
   return shopApiGet('/api/v2/order/get_order_list', query)
+}
+
+const ORDER_DETAIL_FIELDS =
+  'buyer_username,recipient_address,item_list,order_status,create_time'
+
+export async function getOrderDetail(orderSnList: string[]): Promise<ShopeeApiResponse> {
+  if (!orderSnList.length) throw new Error('orderSnList obrigatório')
+  return shopApiGet('/api/v2/order/get_order_detail', {
+    order_sn_list: orderSnList.slice(0, 50).join(','),
+    response_optional_fields: ORDER_DETAIL_FIELDS,
+  })
+}
+
+/** Status conhecidos — get_order_list exige order_status por chamada. */
+export const SHOPEE_LIST_ORDER_STATUSES = [
+  'UNPAID',
+  'READY_TO_SHIP',
+  'PROCESSED',
+  'RETRY_SHIP',
+  'SHIPPED',
+  'TO_CONFIRM_RECEIVE',
+  'COMPLETED',
+  'IN_CANCEL',
+  'CANCELLED',
+  'INVOICE_PENDING',
+] as const
+
+export interface OrderListPage {
+  orderSnList: string[]
+  more: boolean
+  nextCursor: string
+}
+
+export async function fetchOrderListPage(params: OrderListParams): Promise<OrderListPage> {
+  const data = await getOrderList(params)
+  const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_order_list') as {
+    order_list?: Array<{ order_sn?: string }>
+    more?: boolean
+    next_cursor?: string
+  }
+  const orderSnList = (body.order_list ?? [])
+    .map((o) => o.order_sn)
+    .filter((sn): sn is string => Boolean(sn))
+  return {
+    orderSnList,
+    more: Boolean(body.more),
+    nextCursor: body.next_cursor ?? '',
+  }
 }
 
 export async function getShopInfo(): Promise<ShopeeApiResponse> {

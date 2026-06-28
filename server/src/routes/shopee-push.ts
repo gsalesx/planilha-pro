@@ -13,6 +13,7 @@ import {
   resolveShopeeCallbackUrl,
   verifyShopeePushSignatureAny,
 } from '../shopee-push.js'
+import { processShopeeOrderStatusPush } from '../shopee-push-process.js'
 
 const router = Router()
 
@@ -43,7 +44,7 @@ export function handleShopeePushPost(req: Request, res: Response): void {
   )
 
   const parsedEarly = parseJsonSafe(rawBody)
-  const isVerifyPing = isShopeeUrlVerificationPush(parsedEarly)
+  const isVerifyPing = isShopeeUrlVerificationPush(parsedEarly, rawBody)
 
   const partnerKeys = [...new Set([env.shopeePushPartnerKey, env.shopeePartnerKey].filter(Boolean))]
   const urlCandidates = callbackUrlCandidates(
@@ -107,8 +108,11 @@ export function handleShopeePushPost(req: Request, res: Response): void {
     shop_id: typeof parsed === 'object' && parsed && 'shop_id' in parsed ? (parsed as { shop_id?: unknown }).shop_id : undefined,
   })
 
-  // Shopee exige 2xx com corpo vazio.
+  // Shopee exige 2xx com corpo vazio — processamento async depois da resposta.
   res.status(200).end()
+  if (!isVerifyPing) {
+    void processShopeeOrderStatusPush(parsed)
+  }
 }
 
 /** GET /api/shopee/push/recent — últimos pushes (auth UI/API). */

@@ -1,4 +1,5 @@
 import { findStatusOption, STATUS_COLUMN_INDEX, STATUS_OPTIONS } from './status'
+import { workbookLayout } from './shopee-workbook'
 import type { CellValue, SheetData, WorkbookData } from './types'
 
 const ID_COLUMN_INDEX = 0 // coluna A (ID do pedido — chave única)
@@ -7,7 +8,6 @@ const USER_COLUMN_INDEX = 4 // coluna E (Nome de usuário)
 export const RECIPIENT_COLUMN_INDEX = 6 // coluna G (Nome do destinatário)
 export const PHOTO_COLUMN_INDEX = 7
 export const PHOTO_COLUMN_INDICES = Array.from({ length: 10 }, (_, i) => PHOTO_COLUMN_INDEX + i)
-const IMAGE_COLUMN_INDICES = new Set(PHOTO_COLUMN_INDICES) // Foto 1 até Foto 10
 const FILTERABLE_COLS = new Set<number>([MODEL_COLUMN_INDEX, STATUS_COLUMN_INDEX]) // C (Modelo) e F (Status)
 const SORTABLE_COL = RECIPIENT_COLUMN_INDEX // coluna G (Nome do destinatário)
 const MIN_COLUMN_COUNT = 17 // até coluna Q — Foto 1 até Foto 10
@@ -15,16 +15,14 @@ const DEFAULT_COL_WIDTH = 110
 const PHOTO_COLUMN_WIDTH = 92
 const ROW_NUMBER_WIDTH = 44
 const DEFAULT_ROW_HEIGHT = 28
-const PHOTO_COLUMN_WIDTH_OVERRIDES = Object.fromEntries(
-  PHOTO_COLUMN_INDICES.map((col) => [col, PHOTO_COLUMN_WIDTH]),
-) as Record<number, number>
-const COLUMN_WIDTH_OVERRIDES: Record<number, number> = {
-  ...PHOTO_COLUMN_WIDTH_OVERRIDES,
+const DEFAULT_COLUMN_WIDTH_OVERRIDES: Record<number, number> = {
+  ...Object.fromEntries(PHOTO_COLUMN_INDICES.map((col) => [col, PHOTO_COLUMN_WIDTH])),
   1: 220, // B — Nome do Produto
   3: 56, // D — Qnt.
   6: 220, // G — Nome do destinatário
+  7: 120, // H — Status Shopee (planilha wb_shopee)
 }
-const CENTERED_COLUMNS = new Set([3, ...PHOTO_COLUMN_INDICES]) // D — Qnt. e Foto 1-10
+const DEFAULT_CENTERED_COLUMNS = new Set([3, ...PHOTO_COLUMN_INDICES])
 const TYPEAHEAD_MS = 900 // ms — reset do buffer estilo Windows Explorer
 void ID_COLUMN_INDEX
 
@@ -144,6 +142,11 @@ export class GridView {
   private typeBuffer = ''
   private typeBufferAt = 0
   private dragSelectionCol: number | null = null
+  private photoColumnIndices: number[] = [...PHOTO_COLUMN_INDICES]
+  private imageColumnIndices = new Set(PHOTO_COLUMN_INDICES)
+  private minColumnCount = MIN_COLUMN_COUNT
+  private columnWidthOverrides: Record<number, number> = { ...DEFAULT_COLUMN_WIDTH_OVERRIDES }
+  private centeredColumns = new Set(DEFAULT_CENTERED_COLUMNS)
 
   constructor(root: HTMLElement, callbacks: GridCallbacks) {
     this.root = root
@@ -155,6 +158,7 @@ export class GridView {
     this.filters.clear()
     this.sorts.clear()
     this.workbook = workbook
+    if (workbook) this.applyWorkbookLayout(workbook.id)
     this.activeSheetId = workbook?.sheetOrder[0] ?? null
     this.selection = workbook ? { col: 0, anchorRow: 0, activeRow: 0 } : null
     this.editing = null
@@ -167,6 +171,22 @@ export class GridView {
     }
     this.recomputeOrder()
     this.render()
+  }
+
+  private applyWorkbookLayout(workbookId: string): void {
+    const layout = workbookLayout(workbookId)
+    this.photoColumnIndices = [...layout.photoColumnIndices]
+    this.imageColumnIndices = new Set(layout.photoColumnIndices)
+    this.minColumnCount = layout.minColumnCount
+    this.columnWidthOverrides = {
+      ...DEFAULT_COLUMN_WIDTH_OVERRIDES,
+      ...Object.fromEntries(layout.photoColumnIndices.map((col) => [col, PHOTO_COLUMN_WIDTH])),
+    }
+    this.centeredColumns = new Set([3, ...layout.photoColumnIndices])
+  }
+
+  getPhotoColumnIndices(): readonly number[] {
+    return this.photoColumnIndices
   }
 
   setDateFilter(date: string | null) {
@@ -519,7 +539,7 @@ export class GridView {
       return
     }
 
-    const columnCount = Math.max(MIN_COLUMN_COUNT, sheet.headers.length, STATUS_COLUMN_INDEX + 1, ...IMAGE_COLUMN_INDICES)
+    const columnCount = Math.max(this.minColumnCount, sheet.headers.length, STATUS_COLUMN_INDEX + 1, ...this.photoColumnIndices)
     const rowCount = sheet.rows.length
 
     const table = document.createElement('table')
@@ -531,7 +551,7 @@ export class GridView {
     colgroup.appendChild(rowNumberCol)
     for (let c = 0; c < columnCount; c++) {
       const col = document.createElement('col')
-      const width = COLUMN_WIDTH_OVERRIDES[c] ?? sheet.columnWidths[c] ?? DEFAULT_COL_WIDTH
+      const width = this.columnWidthOverrides[c] ?? sheet.columnWidths[c] ?? DEFAULT_COL_WIDTH
       col.style.width = `${width}px`
       colgroup.appendChild(col)
     }
@@ -557,7 +577,7 @@ export class GridView {
     for (let c = 0; c < columnCount; c++) {
       const th = document.createElement('th')
       th.className = 'col-letter'
-      if (IMAGE_COLUMN_INDICES.has(c)) th.classList.add('cell-image-header')
+      if (this.imageColumnIndices.has(c)) th.classList.add('cell-image-header')
       th.textContent = colLetter(c)
       if (this.selection?.col === c) th.classList.add('is-active')
       letterRow.appendChild(th)
@@ -573,8 +593,8 @@ export class GridView {
     const sort = this.activeSheetId ? this.sorts.get(this.activeSheetId) : undefined
     for (let c = 0; c < columnCount; c++) {
       const th = document.createElement('th')
-      if (CENTERED_COLUMNS.has(c)) th.classList.add('cell-center')
-      if (IMAGE_COLUMN_INDICES.has(c)) th.classList.add('cell-image-header')
+      if (this.centeredColumns.has(c)) th.classList.add('cell-center')
+      if (this.imageColumnIndices.has(c)) th.classList.add('cell-image-header')
       const headerText = sheet.headers[c] || ''
       const span = document.createElement('span')
       span.className = 'header-text'
@@ -645,7 +665,7 @@ export class GridView {
     const td = document.createElement('td')
     td.dataset.row = String(row)
     td.dataset.col = String(col)
-    if (CENTERED_COLUMNS.has(col)) td.classList.add('cell-center')
+    if (this.centeredColumns.has(col)) td.classList.add('cell-center')
     const value = sheet.rows[row]?.[col] ?? null
     const isSelected = !!this.selection
       && this.selection.col === col
@@ -716,7 +736,7 @@ export class GridView {
       wrap.appendChild(text)
       wrap.appendChild(btn)
       td.appendChild(wrap)
-    } else if (IMAGE_COLUMN_INDICES.has(col)) {
+    } else if (this.imageColumnIndices.has(col)) {
       td.classList.add('cell-image')
       const meta = sheet.images[`${row}:${col}`]
       if (meta) {
@@ -860,7 +880,7 @@ export class GridView {
     })
 
     td.addEventListener('dblclick', (event) => {
-      if (col === STATUS_COLUMN_INDEX || IMAGE_COLUMN_INDICES.has(col)) return
+      if (col === STATUS_COLUMN_INDEX || this.imageColumnIndices.has(col)) return
       event.stopPropagation()
       this.startEdit(row, col)
     })

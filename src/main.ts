@@ -18,7 +18,6 @@ import { openConfirmDialog, openTextareaDialog } from './dialog'
 import {
   GridView,
   MODEL_COLUMN_INDEX,
-  PHOTO_COLUMN_INDICES,
   RECIPIENT_COLUMN_INDEX,
   type GridViewState,
 } from './grid'
@@ -747,7 +746,7 @@ async function uploadAndSetImage(row: number, col: number, blob: Blob, fileName:
           rowIndex: row,
           col,
           sheetDate: workbook?.sheets[workbook.sheetOrder[0]]?.rowDates?.[row] ?? '',
-          description: `Enviar foto ${col - PHOTO_COLUMN_INDICES[0] + 1}`,
+          description: `Enviar foto ${grid.getPhotoColumnIndices().indexOf(col) + 1}`,
           error,
         })
         handleApiError(error, 'Falha ao enviar foto')
@@ -778,7 +777,7 @@ async function deleteImageAt(row: number, col: number) {
         rowIndex: row,
         col,
         sheetDate,
-        description: `Remover foto ${col - PHOTO_COLUMN_INDICES[0] + 1}`,
+        description: `Remover foto ${grid.getPhotoColumnIndices().indexOf(col) + 1}`,
         error,
       })
       handleApiError(error, 'Falha ao remover foto')
@@ -800,7 +799,7 @@ function bindClipboardPaste() {
       if (!blob) continue
       event.preventDefault()
       const sel = grid.getSelection()
-      if (!sel || !PHOTO_COLUMN_INDICES.includes(sel.col)) {
+      if (!sel || !grid.getPhotoColumnIndices().includes(sel.col)) {
         setStatusText('Selecione uma célula de Foto 1 a Foto 10 para colar a imagem')
         return
       }
