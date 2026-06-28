@@ -18,9 +18,35 @@ export interface CatalogProduct {
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api${path}`, { credentials: 'include', ...init })
   if (response.status === 401) throw new Error('Login necessário')
-  const data = (await response.json().catch(() => ({}))) as T & { error?: string }
+  const data = (await response.json().catch(() => ({}))) as T & { error?: string; ok?: boolean }
   if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`)
   return data
+}
+
+async function saveProductSku(itemId: number, sku: string): Promise<void> {
+  await api<{ ok: boolean }>('/shopee/products/sku', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itemId, sku }),
+  })
+}
+
+async function saveProductSkusSequential(
+  updates: Array<{ itemId: number; sku: string }>,
+  onProgress: (done: number, total: number) => void,
+): Promise<Array<{ itemId: number; ok: boolean; error?: string }>> {
+  const results: Array<{ itemId: number; ok: boolean; error?: string }> = []
+  for (let i = 0; i < updates.length; i++) {
+    const { itemId, sku } = updates[i]
+    try {
+      await saveProductSku(itemId, sku)
+      results.push({ itemId, ok: true })
+    } catch (error) {
+      results.push({ itemId, ok: false, error: (error as Error).message })
+    }
+    onProgress(i + 1, updates.length)
+  }
+  return results
 }
 
 function escapeHtml(s: string): string {
@@ -88,6 +114,7 @@ function openBulkSkuDialog(
       <div class="modal-body">
         <p class="shopee-products-bulk-hint">
           O novo SKU será aplicado ao SKU principal e a <strong>todas as variantes</strong> de cada produto.
+          Cada produto é salvo separadamente (1 por vez).
         </p>
         <div class="shopee-products-bulk-table-wrap">
           <table class="shopee-products-bulk-table">
@@ -135,25 +162,15 @@ function openBulkSkuDialog(
     })
     if (!updates.length) return
     confirmBtn.disabled = true
-    confirmBtn.textContent = 'Salvando…'
     try {
-      const result = await api<{
-        ok: boolean
-        updated: number
-        failed: number
-        results: Array<{ itemId: number; ok: boolean; error?: string }>
-      }>('/shopee/products/sku', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updates, products }),
+      const results = await saveProductSkusSequential(updates, (done, total) => {
+        confirmBtn.textContent = `Salvando ${done}/${total}…`
       })
       close()
-      if (result.failed > 0) {
-        const errs = result.results
-          .filter((r) => !r.ok)
-          .map((r) => `#${r.itemId}: ${r.error}`)
-          .join('\n')
-        alert(`Atualizados: ${result.updated}. Falhas: ${result.failed}\n\n${errs}`)
+      const failed = results.filter((r) => !r.ok)
+      if (failed.length > 0) {
+        const errs = failed.map((r) => `#${r.itemId}: ${r.error}`).join('\n')
+        alert(`Atualizados: ${results.length - failed.length}. Falhas: ${failed.length}\n\n${errs}`)
       }
       onDone()
     } catch (error) {
@@ -245,11 +262,7 @@ async function boot(): Promise<void> {
           defaultValue: product.sku,
           confirmLabel: 'Salvar',
           onConfirm: async (sku) => {
-            await api('/shopee/products/sku', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ updates: [{ itemId: id, sku }], products }),
-            })
+            await saveProductSku(id, sku)
             await loadCatalog()
           },
         })

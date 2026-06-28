@@ -3,9 +3,8 @@ import { Router } from 'express'
 import { requireAuth } from '../auth.js'
 import { env } from '../env.js'
 import {
-  applyBulkSkuUpdates,
+  applyProductSkuUpdate,
   fetchProductCatalog,
-  type CatalogProduct,
 } from '../shopee-product-catalog.js'
 
 const router = Router()
@@ -31,56 +30,40 @@ router.get('/shopee/products/catalog', requireAuth, async (_req, res) => {
   }
 })
 
-/** POST /api/shopee/products/sku — edição em massa de SKU (item + variantes) */
+/** POST /api/shopee/products/sku — um produto por vez (item_sku + variantes) */
 router.post('/shopee/products/sku', requireAuth, async (req, res) => {
   if (!shopeeConfigured()) {
     res.status(400).json({ error: 'Shopee não configurada' })
     return
   }
-  const body = req.body as { updates?: unknown; products?: unknown }
-  const updatesRaw = body.updates
-  if (!Array.isArray(updatesRaw) || !updatesRaw.length) {
-    res.status(400).json({ error: 'updates[] obrigatório' })
-    return
-  }
-  const updates = updatesRaw
-    .map((row) => {
-      const r = row as { itemId?: unknown; sku?: unknown }
-      const itemId = Number(r.itemId)
-      const sku = typeof r.sku === 'string' ? r.sku.trim() : ''
-      if (!Number.isFinite(itemId) || itemId <= 0 || !sku) return null
-      return { itemId, sku }
-    })
-    .filter((row): row is { itemId: number; sku: string } => row != null)
+  const body = req.body as { itemId?: unknown; sku?: unknown; updates?: unknown }
 
-  if (!updates.length) {
-    res.status(400).json({ error: 'Nenhuma atualização válida' })
+  let itemId = Number(body.itemId)
+  let sku = typeof body.sku === 'string' ? body.sku.trim() : ''
+
+  if ((!Number.isFinite(itemId) || itemId <= 0 || !sku) && Array.isArray(body.updates) && body.updates.length === 1) {
+    const row = body.updates[0] as { itemId?: unknown; sku?: unknown }
+    itemId = Number(row.itemId)
+    sku = typeof row.sku === 'string' ? row.sku.trim() : ''
+  }
+
+  if (Array.isArray(body.updates) && body.updates.length > 1) {
+    res.status(400).json({ error: 'Envie um produto por requisição (evita timeout)' })
     return
   }
 
-  let catalog: CatalogProduct[] = []
-  if (Array.isArray(body.products)) {
-    catalog = body.products as CatalogProduct[]
-  } else {
-    try {
-      catalog = await fetchProductCatalog()
-    } catch {
-      catalog = []
-    }
+  if (!Number.isFinite(itemId) || itemId <= 0 || !sku) {
+    res.status(400).json({ error: 'itemId e sku obrigatórios' })
+    return
   }
 
   try {
-    const results = await applyBulkSkuUpdates(updates, catalog)
-    const failed = results.filter((r) => !r.ok)
-    res.json({
-      ok: failed.length === 0,
-      updated: results.filter((r) => r.ok).length,
-      failed: failed.length,
-      results,
-    })
+    await applyProductSkuUpdate(itemId, sku)
+    res.json({ ok: true, itemId })
   } catch (error) {
     res.status(502).json({
       ok: false,
+      itemId,
       error: error instanceof Error ? error.message : 'Erro ao atualizar SKU',
     })
   }

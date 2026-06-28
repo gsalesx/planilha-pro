@@ -106,23 +106,8 @@ export async function fetchProductCatalog(): Promise<CatalogProduct[]> {
   return products
 }
 
-export interface SkuUpdateInput {
-  itemId: number
-  sku: string
-}
-
-export interface SkuUpdateResult {
-  itemId: number
-  ok: boolean
-  error?: string
-}
-
 /** Atualiza item_sku e, se houver variantes, todos os model_sku com o mesmo valor. */
-export async function applyProductSkuUpdate(
-  itemId: number,
-  sku: string,
-  _catalog?: CatalogProduct,
-): Promise<void> {
+export async function applyProductSkuUpdate(itemId: number, sku: string): Promise<void> {
   const trimmed = sku.trim()
   if (!trimmed) throw new Error('SKU obrigatório')
   if (trimmed.length > 100) throw new Error('SKU deve ter no máximo 100 caracteres')
@@ -144,25 +129,4 @@ export async function applyProductSkuUpdate(
       assertShopeeOk(modelData as ShopeeApiResponse<Record<string, unknown>>, 'update_model')
     }
   }
-}
-
-export async function applyBulkSkuUpdates(
-  updates: SkuUpdateInput[],
-  catalog: CatalogProduct[],
-): Promise<SkuUpdateResult[]> {
-  const byId = new Map(catalog.map((p) => [p.itemId, p]))
-  const results: SkuUpdateResult[] = []
-  for (const { itemId, sku } of updates) {
-    try {
-      await applyProductSkuUpdate(itemId, sku, byId.get(itemId))
-      results.push({ itemId, ok: true })
-    } catch (error) {
-      results.push({
-        itemId,
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-  return results
 }
