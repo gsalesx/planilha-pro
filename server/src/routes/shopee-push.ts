@@ -7,6 +7,7 @@ import { env } from '../env.js'
 import {
   callbackUrlCandidates,
   getRecentShopeePushes,
+  isShopeeUrlVerificationPush,
   normalizePushAuthorization,
   recordShopeePush,
   resolveShopeeCallbackUrl,
@@ -41,6 +42,9 @@ export function handleShopeePushPost(req: Request, res: Response): void {
     req.originalUrl,
   )
 
+  const parsedEarly = parseJsonSafe(rawBody)
+  const isVerifyPing = isShopeeUrlVerificationPush(parsedEarly)
+
   const partnerKeys = [...new Set([env.shopeePushPartnerKey, env.shopeePartnerKey].filter(Boolean))]
   const urlCandidates = callbackUrlCandidates(
     env.shopeePushCallbackUrl || undefined,
@@ -50,7 +54,11 @@ export function handleShopeePushPost(req: Request, res: Response): void {
   )
 
   let signatureOk: boolean | null = null
-  if (partnerKeys.length && authorization) {
+  if (isVerifyPing) {
+    // Ping do botão Verify no console Shopee (code 0 + verify_info).
+    signatureOk = null
+    console.log('[shopee-push] ping de verificação de URL (code 0) — aceitando')
+  } else if (partnerKeys.length && authorization) {
     signatureOk = verifyShopeePushSignatureAny(urlCandidates, rawBody, authorization, partnerKeys)
     if (!signatureOk) {
       const parsedFail = parseJsonSafe(rawBody)
@@ -82,7 +90,7 @@ export function handleShopeePushPost(req: Request, res: Response): void {
     console.warn('[shopee-push] SHOPEE_PUSH_PARTNER_KEY não configurada — aceitando sem validar assinatura')
   }
 
-  const parsed = parseJsonSafe(rawBody)
+  const parsed = parsedEarly ?? parseJsonSafe(rawBody)
   const entry = {
     id: randomUUID(),
     receivedAt: Date.now(),

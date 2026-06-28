@@ -120,6 +120,14 @@ export function verifyShopeePushSignatureAny(
   return false
 }
 
+export function isShopeeUrlVerificationPush(parsed: unknown): boolean {
+  if (!parsed || typeof parsed !== 'object') return false
+  const row = parsed as { code?: unknown; data?: unknown }
+  if (row.code !== 0) return false
+  if (!row.data || typeof row.data !== 'object') return false
+  return 'verify_info' in row.data
+}
+
 export function resolveShopeeCallbackUrl(protocol: string, host: string, originalUrl: string): string {
   if (env.shopeePushCallbackUrl) return env.shopeePushCallbackUrl
   const pathOnly = originalUrl.split('?')[0] || originalUrl
