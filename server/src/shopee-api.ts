@@ -210,7 +210,7 @@ export async function getOrderList(params: OrderListParams): Promise<ShopeeApiRe
 }
 
 const ORDER_DETAIL_FIELDS =
-  'buyer_username,recipient_address,item_list,order_status,create_time'
+  'buyer_username,recipient_address,item_list,order_status,create_time,ship_by_date'
 
 export async function getOrderDetail(orderSnList: string[]): Promise<ShopeeApiResponse> {
   if (!orderSnList.length) throw new Error('orderSnList obrigatório')

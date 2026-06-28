@@ -30,6 +30,8 @@ interface ShopeeOrderDetail {
   order_status?: string
   buyer_username?: string
   create_time?: number
+  /** Prazo para despachar — data prevista de envio no painel Shopee. */
+  ship_by_date?: number
   recipient_address?: { name?: string }
   item_list?: ShopeeItemRow[]
 }
@@ -47,6 +49,12 @@ function formatSheetDate(unixSec: number): string {
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const yyyy = d.getFullYear()
   return `${dd}-${mm}-${yyyy}`
+}
+
+/** Data do `<select>` no header — prevista de envio (ship_by_date), não data da compra. */
+function resolveSheetDate(order: ShopeeOrderDetail): string {
+  const ts = order.ship_by_date ?? order.create_time
+  return ts ? formatSheetDate(ts) : ''
 }
 
 function joinField(values: string[]): string {
@@ -94,15 +102,16 @@ export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'update
     const row = JSON.parse(existing.row_json) as string[]
     while (row.length < SHOPEE_ROW_COLS) row.push('')
     row[SHOPEE_COL_SHOPEE_STATUS] = shopeeStatus
+    const sheetDate = resolveSheetDate(order)
     db.prepare(
-      'UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
-    ).run(JSON.stringify(row), now, SHOPEE_WORKBOOK_ID, existing.order_key)
+      'UPDATE orders SET row_json = ?, sheet_date = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
+    ).run(JSON.stringify(row), sheetDate, now, SHOPEE_WORKBOOK_ID, existing.order_key)
     db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, SHOPEE_WORKBOOK_ID)
     return 'updated'
   }
 
   const row = mapShopeeOrderToRow(order)
-  const sheetDate = order.create_time ? formatSheetDate(order.create_time) : ''
+  const sheetDate = resolveSheetDate(order)
   const maxPos = (
     db
       .prepare('SELECT COALESCE(MAX(position), -1) AS m FROM orders WHERE workbook_id = ?')
