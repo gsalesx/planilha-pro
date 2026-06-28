@@ -100,167 +100,28 @@ function showLogin(onSuccess: () => void): void {
   document.body.appendChild(overlay)
 }
 
-function openBulkSkuDialog(
-  products: CatalogProduct[],
-  selectedIds: Set<number>,
-  onDone: () => void,
-): void {
-  const selected = products.filter((p) => selectedIds.has(p.itemId))
-  const overlay = document.createElement('div')
-  overlay.className = 'modal-overlay'
-  overlay.innerHTML = `
-    <div class="modal modal-wide" role="dialog" aria-modal="true">
-      <div class="modal-title">Editar SKU em massa (${selected.length})</div>
-      <div class="modal-body">
-        <p class="shopee-products-bulk-hint">
-          Um SKU para todos os selecionados — aplicado ao principal e às variantes de cada produto.
-          Salvamento <strong>um por vez</strong> na Shopee.
-        </p>
-        <div class="shopee-products-bulk-apply-all">
-          <label class="shopee-products-bulk-apply-label">
-            <span>Novo SKU (todos)</span>
-            <input type="text" id="bulk-sku-all" maxlength="100" placeholder="Digite o SKU..." autofocus />
-          </label>
-          <button type="button" class="btn" id="bulk-apply-all">Aplicar a todos</button>
-        </div>
-        <div class="shopee-products-bulk-progress" id="bulk-progress" hidden>
-          <div class="shopee-products-bulk-progress-track">
-            <div class="shopee-products-bulk-progress-bar" id="bulk-progress-bar"></div>
-          </div>
-          <p class="shopee-products-bulk-progress-text" id="bulk-progress-text"></p>
-        </div>
-        <div class="shopee-products-bulk-table-wrap">
-          <table class="shopee-products-bulk-table">
-            <thead>
-              <tr>
-                <th>Produto</th>
-                <th>SKU atual</th>
-                <th>Novo SKU</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${selected
-                .map(
-                  (p) => `
-                <tr data-item-id="${p.itemId}">
-                  <td class="shopee-products-bulk-name">${escapeHtml(p.name.slice(0, 60))}${p.name.length > 60 ? '…' : ''}</td>
-                  <td><code>${escapeHtml(p.sku || '—')}</code>${p.hasModel ? ' <span class="muted">(var.)</span>' : ''}</td>
-                  <td><input type="text" class="bulk-sku-input" value="" maxlength="100" placeholder="—" /></td>
-                </tr>`,
-                )
-                .join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <div class="modal-actions">
-        <button type="button" class="btn modal-cancel">Cancelar</button>
-        <button type="button" class="btn btn-primary modal-confirm">Salvar na Shopee</button>
-      </div>
-    </div>
-  `
-  document.body.appendChild(overlay)
-  const close = () => overlay.remove()
-  const cancelBtn = overlay.querySelector<HTMLButtonElement>('.modal-cancel')!
-  const confirmBtn = overlay.querySelector<HTMLButtonElement>('.modal-confirm')!
-  const applyAllInput = overlay.querySelector<HTMLInputElement>('#bulk-sku-all')!
-  const applyAllBtn = overlay.querySelector<HTMLButtonElement>('#bulk-apply-all')!
-  const progressWrap = overlay.querySelector<HTMLDivElement>('#bulk-progress')!
-  const progressBar = overlay.querySelector<HTMLDivElement>('#bulk-progress-bar')!
-  const progressText = overlay.querySelector<HTMLParagraphElement>('#bulk-progress-text')!
+async function runBulkSkuSave(
+  itemIds: number[],
+  sku: string,
+  ui: {
+    setBusy: (busy: boolean) => void
+    setProgress: (done: number, total: number, label?: string) => void
+    onSaveBtnLabel: (text: string) => void
+  },
+): Promise<{ ok: boolean; failed: Array<{ itemId: number; error?: string }> }> {
+  const updates = itemIds.map((itemId) => ({ itemId, sku }))
+  ui.setBusy(true)
+  ui.setProgress(0, updates.length, `Iniciando… 0 de ${updates.length}`)
+  ui.onSaveBtnLabel(`0/${updates.length}`)
 
-  function applySkuToAllRows(sku: string): void {
-    overlay.querySelectorAll<HTMLInputElement>('.bulk-sku-input').forEach((input) => {
-      input.value = sku
-    })
-  }
-
-  function collectUpdates(): Array<{ itemId: number; sku: string }> {
-    const updates: Array<{ itemId: number; sku: string }> = []
-    overlay.querySelectorAll<HTMLTableRowElement>('tr[data-item-id]').forEach((tr) => {
-      const itemId = Number(tr.dataset.itemId)
-      const sku = tr.querySelector<HTMLInputElement>('.bulk-sku-input')?.value.trim() ?? ''
-      if (itemId && sku) updates.push({ itemId, sku })
-    })
-    return updates
-  }
-
-  function setProgress(done: number, total: number, label?: string): void {
-    progressWrap.hidden = false
-    const pct = total > 0 ? Math.round((done / total) * 100) : 0
-    progressBar.style.width = `${pct}%`
-    progressText.textContent = label ?? `Salvando ${done} de ${total}…`
-  }
-
-  applyAllBtn.addEventListener('click', () => {
-    const sku = applyAllInput.value.trim()
-    if (!sku) {
-      applyAllInput.focus()
-      return
-    }
-    applySkuToAllRows(sku)
+  const results = await saveProductSkusSequential(updates, (done, total) => {
+    ui.setProgress(done, total, `Salvando ${done} de ${total}…`)
+    ui.onSaveBtnLabel(`${done}/${total}`)
   })
 
-  applyAllInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      applyAllBtn.click()
-    }
-  })
-
-  cancelBtn.addEventListener('click', close)
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay && !confirmBtn.disabled) close()
-  })
-
-  confirmBtn.addEventListener('click', async () => {
-    const topSku = applyAllInput.value.trim()
-    if (topSku) applySkuToAllRows(topSku)
-
-    const updates = collectUpdates()
-    if (!updates.length) {
-      alert('Informe o SKU no campo de cima ou em pelo menos um produto.')
-      applyAllInput.focus()
-      return
-    }
-
-    confirmBtn.disabled = true
-    cancelBtn.disabled = true
-    applyAllBtn.disabled = true
-    applyAllInput.disabled = true
-    overlay.querySelectorAll<HTMLInputElement>('.bulk-sku-input').forEach((i) => {
-      i.disabled = true
-    })
-    setProgress(0, updates.length, `Iniciando… 0 de ${updates.length}`)
-
-    const results = await saveProductSkusSequential(updates, (done, total) => {
-      setProgress(done, total, `Salvando ${done} de ${total}…`)
-      confirmBtn.textContent = `${done}/${total}`
-    })
-
-    const failed = results.filter((r) => !r.ok)
-    if (failed.length === 0) {
-      progressText.textContent = `Concluído — ${results.length} produto(s) atualizado(s).`
-      confirmBtn.textContent = 'Concluído'
-      setTimeout(() => {
-        close()
-        onDone()
-      }, 800)
-      return
-    }
-
-    progressText.textContent = `${results.length - failed.length} ok, ${failed.length} falha(s).`
-    confirmBtn.textContent = 'Salvar na Shopee'
-    confirmBtn.disabled = false
-    cancelBtn.disabled = false
-    applyAllBtn.disabled = false
-    applyAllInput.disabled = false
-    overlay.querySelectorAll<HTMLInputElement>('.bulk-sku-input').forEach((i) => {
-      i.disabled = false
-    })
-    const errs = failed.map((r) => `#${r.itemId}: ${r.error}`).join('\n')
-    alert(`Falhas:\n\n${errs}`)
-  })
+  const failed = results.filter((r) => !r.ok)
+  ui.setBusy(false)
+  return { ok: failed.length === 0, failed }
 }
 
 async function boot(): Promise<void> {
@@ -275,9 +136,26 @@ async function boot(): Promise<void> {
             <input type="checkbox" id="select-all" /> Selecionar todos
           </label>
           <button type="button" class="btn" id="btn-refresh">Atualizar</button>
-          <button type="button" class="btn btn-primary" id="btn-bulk" disabled>Editar em massa</button>
         </div>
       </header>
+      <section class="shopee-products-bulk-bar" id="bulk-bar" hidden>
+        <p class="shopee-products-bulk-hint">
+          <strong id="bulk-count">0</strong> produto(s) selecionado(s) — digite um SKU e salve em todos de uma vez (principal + variantes).
+        </p>
+        <div class="shopee-products-bulk-bar-row">
+          <label class="shopee-products-bulk-apply-label">
+            <span>Novo SKU (todos os selecionados)</span>
+            <input type="text" id="bulk-sku-input" maxlength="100" placeholder="Ex.: CAMISETA-AZUL-M" />
+          </label>
+          <button type="button" class="btn btn-primary" id="btn-bulk-save">Salvar na Shopee</button>
+        </div>
+        <div class="shopee-products-bulk-progress" id="bulk-progress" hidden>
+          <div class="shopee-products-bulk-progress-track">
+            <div class="shopee-products-bulk-progress-bar" id="bulk-progress-bar"></div>
+          </div>
+          <p class="shopee-products-bulk-progress-text" id="bulk-progress-text"></p>
+        </div>
+      </section>
       <main class="shopee-products-main">
         <p class="shopee-products-status" id="status">Carregando produtos…</p>
         <div class="shopee-products-grid" id="grid"></div>
@@ -288,13 +166,35 @@ async function boot(): Promise<void> {
   const statusEl = root.querySelector('#status') as HTMLParagraphElement
   const gridEl = root.querySelector('#grid') as HTMLDivElement
   const selectAllEl = root.querySelector('#select-all') as HTMLInputElement
-  const bulkBtn = root.querySelector('#btn-bulk') as HTMLButtonElement
+  const bulkBar = root.querySelector('#bulk-bar') as HTMLElement
+  const bulkCountEl = root.querySelector('#bulk-count') as HTMLElement
+  const bulkSkuInput = root.querySelector('#bulk-sku-input') as HTMLInputElement
+  const bulkSaveBtn = root.querySelector('#btn-bulk-save') as HTMLButtonElement
+  const progressWrap = root.querySelector('#bulk-progress') as HTMLDivElement
+  const progressBar = root.querySelector('#bulk-progress-bar') as HTMLDivElement
+  const progressText = root.querySelector('#bulk-progress-text') as HTMLParagraphElement
   const selected = new Set<number>()
   let products: CatalogProduct[] = []
+  let bulkBusy = false
 
-  function updateBulkButton(): void {
-    bulkBtn.disabled = selected.size === 0
-    bulkBtn.textContent = selected.size ? `Editar em massa (${selected.size})` : 'Editar em massa'
+  function setBulkProgress(done: number, total: number, label?: string): void {
+    progressWrap.hidden = false
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0
+    progressBar.style.width = `${pct}%`
+    progressText.textContent = label ?? `Salvando ${done} de ${total}…`
+  }
+
+  function updateBulkBar(): void {
+    const n = selected.size
+    bulkBar.hidden = n === 0
+    bulkCountEl.textContent = String(n)
+    bulkSaveBtn.textContent = n ? `Salvar SKU em ${n} produto(s)` : 'Salvar na Shopee'
+    bulkSaveBtn.disabled = bulkBusy || n === 0
+    if (n === 0) {
+      progressWrap.hidden = true
+      progressBar.style.width = '0%'
+      progressText.textContent = ''
+    }
   }
 
   function renderCard(p: CatalogProduct): string {
@@ -329,7 +229,7 @@ async function boot(): Promise<void> {
         const id = Number(cb.dataset.id)
         if (cb.checked) selected.add(id)
         else selected.delete(id)
-        updateBulkButton()
+        updateBulkBar()
         selectAllEl.checked = selected.size === products.length && products.length > 0
       })
     })
@@ -357,7 +257,7 @@ async function boot(): Promise<void> {
     gridEl.innerHTML = ''
     selected.clear()
     selectAllEl.checked = false
-    updateBulkButton()
+    updateBulkBar()
     try {
       const data = await api<{ products: CatalogProduct[]; count: number }>('/shopee/products/catalog')
       products = data.products
@@ -378,11 +278,54 @@ async function boot(): Promise<void> {
     gridEl.querySelectorAll<HTMLInputElement>('.product-select').forEach((cb) => {
       cb.checked = selectAllEl.checked
     })
-    updateBulkButton()
+    updateBulkBar()
   })
 
-  bulkBtn.addEventListener('click', () => {
-    openBulkSkuDialog(products, selected, () => void loadCatalog())
+  bulkSkuInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !bulkSaveBtn.disabled) {
+      e.preventDefault()
+      bulkSaveBtn.click()
+    }
+  })
+
+  bulkSaveBtn.addEventListener('click', async () => {
+    const sku = bulkSkuInput.value.trim()
+    if (!sku) {
+      alert('Digite o SKU no campo acima.')
+      bulkSkuInput.focus()
+      return
+    }
+    if (selected.size === 0) return
+
+    const itemIds = [...selected]
+    const { ok, failed } = await runBulkSkuSave(itemIds, sku, {
+      setBusy: (busy) => {
+        bulkBusy = busy
+        bulkSaveBtn.disabled = busy
+        bulkSkuInput.disabled = busy
+        selectAllEl.disabled = busy
+        gridEl.querySelectorAll<HTMLInputElement>('.product-select').forEach((cb) => {
+          cb.disabled = busy
+        })
+      },
+      setProgress: setBulkProgress,
+      onSaveBtnLabel: (text) => {
+        bulkSaveBtn.textContent = text
+      },
+    })
+
+    bulkSaveBtn.textContent = `Salvar SKU em ${itemIds.length} produto(s)`
+
+    if (ok) {
+      progressText.textContent = `Concluído — ${itemIds.length} produto(s) atualizado(s).`
+      bulkSkuInput.value = ''
+      await loadCatalog()
+      return
+    }
+
+    progressText.textContent = `${itemIds.length - failed.length} ok, ${failed.length} falha(s).`
+    const errs = failed.map((r) => `#${r.itemId}: ${r.error}`).join('\n')
+    alert(`Falhas:\n\n${errs}`)
   })
 
   root.querySelector('#btn-refresh')!.addEventListener('click', () => void loadCatalog())

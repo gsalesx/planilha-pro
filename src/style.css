@@ -2033,6 +2033,36 @@ table.sheet tbody th.row-num.is-active {
   color: #475569;
 }
 
+.shopee-products-bulk-bar {
+  padding: 14px 20px;
+  background: #eef2ff;
+  border-bottom: 2px solid #818cf8;
+}
+
+.shopee-products-bulk-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.shopee-products-bulk-bar .shopee-products-bulk-hint {
+  margin-bottom: 10px;
+}
+
+.shopee-products-bulk-bar .shopee-products-bulk-apply-label input {
+  min-width: min(420px, 100%);
+  font-size: 1rem;
+  padding: 10px 12px;
+  border: 2px solid #818cf8;
+  background: #fff;
+}
+
+.shopee-products-bulk-bar #btn-bulk-save {
+  white-space: nowrap;
+  min-height: 42px;
+}
+
 .shopee-products-bulk-apply-all {
   display: flex;
   flex-wrap: wrap;
