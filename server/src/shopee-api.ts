@@ -187,6 +187,27 @@ async function shopApiGet(path: string, query: Record<string, string | number> =
   return parseShopeeJson(response)
 }
 
+async function shopApiPost(
+  path: string,
+  body: unknown,
+  query: Record<string, string | number> = {},
+): Promise<ShopeeApiResponse> {
+  const auth = await ensureShopAuth()
+  const timestamp = Math.floor(Date.now() / 1000)
+  const sign = signShop(path, timestamp, auth.accessToken, auth.shopId)
+  const url = buildSignedUrl(path, sign, timestamp, {
+    access_token: auth.accessToken,
+    shop_id: auth.shopId,
+    ...query,
+  })
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return parseShopeeJson(response)
+}
+
 export interface OrderListParams {
   timeFrom: number
   timeTo: number
@@ -284,7 +305,56 @@ export async function getItemBaseInfo(itemIds: number[]): Promise<ShopeeApiRespo
   if (!itemIds.length) throw new Error('itemIds obrigatório')
   return shopApiGet('/api/v2/product/get_item_base_info', {
     item_id_list: itemIds.join(','),
+    need_tax_info: 'false',
+    need_complaint_policy: 'false',
   })
+}
+
+export async function getModelList(itemId: number): Promise<ShopeeApiResponse> {
+  return shopApiGet('/api/v2/product/get_model_list', { item_id: itemId })
+}
+
+export async function updateItemSku(itemId: number, itemSku: string): Promise<ShopeeApiResponse> {
+  return shopApiPost('/api/v2/product/update_item', {
+    item_id: itemId,
+    item_sku: itemSku,
+  })
+}
+
+export async function updateModelSkus(
+  itemId: number,
+  models: Array<{ model_id: number; model_sku: string }>,
+): Promise<ShopeeApiResponse> {
+  if (!models.length) throw new Error('model list vazia')
+  return shopApiPost('/api/v2/product/update_model', {
+    item_id: itemId,
+    model: models,
+  })
+}
+
+export const SHOPEE_ITEM_LIST_STATUSES = ['NORMAL', 'UNLIST'] as const
+
+export async function fetchAllItemIds(statuses = SHOPEE_ITEM_LIST_STATUSES): Promise<number[]> {
+  const seen = new Set<number>()
+  for (const itemStatus of statuses) {
+    let offset = 0
+    const pageSize = 100
+    while (true) {
+      const data = await getItemList({ offset, pageSize, itemStatus })
+      const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_item_list') as {
+        item?: Array<{ item_id?: number }>
+        has_next_page?: boolean
+        next_offset?: number
+      }
+      const batch = (body.item ?? [])
+        .map((row) => row.item_id)
+        .filter((id): id is number => typeof id === 'number' && id > 0)
+      for (const id of batch) seen.add(id)
+      if (!body.has_next_page || batch.length === 0) break
+      offset = body.next_offset ?? offset + pageSize
+    }
+  }
+  return [...seen]
 }
 
 export interface ConversationListParams {

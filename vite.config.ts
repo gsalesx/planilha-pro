@@ -7,6 +7,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         shopeeTest: resolve(__dirname, 'shopee-test.html'),
+        shopeeProducts: resolve(__dirname, 'shopee-products.html'),
       },
     },
   },

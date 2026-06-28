@@ -42,6 +42,7 @@ export function showWorkbooksList(opts: {
         <h1>Planilha Pro</h1>
         <div class="workbooks-header-spacer"></div>
         <div class="toolbar-actions">
+          <a class="btn" href="/shopee-products.html" title="Gerenciar produtos da loja Shopee">Produtos Shopee</a>
           <label class="btn btn-primary" id="wb-new-btn" title="Crie uma planilha nova a partir de um XLSX">
             <input type="file" id="wb-new-file" accept=".xlsx,.xls" hidden />
             + Nova planilha (XLSX)
