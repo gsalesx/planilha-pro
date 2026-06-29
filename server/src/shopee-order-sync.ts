@@ -135,7 +135,7 @@ export async function importShopeeOrderBySn(
   return 'failed'
 }
 
-/** Cria linha completa ou, se já existir, atualiza só coluna H (Status Shopee). */
+/** Cria linha completa ou, se já existir, atualiza só Status Shopee (H) e destinatário (G). */
 export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'updated' {
   const orderSn = order.order_sn?.trim()
   if (!orderSn) throw new Error('order_sn ausente')
@@ -143,11 +143,13 @@ export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'update
   const existing = findOrderBySn(orderSn)
   const now = nowMs()
   const shopeeStatus = order.order_status ?? ''
+  const recipient = order.recipient_address?.name ?? ''
 
   if (existing) {
     const row = JSON.parse(existing.row_json) as string[]
     while (row.length < SHOPEE_ROW_COLS) row.push('')
     row[SHOPEE_COL_SHOPEE_STATUS] = shopeeStatus
+    row[SHOPEE_COL_RECIPIENT] = recipient
     const sheetDate = resolveSheetDate(order)
     db.prepare(
       'UPDATE orders SET row_json = ?, sheet_date = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
