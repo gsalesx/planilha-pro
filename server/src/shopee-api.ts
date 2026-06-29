@@ -241,14 +241,12 @@ export async function getOrderDetail(orderSnList: string[]): Promise<ShopeeApiRe
   })
 }
 
-/** Status conhecidos — get_order_list exige order_status por chamada. */
+/** Status válidos em get_order_list (order_status é obrigatório e enum fechado). */
 export const SHOPEE_LIST_ORDER_STATUSES = [
   'UNPAID',
   'READY_TO_SHIP',
   'PROCESSED',
-  'RETRY_SHIP',
   'SHIPPED',
-  'TO_CONFIRM_RECEIVE',
   'COMPLETED',
   'IN_CANCEL',
   'CANCELLED',

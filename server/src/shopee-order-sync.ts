@@ -201,24 +201,31 @@ async function collectOrderSns(
   timeFrom: number,
   timeTo: number,
   statuses: readonly string[] = SHOPEE_LIST_ORDER_STATUSES,
+  errors?: string[],
 ): Promise<string[]> {
   const seen = new Set<string>()
   for (const orderStatus of statuses) {
-    let cursor = ''
-    let more = true
-    while (more) {
-      const page = await fetchOrderListPage({
-        timeFrom,
-        timeTo,
-        orderStatus,
-        pageSize: 100,
-        cursor: cursor || undefined,
-        timeRangeField: 'create_time',
-      })
-      for (const sn of page.orderSnList) seen.add(sn)
-      more = page.more
-      cursor = page.nextCursor
-      if (more && !cursor) break
+    try {
+      let cursor = ''
+      let more = true
+      while (more) {
+        const page = await fetchOrderListPage({
+          timeFrom,
+          timeTo,
+          orderStatus,
+          pageSize: 100,
+          cursor: cursor || undefined,
+          timeRangeField: 'create_time',
+        })
+        for (const sn of page.orderSnList) seen.add(sn)
+        more = page.more
+        cursor = page.nextCursor
+        if (more && !cursor) break
+      }
+    } catch (error) {
+      const msg = `${orderStatus}: ${error instanceof Error ? error.message : String(error)}`
+      console.warn('[shopee-sync] get_order_list ignorado —', msg)
+      errors?.push(msg)
     }
   }
   return [...seen]
@@ -244,7 +251,7 @@ export async function syncRecentShopeeOrders(options: {
   const timeFrom = timeTo - hours * 3600
 
   const result: ShopeeSyncResult = { listed: 0, created: 0, updated: 0, errors: [] }
-  const orderSns = await collectOrderSns(timeFrom, timeTo, RECENT_POLL_STATUSES)
+  const orderSns = await collectOrderSns(timeFrom, timeTo, RECENT_POLL_STATUSES, result.errors)
   result.listed = orderSns.length
 
   for (let i = 0; i < orderSns.length; i += 50) {
@@ -273,8 +280,8 @@ export async function syncRecentShopeeOrders(options: {
   return result
 }
 
-async function collectAllOrderSns(timeFrom: number, timeTo: number): Promise<string[]> {
-  return collectOrderSns(timeFrom, timeTo)
+async function collectAllOrderSns(timeFrom: number, timeTo: number, errors?: string[]): Promise<string[]> {
+  return collectOrderSns(timeFrom, timeTo, SHOPEE_LIST_ORDER_STATUSES, errors)
 }
 
 export async function syncShopeeWorkbookOrders(options: {
@@ -289,7 +296,7 @@ export async function syncShopeeWorkbookOrders(options: {
   const timeFrom = timeTo - days * 86400
 
   const result: ShopeeSyncResult = { listed: 0, created: 0, updated: 0, errors: [] }
-  const orderSns = await collectAllOrderSns(timeFrom, timeTo)
+  const orderSns = await collectAllOrderSns(timeFrom, timeTo, result.errors)
   result.listed = orderSns.length
 
   for (let i = 0; i < orderSns.length; i += 50) {
