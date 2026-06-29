@@ -9,6 +9,7 @@ import {
 import {
   emptyShopeeRow,
   SHOPEE_COL_MODEL,
+  SHOPEE_COL_INTERNAL_STATUS,
   SHOPEE_COL_ORDER_ID,
   SHOPEE_COL_PRODUCT,
   SHOPEE_COL_QTY,
@@ -82,7 +83,7 @@ export function mapShopeeOrderToRow(order: ShopeeOrderDetail): string[] {
   return row
 }
 
-/** Como ficaria 1 linha por item (export Shopee / planilha manual) — preview apenas. */
+/** 1 linha por item (export Shopee / planilha manual). */
 export function mapShopeeOrderToItemRows(order: ShopeeOrderDetail): string[][] {
   const items = order.item_list ?? []
   if (items.length === 0) return [mapShopeeOrderToRow(order)]
@@ -110,14 +111,26 @@ function parseOrderList(data: ShopeeApiResponse): ShopeeOrderDetail[] {
   return body.order_list ?? []
 }
 
-function findOrderBySn(orderSn: string): { order_key: string; row_json: string } | undefined {
+/** Mesma regra do XLSX: 1ª linha = id; demais = data__id__ocorrência. */
+function shopeeOrderKey(sheetDate: string, orderSn: string, occurrence: number): string {
+  if (occurrence === 1) return orderSn
+  return `${sheetDate || 'sem-data'}__${orderSn}__${occurrence}`
+}
+
+function findOrderByKey(orderKey: string): { order_key: string; row_json: string } | undefined {
   return db
-    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ? AND id = ?')
-    .get(SHOPEE_WORKBOOK_ID, orderSn) as { order_key: string; row_json: string } | undefined
+    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(SHOPEE_WORKBOOK_ID, orderKey) as { order_key: string; row_json: string } | undefined
+}
+
+function findOrdersBySn(orderSn: string): Array<{ order_key: string; row_json: string }> {
+  return db
+    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ? AND id = ? ORDER BY order_key ASC')
+    .all(SHOPEE_WORKBOOK_ID, orderSn) as Array<{ order_key: string; row_json: string }>
 }
 
 export function shopeeOrderExists(orderSn: string): boolean {
-  return findOrderBySn(orderSn.trim()) !== undefined
+  return findOrdersBySn(orderSn.trim()).length > 0
 }
 
 function sleep(ms: number): Promise<void> {
@@ -156,66 +169,88 @@ export async function importShopeeOrderBySn(
   return 'failed'
 }
 
-/** Cria linha completa ou, se já existir, atualiza só Status Shopee (H) e destinatário (G). */
+/** 1 linha por item; reimport atualiza só G+H (preserva F e demais colunas). */
 export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'updated' {
   const orderSn = order.order_sn?.trim()
   if (!orderSn) throw new Error('order_sn ausente')
 
-  const existing = findOrderBySn(orderSn)
-  const now = nowMs()
+  const sheetDate = resolveSheetDate(order)
+  const itemRows = mapShopeeOrderToItemRows(order)
   const shopeeStatus = order.order_status ?? ''
   const recipient = order.recipient_address?.name ?? ''
+  const now = nowMs()
+  let anyCreated = false
 
-  if (existing) {
+  let nextPos =
+    (db
+      .prepare('SELECT COALESCE(MAX(position), -1) AS m FROM orders WHERE workbook_id = ?')
+      .get(SHOPEE_WORKBOOK_ID) as { m: number }).m + 1
+
+  const updateStmt = db.prepare(
+    'UPDATE orders SET row_json = ?, sheet_date = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
+  )
+  const insertStmt = db.prepare(
+    `INSERT INTO orders (workbook_id, order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+
+  for (let i = 0; i < itemRows.length; i++) {
+    const occurrence = i + 1
+    const orderKey = shopeeOrderKey(sheetDate, orderSn, occurrence)
+    let existing = findOrderByKey(orderKey)
+    if (!existing && occurrence === 1) {
+      const legacy = findOrdersBySn(orderSn)
+      if (legacy.length === 1) existing = legacy[0]
+    }
+
+    const row = itemRows[i]
+    row[SHOPEE_COL_RECIPIENT] = recipient
+    row[SHOPEE_COL_SHOPEE_STATUS] = shopeeStatus
+
+    if (existing) {
+      const prev = JSON.parse(existing.row_json) as string[]
+      while (prev.length < SHOPEE_ROW_COLS) prev.push('')
+      row[SHOPEE_COL_INTERNAL_STATUS] = prev[SHOPEE_COL_INTERNAL_STATUS]
+      row[SHOPEE_COL_ORDER_ID] = prev[SHOPEE_COL_ORDER_ID] || row[SHOPEE_COL_ORDER_ID]
+      row[SHOPEE_COL_PRODUCT] = prev[SHOPEE_COL_PRODUCT]
+      row[SHOPEE_COL_MODEL] = prev[SHOPEE_COL_MODEL]
+      row[SHOPEE_COL_QTY] = prev[SHOPEE_COL_QTY]
+      row[SHOPEE_COL_USERNAME] = prev[SHOPEE_COL_USERNAME]
+      updateStmt.run(JSON.stringify(row), sheetDate, now, SHOPEE_WORKBOOK_ID, existing.order_key)
+    } else {
+      anyCreated = true
+      insertStmt.run(
+        SHOPEE_WORKBOOK_ID,
+        orderKey,
+        orderSn,
+        JSON.stringify(row),
+        '{}',
+        0,
+        sheetDate,
+        nextPos++,
+        now,
+      )
+    }
+  }
+
+  db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, SHOPEE_WORKBOOK_ID)
+  return anyCreated ? 'created' : 'updated'
+}
+
+/** Atualiza Status Shopee (col H) em todas as linhas do pedido — push code 3. */
+export function updateShopeeOrderStatus(orderSn: string, shopeeStatus: string): 'updated' | 'missing' {
+  const rows = findOrdersBySn(orderSn.trim())
+  if (rows.length === 0) return 'missing'
+  const now = nowMs()
+  const updateStmt = db.prepare(
+    'UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
+  )
+  for (const existing of rows) {
     const row = JSON.parse(existing.row_json) as string[]
     while (row.length < SHOPEE_ROW_COLS) row.push('')
     row[SHOPEE_COL_SHOPEE_STATUS] = shopeeStatus
-    row[SHOPEE_COL_RECIPIENT] = recipient
-    const sheetDate = resolveSheetDate(order)
-    db.prepare(
-      'UPDATE orders SET row_json = ?, sheet_date = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
-    ).run(JSON.stringify(row), sheetDate, now, SHOPEE_WORKBOOK_ID, existing.order_key)
-    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, SHOPEE_WORKBOOK_ID)
-    return 'updated'
+    updateStmt.run(JSON.stringify(row), now, SHOPEE_WORKBOOK_ID, existing.order_key)
   }
-
-  const row = mapShopeeOrderToRow(order)
-  const sheetDate = resolveSheetDate(order)
-  const maxPos = (
-    db
-      .prepare('SELECT COALESCE(MAX(position), -1) AS m FROM orders WHERE workbook_id = ?')
-      .get(SHOPEE_WORKBOOK_ID) as { m: number }
-  ).m
-
-  db.prepare(
-    `INSERT INTO orders (workbook_id, order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    SHOPEE_WORKBOOK_ID,
-    orderSn,
-    orderSn,
-    JSON.stringify(row),
-    '{}',
-    0,
-    sheetDate,
-    maxPos + 1,
-    now,
-  )
-  db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, SHOPEE_WORKBOOK_ID)
-  return 'created'
-}
-
-/** Atualiza só Status Shopee (col H) — usado pelo push code 3. */
-export function updateShopeeOrderStatus(orderSn: string, shopeeStatus: string): 'updated' | 'missing' {
-  const existing = findOrderBySn(orderSn)
-  if (!existing) return 'missing'
-  const row = JSON.parse(existing.row_json) as string[]
-  while (row.length < SHOPEE_ROW_COLS) row.push('')
-  row[SHOPEE_COL_SHOPEE_STATUS] = shopeeStatus
-  const now = nowMs()
-  db.prepare(
-    'UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
-  ).run(JSON.stringify(row), now, SHOPEE_WORKBOOK_ID, existing.order_key)
   db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, SHOPEE_WORKBOOK_ID)
   return 'updated'
 }
