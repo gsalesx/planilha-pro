@@ -8,6 +8,8 @@ import express from 'express'
 
 import { cleanupExpiredSessions } from './auth.js'
 import { env, isProd } from './env.js'
+import { syncRecentShopeeOrders } from './shopee-order-sync.js'
+import { loadShopeeAuth } from './shopee-store.js'
 import { ensureShopeeWorkbook } from './shopee-workbook.js'
 import backupRouter from './routes/backup.js'
 import imagesRouter from './routes/images.js'
@@ -68,6 +70,31 @@ if (existsSync(publicDir)) {
 setInterval(cleanupExpiredSessions, 60 * 60 * 1000)
 cleanupExpiredSessions()
 ensureShopeeWorkbook()
+
+/** Poll pedidos recentes — pedidos já READY_TO_SHIP não geram push até mudarem de status. */
+const SHOPEE_POLL_MS = 5 * 60 * 1000
+let shopeePollBusy = false
+
+async function runShopeeRecentPoll(): Promise<void> {
+  if (shopeePollBusy || !env.shopeePartnerKey || !loadShopeeAuth()) return
+  shopeePollBusy = true
+  try {
+    const result = await syncRecentShopeeOrders({ hours: 48 })
+    if (result.created > 0) {
+      console.log('[shopee-poll] pedidos importados', {
+        created: result.created,
+        listed: result.listed,
+      })
+    }
+  } catch (error) {
+    console.warn('[shopee-poll]', error instanceof Error ? error.message : error)
+  } finally {
+    shopeePollBusy = false
+  }
+}
+
+setTimeout(() => void runShopeeRecentPoll(), 30_000)
+setInterval(() => void runShopeeRecentPoll(), SHOPEE_POLL_MS)
 
 app.listen(env.port, () => {
   console.log(`Planilha Pro server on http://localhost:${env.port}`)

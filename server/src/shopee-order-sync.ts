@@ -197,9 +197,13 @@ export function updateShopeeOrderStatus(orderSn: string, shopeeStatus: string): 
   return 'updated'
 }
 
-async function collectAllOrderSns(timeFrom: number, timeTo: number): Promise<string[]> {
+async function collectOrderSns(
+  timeFrom: number,
+  timeTo: number,
+  statuses: readonly string[] = SHOPEE_LIST_ORDER_STATUSES,
+): Promise<string[]> {
   const seen = new Set<string>()
-  for (const orderStatus of SHOPEE_LIST_ORDER_STATUSES) {
+  for (const orderStatus of statuses) {
     let cursor = ''
     let more = true
     while (more) {
@@ -218,6 +222,55 @@ async function collectAllOrderSns(timeFrom: number, timeTo: number): Promise<str
     }
   }
   return [...seen]
+}
+
+/** Status ativos — pedidos que podem nascer READY_TO_SHIP sem push (só mudança de status dispara webhook). */
+const RECENT_POLL_STATUSES = ['UNPAID', 'READY_TO_SHIP', 'PROCESSED'] as const
+
+/**
+ * Importa pedidos recentes via API — cobre pedidos criados já como READY_TO_SHIP
+ * que nunca geram order_status_push até mudarem de status.
+ */
+export async function syncRecentShopeeOrders(options: {
+  hours?: number
+} = {}): Promise<ShopeeSyncResult> {
+  ensureShopeeWorkbook()
+  const hours = Math.min(Math.max(options.hours ?? 48, 1), 168)
+  const timeTo = Math.floor(Date.now() / 1000)
+  const timeFrom = timeTo - hours * 3600
+
+  const result: ShopeeSyncResult = { listed: 0, created: 0, updated: 0, errors: [] }
+  const orderSns = await collectOrderSns(timeFrom, timeTo, RECENT_POLL_STATUSES)
+  result.listed = orderSns.length
+
+  for (let i = 0; i < orderSns.length; i += 50) {
+    const batch = orderSns.slice(i, i + 50)
+    try {
+      const data = await getOrderDetail(batch)
+      const orders = parseOrderList(data)
+      for (const order of orders) {
+        try {
+          const action = upsertShopeeOrder(order)
+          if (action === 'created') result.created++
+          else result.updated++
+        } catch (error) {
+          result.errors.push(
+            `${order.order_sn ?? '?'}: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+      }
+    } catch (error) {
+      result.errors.push(
+        `batch ${i / 50 + 1}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+
+  return result
+}
+
+async function collectAllOrderSns(timeFrom: number, timeTo: number): Promise<string[]> {
+  return collectOrderSns(timeFrom, timeTo)
 }
 
 export async function syncShopeeWorkbookOrders(options: {
