@@ -82,6 +82,27 @@ export function mapShopeeOrderToRow(order: ShopeeOrderDetail): string[] {
   return row
 }
 
+/** Como ficaria 1 linha por item (export Shopee / planilha manual) — preview apenas. */
+export function mapShopeeOrderToItemRows(order: ShopeeOrderDetail): string[][] {
+  const items = order.item_list ?? []
+  if (items.length === 0) return [mapShopeeOrderToRow(order)]
+  return items.map((item) => {
+    const row = emptyShopeeRow()
+    row[SHOPEE_COL_ORDER_ID] = order.order_sn ?? ''
+    row[SHOPEE_COL_PRODUCT] = itemSku(item)
+    row[SHOPEE_COL_MODEL] = item.model_name ?? ''
+    row[SHOPEE_COL_QTY] = String(item.model_quantity_purchased ?? '')
+    row[SHOPEE_COL_USERNAME] = order.buyer_username ?? ''
+    row[SHOPEE_COL_RECIPIENT] = order.recipient_address?.name ?? ''
+    row[SHOPEE_COL_SHOPEE_STATUS] = order.order_status ?? ''
+    return row
+  })
+}
+
+export function parseShopeeOrderDetail(data: ShopeeApiResponse): ShopeeOrderDetail[] {
+  return parseOrderList(data)
+}
+
 function parseOrderList(data: ShopeeApiResponse): ShopeeOrderDetail[] {
   const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_order_detail') as {
     order_list?: ShopeeOrderDetail[]

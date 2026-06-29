@@ -10,9 +10,15 @@ import {
   getItemList,
   getMessageList,
   getOrderList,
+  getOrderDetail,
   getShopInfo,
 } from '../shopee-api.js'
-import { syncShopeeWorkbookOrders } from '../shopee-order-sync.js'
+import {
+  mapShopeeOrderToItemRows,
+  mapShopeeOrderToRow,
+  parseShopeeOrderDetail,
+  syncShopeeWorkbookOrders,
+} from '../shopee-order-sync.js'
 import { clearShopeeAuth, loadShopeeAuth } from '../shopee-store.js'
 
 const router = Router()
@@ -168,6 +174,49 @@ router.get('/shopee/orders', requireAuth, async (req, res) => {
       ok: true,
       query: { hours, orderStatus: orderStatus || null, timeRangeField, timeFrom, timeTo: now },
       shopee: data,
+    })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** GET /api/shopee/orders/detail?orderSn= — raw API + como mapeamos (1 linha vs 1 linha/item) */
+router.get('/shopee/orders/detail', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const orderSn = typeof req.query.orderSn === 'string' ? req.query.orderSn.trim() : ''
+  if (!orderSn) {
+    res.status(400).json({ error: 'orderSn obrigatório' })
+    return
+  }
+  try {
+    const data = await getOrderDetail([orderSn])
+    const orders = parseShopeeOrderDetail(data)
+    const order = orders.find((o) => o.order_sn === orderSn) ?? orders[0]
+    if (!order?.order_sn) {
+      res.status(404).json({ ok: false, error: 'Pedido não encontrado na Shopee' })
+      return
+    }
+    const items = order.item_list ?? []
+    res.json({
+      ok: true,
+      orderSn,
+      itemCount: items.length,
+      order_status: order.order_status ?? '',
+      item_list: items,
+      mappedNow: {
+        description: 'Como gravamos hoje: 1 linha por pedido (itens concatenados com ;)',
+        row: mapShopeeOrderToRow(order),
+      },
+      mappedPerItem: {
+        description: 'Como export Shopee / planilha manual: 1 linha por item (mesmo ID repetido)',
+        rows: mapShopeeOrderToItemRows(order),
+      },
     })
   } catch (error) {
     res.status(502).json({

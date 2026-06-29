@@ -125,6 +125,12 @@ async function boot(): Promise<void> {
       </label>
       <button type="button" class="btn btn-primary" id="btn-orders">Buscar pedidos</button>
     </div>
+    <div class="shopee-test-form shopee-test-form--detail">
+      <label>Consultar pedido (order_sn)
+        <input type="text" id="order-sn-detail" placeholder="ex: 260611QUNS9EA4" />
+      </label>
+      <button type="button" class="btn" id="btn-order-detail">get_order_detail</button>
+    </div>
   `
   wrap.appendChild(ordersBox)
 
@@ -294,6 +300,16 @@ async function boot(): Promise<void> {
     const qs = new URLSearchParams({ hours, timeRangeField })
     if (orderStatus) qs.set('orderStatus', orderStatus)
     void run('get_order_list', () => api(`/shopee/orders?${qs}`))
+  })
+
+  ordersBox.querySelector('#btn-order-detail')!.addEventListener('click', () => {
+    const orderSn = (ordersBox.querySelector('#order-sn-detail') as HTMLInputElement).value.trim()
+    if (!orderSn) {
+      out.textContent = 'Erro: informe order_sn'
+      return
+    }
+    const qs = new URLSearchParams({ orderSn })
+    void run('get_order_detail', () => api(`/shopee/orders/detail?${qs}`))
   })
 
   syncBox.querySelector('#btn-sync-initial')!.addEventListener('click', async () => {
