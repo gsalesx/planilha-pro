@@ -8,7 +8,7 @@ import express from 'express'
 
 import { cleanupExpiredSessions } from './auth.js'
 import { env, isProd } from './env.js'
-import { syncRecentShopeeOrders } from './shopee-order-sync.js'
+import { syncRecentShopeeOrders, SHOPEE_POLL_LOOKBACK_HOURS } from './shopee-order-sync.js'
 import { loadShopeeAuth } from './shopee-store.js'
 import { ensureShopeeWorkbook } from './shopee-workbook.js'
 import backupRouter from './routes/backup.js'
@@ -72,18 +72,20 @@ cleanupExpiredSessions()
 ensureShopeeWorkbook()
 
 /** Poll pedidos recentes — pedidos já READY_TO_SHIP não geram push até mudarem de status. */
-const SHOPEE_POLL_MS = 5 * 60 * 1000
+const SHOPEE_POLL_MS = 8 * 60 * 60 * 1000
 let shopeePollBusy = false
 
 async function runShopeeRecentPoll(): Promise<void> {
   if (shopeePollBusy || !env.shopeePartnerKey || !loadShopeeAuth()) return
   shopeePollBusy = true
   try {
-    const result = await syncRecentShopeeOrders({ hours: 48 })
-    if (result.created > 0) {
-      console.log('[shopee-poll] pedidos importados', {
-        created: result.created,
+    const result = await syncRecentShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS })
+    if (result.created > 0 || result.errors.length > 0) {
+      console.log('[shopee-poll] concluído', {
         listed: result.listed,
+        created: result.created,
+        updated: result.updated,
+        errors: result.errors.length,
       })
     }
   } catch (error) {
@@ -93,7 +95,7 @@ async function runShopeeRecentPoll(): Promise<void> {
   }
 }
 
-setTimeout(() => void runShopeeRecentPoll(), 30_000)
+setTimeout(() => void runShopeeRecentPoll(), 60_000)
 setInterval(() => void runShopeeRecentPoll(), SHOPEE_POLL_MS)
 
 app.listen(env.port, () => {

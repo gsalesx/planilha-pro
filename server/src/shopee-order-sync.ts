@@ -224,18 +224,22 @@ async function collectOrderSns(
   return [...seen]
 }
 
+/** Janela de busca — 20h com poll a cada 8h garante sobreposição se uma execução falhar. */
+export const SHOPEE_POLL_LOOKBACK_HOURS = 20
+
 /** Status ativos — pedidos que podem nascer READY_TO_SHIP sem push (só mudança de status dispara webhook). */
 const RECENT_POLL_STATUSES = ['UNPAID', 'READY_TO_SHIP', 'PROCESSED'] as const
 
 /**
  * Importa pedidos recentes via API — cobre pedidos criados já como READY_TO_SHIP
  * que nunca geram order_status_push até mudarem de status.
+ * Listagem paginada (cursor 100/página); detalhe em lotes de 50.
  */
 export async function syncRecentShopeeOrders(options: {
   hours?: number
 } = {}): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
-  const hours = Math.min(Math.max(options.hours ?? 48, 1), 168)
+  const hours = Math.min(Math.max(options.hours ?? SHOPEE_POLL_LOOKBACK_HOURS, 1), 168)
   const timeTo = Math.floor(Date.now() / 1000)
   const timeFrom = timeTo - hours * 3600
 
