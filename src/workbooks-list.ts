@@ -4,9 +4,11 @@ import {
   duplicateWorkbook,
   listWorkbooks,
   renameWorkbook,
+  syncShopeeWorkbookInitial,
   type WorkbookSummary,
 } from './api'
 import { openConfirmDialog, openPromptDialog } from './dialog'
+import { SHOPEE_WORKBOOK_ID } from './shopee-workbook'
 
 type OpenHandler = (workbookId: string) => void
 type AuthLostHandler = () => void
@@ -116,6 +118,7 @@ export function showWorkbooksList(opts: {
           <p class="workbook-card-meta">${wb.system ? 'Sincronizada com a Shopee · ' : ''}Atualizada em ${formatTimestamp(wb.updatedAt)}</p>
           <div class="workbook-card-actions">
             <button class="btn btn-primary wb-open">Abrir</button>
+            ${wb.system ? '<button class="btn btn-primary wb-shopee-import" title="Puxar pedidos dos últimos 5 dias da Shopee">Importar 5 dias</button>' : ''}
             ${wb.system ? '' : '<button class="btn wb-rename" title="Renomear">Renomear</button>'}
             <button class="btn wb-duplicate" title="Duplicar (backup)">Duplicar</button>
             ${wb.system ? '' : '<button class="btn btn-danger wb-delete" title="Deletar planilha">Deletar</button>'}
@@ -129,6 +132,22 @@ export function showWorkbooksList(opts: {
       const id = card.dataset.id!
       const wb = workbooks.find((w) => w.id === id)!
       card.querySelector<HTMLButtonElement>('.wb-open')!.addEventListener('click', () => onOpen(id))
+      const importBtn = card.querySelector<HTMLButtonElement>('.wb-shopee-import')
+      importBtn?.addEventListener('click', async () => {
+        importBtn.disabled = true
+        const prev = importBtn.textContent
+        try {
+          await syncShopeeWorkbookInitial(5, (done, total) => {
+            importBtn.textContent = `Importando ${done}/${total}…`
+          })
+          await refresh()
+          onOpen(SHOPEE_WORKBOOK_ID)
+        } catch (error) {
+          handleError(error, 'Falha ao importar pedidos Shopee')
+          importBtn.textContent = prev
+          importBtn.disabled = false
+        }
+      })
       const renameBtn = card.querySelector<HTMLButtonElement>('.wb-rename')
       renameBtn?.addEventListener('click', () =>
         openPromptDialog({

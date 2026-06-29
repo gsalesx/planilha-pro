@@ -76,9 +76,6 @@ function buildShell() {
           <div class="search-results" id="search-results" hidden></div>
         </div>
         <div class="toolbar-actions">
-          <button type="button" class="btn btn-primary" id="shopee-import-btn" hidden title="Importa pedidos dos últimos 5 dias da Shopee (1 dia por vez)">
-            ↓ Importar pedidos (5 dias)
-          </button>
           <label class="btn btn-primary" id="xlsx-update-label" title="Carrega um novo XLSX preservando edições manuais por ID do pedido">
             <input type="file" id="file-input" accept=".xlsx,.xls" hidden />
             ⟳ Atualizar Planilha
@@ -93,6 +90,9 @@ function buildShell() {
       <div class="etiqueta-bar" role="toolbar" aria-label="Etiquetas">
         <span id="selection-count" style="font-size:12px;color:#475569;font-weight:600;">1 linha selecionada</span>
         <button type="button" class="pending-mutations-btn" id="pending-mutations-btn" hidden>Pendências: 0</button>
+        <button type="button" class="btn btn-primary shopee-import-bar-btn" id="shopee-import-btn" hidden title="Importa pedidos dos últimos 5 dias da Shopee">
+          ↓ Importar pedidos Shopee (5 dias)
+        </button>
         <span style="margin-right:auto"></span>
         <div class="zoom-controls" role="group" aria-label="Zoom da planilha">
           <button type="button" class="zoom-btn" id="zoom-out" title="Diminuir zoom" aria-label="Diminuir zoom">−</button>
