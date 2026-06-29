@@ -13,7 +13,7 @@ import {
   resolveShopeeCallbackUrl,
   verifyShopeePushSignatureAny,
 } from '../shopee-push.js'
-import { processShopeeOrderStatusPush } from '../shopee-push-process.js'
+import { processShopeePush } from '../shopee-push-process.js'
 
 const router = Router()
 
@@ -111,7 +111,7 @@ export function handleShopeePushPost(req: Request, res: Response): void {
   // Shopee exige 2xx com corpo vazio — processamento async depois da resposta.
   res.status(200).end()
   if (!isVerifyPing) {
-    void processShopeeOrderStatusPush(parsed)
+    void processShopeePush(parsed)
   }
 }
 

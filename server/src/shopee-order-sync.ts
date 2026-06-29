@@ -95,6 +95,46 @@ function findOrderBySn(orderSn: string): { order_key: string; row_json: string }
     .get(SHOPEE_WORKBOOK_ID, orderSn) as { order_key: string; row_json: string } | undefined
 }
 
+export function shopeeOrderExists(orderSn: string): boolean {
+  return findOrderBySn(orderSn.trim()) !== undefined
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Busca detalhe na API e cria/atualiza linha — retries porque o push pode chegar antes da API indexar o pedido. */
+export async function importShopeeOrderBySn(
+  orderSn: string,
+  fallbackStatus?: string,
+): Promise<'created' | 'updated' | 'failed'> {
+  const sn = orderSn.trim()
+  if (!sn) return 'failed'
+
+  const retryDelaysMs = [0, 3000, 10000]
+  for (let attempt = 0; attempt < retryDelaysMs.length; attempt++) {
+    if (retryDelaysMs[attempt] > 0) await sleep(retryDelaysMs[attempt])
+    try {
+      const data = await getOrderDetail([sn])
+      const orders = parseOrderList(data)
+      const order = orders.find((o) => o.order_sn === sn) ?? orders[0]
+      if (!order?.order_sn) {
+        console.warn(`[shopee-push] get_order_detail vazio (tentativa ${attempt + 1}/${retryDelaysMs.length})`, sn)
+        continue
+      }
+      if (fallbackStatus && !order.order_status) order.order_status = fallbackStatus
+      return upsertShopeeOrder(order)
+    } catch (error) {
+      console.warn(
+        `[shopee-push] get_order_detail erro (tentativa ${attempt + 1}/${retryDelaysMs.length})`,
+        sn,
+        error instanceof Error ? error.message : error,
+      )
+    }
+  }
+  return 'failed'
+}
+
 /** Cria linha completa ou, se já existir, atualiza só coluna H (Status Shopee). */
 export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'updated' {
   const orderSn = order.order_sn?.trim()

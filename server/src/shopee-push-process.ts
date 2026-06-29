@@ -1,11 +1,9 @@
-import { assertShopeeOk, getOrderDetail, type ShopeeApiResponse } from './shopee-api.js'
-import { upsertShopeeOrder, updateShopeeOrderStatus } from './shopee-order-sync.js'
+import {
+  importShopeeOrderBySn,
+  shopeeOrderExists,
+  updateShopeeOrderStatus,
+} from './shopee-order-sync.js'
 import { ensureShopeeWorkbook } from './shopee-workbook.js'
-
-interface ShopeeOrderDetail {
-  order_sn?: string
-  order_status?: string
-}
 
 function pushCode(parsed: unknown): number | null {
   if (!parsed || typeof parsed !== 'object') return null
@@ -15,47 +13,73 @@ function pushCode(parsed: unknown): number | null {
   return null
 }
 
-function parseOrderDetailList(data: ShopeeApiResponse): ShopeeOrderDetail[] {
-  const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_order_detail') as {
-    order_list?: ShopeeOrderDetail[]
-  }
-  return body.order_list ?? []
+function extractOrderSn(data: unknown): string {
+  if (!data || typeof data !== 'object') return ''
+  const row = data as { ordersn?: string; order_sn?: string }
+  return (row.ordersn ?? row.order_sn ?? '').trim()
 }
 
-/** Processa push code 3 (order status) — chamar após responder 200 à Shopee. */
-export async function processShopeeOrderStatusPush(parsed: unknown): Promise<void> {
-  if (pushCode(parsed) !== 3) return
-  if (!parsed || typeof parsed !== 'object') return
-  const data = (parsed as { data?: unknown }).data
-  if (!data || typeof data !== 'object') return
+function extractStatus(data: unknown): string {
+  if (!data || typeof data !== 'object') return ''
+  return String((data as { status?: string }).status ?? '')
+}
 
-  const row = data as { ordersn?: string; order_sn?: string; status?: string }
-  const orderSn = (row.ordersn ?? row.order_sn ?? '').trim()
-  const status = row.status ?? ''
+/** Code 3 — order_status_push: toda mudança de status (inclui UNPAID ao criar o pedido). */
+async function handleOrderStatusPush(data: unknown): Promise<void> {
+  const orderSn = extractOrderSn(data)
+  const status = extractStatus(data)
   if (!orderSn) {
     console.warn('[shopee-push] code 3 sem ordersn')
     return
   }
 
-  ensureShopeeWorkbook()
-
-  if (updateShopeeOrderStatus(orderSn, status) === 'updated') {
+  if (shopeeOrderExists(orderSn)) {
+    updateShopeeOrderStatus(orderSn, status)
     console.log('[shopee-push] status atualizado', { orderSn, status })
     return
   }
 
-  try {
-    const detail = await getOrderDetail([orderSn])
-    const orders = parseOrderDetailList(detail)
-    const order = orders.find((o) => o.order_sn === orderSn) ?? orders[0]
-    if (!order) {
-      console.warn('[shopee-push] get_order_detail vazio para', orderSn)
-      return
-    }
-    if (status && !order.order_status) order.order_status = status
-    const action = upsertShopeeOrder(order)
-    console.log('[shopee-push] pedido', action, { orderSn, status: order.order_status ?? status })
-  } catch (error) {
-    console.error('[shopee-push] falha ao sincronizar pedido', orderSn, error)
+  const action = await importShopeeOrderBySn(orderSn, status)
+  if (action === 'failed') {
+    console.error('[shopee-push] falha ao importar pedido novo', { orderSn, status })
+    return
   }
+  console.log('[shopee-push] pedido importado (code 3)', { orderSn, status, action })
+}
+
+/** Code 8 — reserved_stock_change_push com action place_order (compra feita, antes do status push). */
+async function handlePlaceOrderPush(data: unknown): Promise<void> {
+  if (!data || typeof data !== 'object') return
+  const row = data as { action?: string }
+  if (row.action !== 'place_order') return
+
+  const orderSn = extractOrderSn(data)
+  if (!orderSn) return
+  if (shopeeOrderExists(orderSn)) return
+
+  const action = await importShopeeOrderBySn(orderSn, 'UNPAID')
+  console.log('[shopee-push] pedido importado (code 8 place_order)', { orderSn, action })
+}
+
+/** Processa pushes de pedido — chamar após responder 200 à Shopee. */
+export async function processShopeePush(parsed: unknown): Promise<void> {
+  const code = pushCode(parsed)
+  if (code == null) return
+  if (!parsed || typeof parsed !== 'object') return
+
+  ensureShopeeWorkbook()
+  const data = (parsed as { data?: unknown }).data
+
+  if (code === 3) {
+    await handleOrderStatusPush(data)
+    return
+  }
+  if (code === 8) {
+    await handlePlaceOrderPush(data)
+  }
+}
+
+/** @deprecated use processShopeePush */
+export async function processShopeeOrderStatusPush(parsed: unknown): Promise<void> {
+  await processShopeePush(parsed)
 }
