@@ -197,31 +197,49 @@ export function updateShopeeOrderStatus(orderSn: string, shopeeStatus: string): 
   return 'updated'
 }
 
+async function collectOrderSnsPage(
+  timeFrom: number,
+  timeTo: number,
+  orderStatus: string | undefined,
+): Promise<string[]> {
+  const sns: string[] = []
+  let cursor = ''
+  let more = true
+  while (more) {
+    const page = await fetchOrderListPage({
+      timeFrom,
+      timeTo,
+      orderStatus,
+      pageSize: 100,
+      cursor: cursor || undefined,
+      timeRangeField: 'create_time',
+    })
+    sns.push(...page.orderSnList)
+    more = page.more
+    cursor = page.nextCursor
+    if (more && !cursor) break
+  }
+  return sns
+}
+
+/** Lista todos os pedidos na janela — API exige order_status por request, então consulta cada status e dedupe. */
 async function collectOrderSns(
   timeFrom: number,
   timeTo: number,
-  statuses: readonly string[] = SHOPEE_LIST_ORDER_STATUSES,
   errors?: string[],
 ): Promise<string[]> {
   const seen = new Set<string>()
-  for (const orderStatus of statuses) {
+
+  try {
+    for (const sn of await collectOrderSnsPage(timeFrom, timeTo, undefined)) seen.add(sn)
+    if (seen.size > 0) return [...seen]
+  } catch {
+    // order_status obrigatório na maioria das lojas — cai no loop abaixo
+  }
+
+  for (const orderStatus of SHOPEE_LIST_ORDER_STATUSES) {
     try {
-      let cursor = ''
-      let more = true
-      while (more) {
-        const page = await fetchOrderListPage({
-          timeFrom,
-          timeTo,
-          orderStatus,
-          pageSize: 100,
-          cursor: cursor || undefined,
-          timeRangeField: 'create_time',
-        })
-        for (const sn of page.orderSnList) seen.add(sn)
-        more = page.more
-        cursor = page.nextCursor
-        if (more && !cursor) break
-      }
+      for (const sn of await collectOrderSnsPage(timeFrom, timeTo, orderStatus)) seen.add(sn)
     } catch (error) {
       const msg = `${orderStatus}: ${error instanceof Error ? error.message : String(error)}`
       console.warn('[shopee-sync] get_order_list ignorado —', msg)
@@ -234,13 +252,8 @@ async function collectOrderSns(
 /** Janela de busca — 20h com poll a cada 8h garante sobreposição se uma execução falhar. */
 export const SHOPEE_POLL_LOOKBACK_HOURS = 20
 
-/** Status ativos — pedidos que podem nascer READY_TO_SHIP sem push (só mudança de status dispara webhook). */
-const RECENT_POLL_STATUSES = ['UNPAID', 'READY_TO_SHIP', 'PROCESSED'] as const
-
 /**
- * Importa pedidos recentes via API — cobre pedidos criados já como READY_TO_SHIP
- * que nunca geram order_status_push até mudarem de status.
- * Listagem paginada (cursor 100/página); detalhe em lotes de 50.
+ * Importa pedidos recentes via API (todos os status, sem filtro na planilha).
  */
 export async function syncRecentShopeeOrders(options: {
   hours?: number
@@ -251,7 +264,7 @@ export async function syncRecentShopeeOrders(options: {
   const timeFrom = timeTo - hours * 3600
 
   const result: ShopeeSyncResult = { listed: 0, created: 0, updated: 0, errors: [] }
-  const orderSns = await collectOrderSns(timeFrom, timeTo, RECENT_POLL_STATUSES, result.errors)
+  const orderSns = await collectOrderSns(timeFrom, timeTo, result.errors)
   result.listed = orderSns.length
 
   for (let i = 0; i < orderSns.length; i += 50) {
@@ -281,7 +294,7 @@ export async function syncRecentShopeeOrders(options: {
 }
 
 async function collectAllOrderSns(timeFrom: number, timeTo: number, errors?: string[]): Promise<string[]> {
-  return collectOrderSns(timeFrom, timeTo, SHOPEE_LIST_ORDER_STATUSES, errors)
+  return collectOrderSns(timeFrom, timeTo, errors)
 }
 
 export async function syncShopeeWorkbookOrders(options: {
