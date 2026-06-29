@@ -245,9 +245,13 @@ export async function deleteOrdersBySheetDate(
   )
 }
 
-export async function syncShopeeWorkbook(days = 90): Promise<{
+export async function syncShopeeWorkbook(
+  days = 90,
+  offsetDays = 0,
+): Promise<{
   ok: boolean
   days: number
+  offsetDays: number
   listed: number
   created: number
   updated: number
@@ -256,8 +260,25 @@ export async function syncShopeeWorkbook(days = 90): Promise<{
   return request('/shopee/sync-workbook', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ days }),
+    body: JSON.stringify({ days, offsetDays }),
   })
+}
+
+/** Importação inicial parcelada — 1 request por dia para evitar timeout. */
+export async function syncShopeeWorkbookInitial(
+  totalDays = 5,
+  onProgress?: (done: number, total: number, parcel: { listed: number; created: number; updated: number }) => void,
+): Promise<{ listed: number; created: number; updated: number; errors: string[] }> {
+  const acc = { listed: 0, created: 0, updated: 0, errors: [] as string[] }
+  for (let d = 0; d < totalDays; d++) {
+    const r = await syncShopeeWorkbook(1, d)
+    acc.listed += r.listed
+    acc.created += r.created
+    acc.updated += r.updated
+    acc.errors.push(...r.errors)
+    onProgress?.(d + 1, totalDays, r)
+  }
+  return acc
 }
 
 /** Converte payload do servidor pra WorkbookData (formato que a grid usa) */

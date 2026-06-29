@@ -1,6 +1,6 @@
 import './style.css'
 
-import { checkAuth, login } from './api'
+import { checkAuth, login, syncShopeeWorkbookInitial } from './api'
 
 interface ShopeeStatus {
   configured: boolean
@@ -137,8 +137,12 @@ async function boot(): Promise<void> {
       <a href="/?workbook=wb_shopee">Abrir planilha Shopee</a>
     </p>
     <div class="shopee-test-form">
+      <button type="button" class="btn btn-primary" id="btn-sync-initial">Importar últimos 5 dias (parcelado)</button>
+      <span class="shopee-test-sync-progress" id="sync-initial-progress" hidden></span>
+    </div>
+    <div class="shopee-test-form">
       <label>Últimos dias <input type="number" id="sync-days" value="90" min="1" max="365" /></label>
-      <button type="button" class="btn btn-primary" id="btn-sync-workbook">Importar / atualizar pedidos</button>
+      <button type="button" class="btn" id="btn-sync-workbook">Importar / atualizar (janela única)</button>
     </div>
   `
   wrap.appendChild(syncBox)
@@ -290,6 +294,30 @@ async function boot(): Promise<void> {
     const qs = new URLSearchParams({ hours, timeRangeField })
     if (orderStatus) qs.set('orderStatus', orderStatus)
     void run('get_order_list', () => api(`/shopee/orders?${qs}`))
+  })
+
+  syncBox.querySelector('#btn-sync-initial')!.addEventListener('click', async () => {
+    const btn = syncBox.querySelector('#btn-sync-initial') as HTMLButtonElement
+    const progress = syncBox.querySelector('#sync-initial-progress') as HTMLSpanElement
+    btn.disabled = true
+    progress.hidden = false
+    progress.textContent = 'Iniciando…'
+    try {
+      const result = await syncShopeeWorkbookInitial(5, (done, total, parcel) => {
+        progress.textContent = `Dia ${done}/${total} — ${parcel.listed} listados, ${parcel.created} novos`
+        out.textContent = `Importando… dia ${done} de ${total}`
+      })
+      progress.textContent = `Concluído — ${result.created} novos, ${result.updated} atualizados`
+      out.textContent = `=== Importação 5 dias ===\n${JSON.stringify(result, null, 2)}`
+      if (result.errors.length) {
+        alert(`${result.errors.length} erro(s) — veja o log abaixo`)
+      }
+    } catch (error) {
+      out.textContent = `Erro: ${(error as Error).message}`
+      progress.textContent = ''
+    } finally {
+      btn.disabled = false
+    }
   })
 
   syncBox.querySelector('#btn-sync-workbook')!.addEventListener('click', () => {

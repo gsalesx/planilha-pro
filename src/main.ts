@@ -11,6 +11,7 @@ import {
   patchOrderDelta,
   replaceWorkbook,
   serverWorkbookToLocal,
+  syncShopeeWorkbookInitial,
   uploadImage,
   type OrderStyleDelta,
 } from './api'
@@ -26,6 +27,7 @@ import { formatHitRef, highlightMatch, searchWorkbook, type SearchHit } from './
 import { STATUS_COLUMN_INDEX } from './status'
 import type { CellValue, WorkbookData } from './types'
 import { showWorkbooksList } from './workbooks-list'
+import { isShopeeWorkbookId } from './shopee-workbook'
 import { FIXED_HEADERS, parseXlsx } from './xlsx-parser'
 
 const POLL_INTERVAL_MS = 8000
@@ -74,11 +76,14 @@ function buildShell() {
           <div class="search-results" id="search-results" hidden></div>
         </div>
         <div class="toolbar-actions">
-          <label class="btn btn-primary" title="Carrega um novo XLSX preservando edições manuais por ID do pedido">
+          <button type="button" class="btn btn-primary" id="shopee-import-btn" hidden title="Importa pedidos dos últimos 5 dias da Shopee (1 dia por vez)">
+            ↓ Importar pedidos (5 dias)
+          </button>
+          <label class="btn btn-primary" id="xlsx-update-label" title="Carrega um novo XLSX preservando edições manuais por ID do pedido">
             <input type="file" id="file-input" accept=".xlsx,.xls" hidden />
             ⟳ Atualizar Planilha
           </label>
-          <label class="btn" title="Atualiza só as fotos a partir de um XLSX, casando por ID do pedido. Pedidos sem match são ignorados.">
+          <label class="btn" id="xlsx-photos-label" title="Atualiza só as fotos a partir de um XLSX, casando por ID do pedido. Pedidos sem match são ignorados.">
             <input type="file" id="photos-input" accept=".xlsx,.xls" hidden />
             🖼 Atualizar Fotos
           </label>
@@ -1270,6 +1275,40 @@ function leaveWorkbook() {
   serverUpdatedAt = 0
 }
 
+function bindShopeeImport() {
+  const btn = document.querySelector<HTMLButtonElement>('#shopee-import-btn')
+  if (!btn) return
+  btn.addEventListener('click', async () => {
+    btn.disabled = true
+    setStatusText('Importando pedidos Shopee…')
+    try {
+      const result = await syncShopeeWorkbookInitial(5, (done, total, parcel) => {
+        setStatusText(`Importando dia ${done}/${total} — ${parcel.created} novos neste lote`)
+      })
+      await refreshFromServer({ force: true })
+      setStatusText(`Importação concluída — ${result.created} novos, ${result.updated} atualizados`)
+      if (result.errors.length) {
+        alert(`${result.errors.length} erro(s) na importação — veja o console`)
+        console.warn('[shopee-import]', result.errors)
+      }
+    } catch (error) {
+      setStatusText(`Erro na importação: ${(error as Error).message}`)
+    } finally {
+      btn.disabled = false
+    }
+  })
+}
+
+function applyShopeeWorkbookToolbar(workbookId: string) {
+  const isShopee = isShopeeWorkbookId(workbookId)
+  const importBtn = document.querySelector<HTMLButtonElement>('#shopee-import-btn')
+  const xlsxUpdate = document.querySelector<HTMLLabelElement>('#xlsx-update-label')
+  const xlsxPhotos = document.querySelector<HTMLLabelElement>('#xlsx-photos-label')
+  if (importBtn) importBtn.hidden = !isShopee
+  if (xlsxUpdate) xlsxUpdate.hidden = isShopee
+  if (xlsxPhotos) xlsxPhotos.hidden = isShopee
+}
+
 async function enterWorkbook(workbookId: string) {
   currentWorkbookId = workbookId
   setUrlWorkbookId(workbookId)
@@ -1307,6 +1346,8 @@ async function enterWorkbook(workbookId: string) {
   bindBackButton()
   bindZoomControls()
   bindPendingMutationsButton()
+  applyShopeeWorkbookToolbar(workbookId)
+  bindShopeeImport()
   try {
     await refreshFromServer({ force: true })
   } finally {

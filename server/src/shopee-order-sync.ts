@@ -279,11 +279,14 @@ async function collectAllOrderSns(timeFrom: number, timeTo: number): Promise<str
 
 export async function syncShopeeWorkbookOrders(options: {
   days?: number
+  /** Dias atrás em que termina a janela (0 = agora). Com days=1 e offsetDays=1 → ontem. */
+  offsetDays?: number
 } = {}): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
   const days = Math.min(Math.max(options.days ?? 90, 1), 365)
-  const timeTo = Math.floor(Date.now() / 1000)
-  const timeFrom = timeTo - days * 24 * 3600
+  const offsetDays = Math.max(options.offsetDays ?? 0, 0)
+  const timeTo = Math.floor(Date.now() / 1000) - offsetDays * 86400
+  const timeFrom = timeTo - days * 86400
 
   const result: ShopeeSyncResult = { listed: 0, created: 0, updated: 0, errors: [] }
   const orderSns = await collectAllOrderSns(timeFrom, timeTo)

@@ -130,10 +130,12 @@ router.post('/shopee/sync-workbook', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'Shopee não configurada' })
     return
   }
-  const days = Math.min(Math.max(Number((req.body as { days?: unknown }).days ?? 90), 1), 365)
+  const body = req.body as { days?: unknown; offsetDays?: unknown }
+  const days = Math.min(Math.max(Number(body.days ?? 90), 1), 365)
+  const offsetDays = Math.max(Number(body.offsetDays ?? 0), 0)
   try {
-    const result = await syncShopeeWorkbookOrders({ days })
-    res.json({ ok: true, days, ...result })
+    const result = await syncShopeeWorkbookOrders({ days, offsetDays })
+    res.json({ ok: true, days, offsetDays, ...result })
   } catch (error) {
     res.status(502).json({
       ok: false,
