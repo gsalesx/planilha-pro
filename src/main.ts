@@ -85,7 +85,7 @@ function buildShell() {
             <input type="file" id="photos-input" accept=".xlsx,.xls" hidden />
             🖼 Atualizar Fotos
           </label>
-          <button type="button" class="btn btn-primary" id="shopee-link-conversations-btn" hidden title="Busca buyer_user_id nos pedidos e vincula conversation_id da Shopee (não altera a planilha)">
+          <button type="button" class="btn btn-primary" id="shopee-link-conversations-btn" hidden title="Cruza username da col E com to_name do chat Shopee e grava conversation_id (não altera a planilha)">
             💬 Vincular conversas Shopee
           </button>
           <button type="button" class="btn btn-primary" id="shopee-import-btn" hidden title="Importa pedidos dos últimos 5 dias da Shopee">
@@ -1328,7 +1328,7 @@ function bindShopeeLinkConversations() {
       setStatusText(short)
       const detail = [
         `Pedidos únicos consultados: ${result.ordersQueried}`,
-        `Compradores na API: ${result.buyersFound}`,
+        `Compradores na planilha (col E): ${result.buyersFound}`,
         `Conversas vinculadas: ${result.linked}`,
         `Sem chat encontrado: ${result.notFound}`,
         `Chats listados na Shopee: ${result.conversationsScanned} (${result.conversationPages} página(s))`,

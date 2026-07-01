@@ -355,7 +355,7 @@ router.get('/shopee/messages', requireAuth, async (req, res) => {
   }
 })
 
-/** POST /api/shopee/link-conversations — buyer_user_id + conversation_id (não altera pedidos) */
+/** POST /api/shopee/link-conversations — username (col E) + conversation_id (não altera pedidos) */
 router.post('/shopee/link-conversations', requireAuth, async (req, res) => {
   if (!shopeeConfigured()) {
     res.status(400).json({ error: 'Shopee não configurada' })

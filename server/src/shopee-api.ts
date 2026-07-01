@@ -422,7 +422,7 @@ function parseConversationRow(row: Record<string, unknown>): ShopeeConversationE
       toUserInfo?.user_name ??
       '',
   ).trim()
-  if (!toId || !conversationId) return null
+  if (!conversationId || !toName) return null
   return { conversationId, toId, toName }
 }
 
@@ -478,18 +478,15 @@ function resolveNextConversationCursor(
   return undefined
 }
 
-/** Pagina get_conversation_list — até maxConversations ou achar todos os to_id pedidos. */
+/** Pagina get_conversation_list — até maxConversations ou achar todos os to_name pedidos. */
 export async function fetchConversationMap(
-  targetBuyerIds?: Set<number>,
-  options: { maxConversations?: number } = {},
+  options: { targetUsernames?: Set<string>; maxConversations?: number } = {},
 ): Promise<{
-  byBuyerId: Map<number, ShopeeConversationEntry>
   byUsername: Map<string, ShopeeConversationEntry>
   scanned: number
   indexed: number
   pages: number
 }> {
-  const byBuyerId = new Map<number, ShopeeConversationEntry>()
   const byUsername = new Map<string, ShopeeConversationEntry>()
   const maxConversations = Math.min(Math.max(options.maxConversations ?? SHOPEE_CONVERSATION_SCAN_MAX, 50), 5000)
   let nextTimestamp: number | undefined
@@ -499,9 +496,9 @@ export async function fetchConversationMap(
   let prevCursor: number | undefined
 
   const allFound = (): boolean => {
-    if (!targetBuyerIds || targetBuyerIds.size === 0) return false
-    for (const id of targetBuyerIds) {
-      if (!byBuyerId.has(id)) return false
+    if (!options.targetUsernames || options.targetUsernames.size === 0) return false
+    for (const name of options.targetUsernames) {
+      if (!byUsername.has(name)) return false
     }
     return true
   }
@@ -527,8 +524,7 @@ export async function fetchConversationMap(
       const entry = parseConversationRow(row)
       if (!entry) continue
       indexed++
-      byBuyerId.set(entry.toId, entry)
-      if (entry.toName) byUsername.set(entry.toName.toLowerCase(), entry)
+      byUsername.set(entry.toName.toLowerCase(), entry)
     }
 
     if (allFound() || scanned >= maxConversations) break
@@ -539,5 +535,5 @@ export async function fetchConversationMap(
     nextTimestamp = next
   }
 
-  return { byBuyerId, byUsername, scanned, indexed, pages }
+  return { byUsername, scanned, indexed, pages }
 }

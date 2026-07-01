@@ -1,15 +1,12 @@
 import { db, nowMs } from './db.js'
 import {
-  assertShopeeOk,
   fetchConversationMap,
-  getOrderDetail,
-  ORDER_BUYER_FIELDS,
   SHOPEE_CONVERSATION_SCAN_MAX,
-  type ShopeeApiResponse,
 } from './shopee-api.js'
 
 export interface ShopeeBuyerChatRow {
-  buyerUserId: number
+  /** to_id do chat Shopee — usado no send_message, não é buyer_user_id do pedido. */
+  toId: number
   buyerUsername: string
   conversationId: string
   updatedAt: number
@@ -26,67 +23,57 @@ export interface LinkConversationsResult {
   errors: string[]
 }
 
-interface BuyerInfo {
-  buyerUserId: number
-  buyerUsername: string
+/** Col E — Nome de usuário (já vem no export Shopee / planilha manual). */
+const COL_USERNAME = 4
+
+interface SheetBuyer {
+  username: string
 }
 
-function uniqueOrderSns(workbookId: string): string[] {
+function uniqueBuyersFromSheet(workbookId: string): SheetBuyer[] {
   const rows = db
-    .prepare('SELECT DISTINCT id FROM orders WHERE workbook_id = ? AND TRIM(id) != ?')
-    .all(workbookId, '') as Array<{ id: string }>
-  return rows.map((r) => r.id.trim()).filter(Boolean)
-}
+    .prepare('SELECT row_json FROM orders WHERE workbook_id = ? AND TRIM(id) != ?')
+    .all(workbookId, '') as Array<{ row_json: string }>
 
-function parseBuyersFromDetail(data: ShopeeApiResponse): BuyerInfo[] {
-  const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_order_detail') as {
-    order_list?: Array<{ buyer_user_id?: number; buyer_username?: string }>
-  }
-  const buyers: BuyerInfo[] = []
-  for (const order of body.order_list ?? []) {
-    const buyerUserId = order.buyer_user_id
-    if (typeof buyerUserId !== 'number' || buyerUserId <= 0) continue
-    buyers.push({
-      buyerUserId,
-      buyerUsername: (order.buyer_username ?? '').trim(),
-    })
-  }
-  return buyers
-}
-
-function dedupeBuyers(buyers: BuyerInfo[]): BuyerInfo[] {
-  const byId = new Map<number, BuyerInfo>()
-  for (const b of buyers) {
-    const prev = byId.get(b.buyerUserId)
-    if (!prev || (!prev.buyerUsername && b.buyerUsername)) {
-      byId.set(b.buyerUserId, b)
+  const byUsername = new Map<string, SheetBuyer>()
+  for (const row of rows) {
+    let cells: unknown[]
+    try {
+      cells = JSON.parse(row.row_json) as unknown[]
+    } catch {
+      continue
+    }
+    const username = String(cells[COL_USERNAME] ?? '').trim()
+    if (!username) continue
+    const key = username.toLowerCase()
+    if (!byUsername.has(key)) {
+      byUsername.set(key, { username })
     }
   }
-  return [...byId.values()]
+  return [...byUsername.values()]
 }
 
 function upsertBuyerChat(row: ShopeeBuyerChatRow): void {
+  db.prepare('DELETE FROM shopee_buyer_chats WHERE buyer_username = ? COLLATE NOCASE').run(row.buyerUsername)
   db.prepare(
     `INSERT INTO shopee_buyer_chats (buyer_user_id, buyer_username, conversation_id, updated_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(buyer_user_id) DO UPDATE SET
-       buyer_username = excluded.buyer_username,
-       conversation_id = excluded.conversation_id,
-       updated_at = excluded.updated_at`,
-  ).run(row.buyerUserId, row.buyerUsername, row.conversationId, row.updatedAt)
+     VALUES (?, ?, ?, ?)`,
+  ).run(row.toId, row.buyerUsername, row.conversationId, row.updatedAt)
 }
 
-export function getBuyerChat(buyerUserId: number): ShopeeBuyerChatRow | undefined {
+/** Lookup por to_id gravado na vinculação (coluna legada buyer_user_id). */
+export function getBuyerChatByToId(toId: number): ShopeeBuyerChatRow | undefined {
+  if (toId <= 0) return undefined
   const row = db
     .prepare(
       'SELECT buyer_user_id, buyer_username, conversation_id, updated_at FROM shopee_buyer_chats WHERE buyer_user_id = ?',
     )
-    .get(buyerUserId) as
+    .get(toId) as
     | { buyer_user_id: number; buyer_username: string; conversation_id: string; updated_at: number }
     | undefined
   if (!row) return undefined
   return {
-    buyerUserId: row.buyer_user_id,
+    toId: row.buyer_user_id,
     buyerUsername: row.buyer_username,
     conversationId: row.conversation_id,
     updatedAt: row.updated_at,
@@ -105,14 +92,17 @@ export function getBuyerChatByUsername(username: string): ShopeeBuyerChatRow | u
     | undefined
   if (!row) return undefined
   return {
-    buyerUserId: row.buyer_user_id,
+    toId: row.buyer_user_id,
     buyerUsername: row.buyer_username,
     conversationId: row.conversation_id,
     updatedAt: row.updated_at,
   }
 }
 
-/** Lê pedidos da planilha, busca buyer_user_id na API e vincula conversation_id — sem alterar linhas. */
+/**
+ * Cruza col E (username) com to_name do get_conversation_list.
+ * A Shopee não expõe busca por username — só lista paginada ou get_one_conversation(conversation_id).
+ */
 export async function linkConversationsForWorkbook(workbookId: string): Promise<LinkConversationsResult> {
   const result: LinkConversationsResult = {
     ordersQueried: 0,
@@ -125,31 +115,23 @@ export async function linkConversationsForWorkbook(workbookId: string): Promise<
     errors: [],
   }
 
-  const orderSns = uniqueOrderSns(workbookId)
-  result.ordersQueried = orderSns.length
-  if (orderSns.length === 0) return result
-
-  const allBuyers: BuyerInfo[] = []
-  for (let i = 0; i < orderSns.length; i += 50) {
-    const batch = orderSns.slice(i, i + 50)
-    try {
-      const data = await getOrderDetail(batch, ORDER_BUYER_FIELDS)
-      allBuyers.push(...parseBuyersFromDetail(data))
-    } catch (error) {
-      result.errors.push(
-        `pedidos ${i + 1}-${i + batch.length}: ${error instanceof Error ? error.message : String(error)}`,
-      )
-    }
-  }
-
-  const buyers = dedupeBuyers(allBuyers)
+  const buyers = uniqueBuyersFromSheet(workbookId)
+  const orderCount = (
+    db
+      .prepare('SELECT COUNT(DISTINCT id) AS n FROM orders WHERE workbook_id = ? AND TRIM(id) != ?')
+      .get(workbookId, '') as { n: number }
+  ).n
+  result.ordersQueried = orderCount
   result.buyersFound = buyers.length
   if (buyers.length === 0) return result
 
-  const targetIds = new Set(buyers.map((b) => b.buyerUserId))
+  const targetUsernames = new Set(buyers.map((b) => b.username.toLowerCase()))
   let convMaps: Awaited<ReturnType<typeof fetchConversationMap>>
   try {
-    convMaps = await fetchConversationMap(targetIds, { maxConversations: SHOPEE_CONVERSATION_SCAN_MAX })
+    convMaps = await fetchConversationMap({
+      targetUsernames,
+      maxConversations: SHOPEE_CONVERSATION_SCAN_MAX,
+    })
   } catch (error) {
     result.errors.push(error instanceof Error ? error.message : String(error))
     return result
@@ -159,24 +141,24 @@ export async function linkConversationsForWorkbook(workbookId: string): Promise<
   result.conversationPages = convMaps.pages
   if (convMaps.indexed === 0 && convMaps.scanned > 0) {
     result.errors.push(
-      'Nenhum chat com to_id/conversation_id reconhecível — confira get_conversation_list no Shopee Test',
+      'Nenhum chat com to_name/conversation_id reconhecível — confira get_conversation_list no Shopee Test',
     )
   }
 
   const now = nowMs()
   for (const buyer of buyers) {
-    let conversationId = convMaps.byBuyerId.get(buyer.buyerUserId)?.conversationId ?? ''
-    if (!conversationId && buyer.buyerUsername) {
-      conversationId = convMaps.byUsername.get(buyer.buyerUsername.toLowerCase())?.conversationId ?? ''
+    const chat = convMaps.byUsername.get(buyer.username.toLowerCase())
+    if (!chat?.conversationId) {
+      result.notFound++
+      continue
     }
     upsertBuyerChat({
-      buyerUserId: buyer.buyerUserId,
-      buyerUsername: buyer.buyerUsername,
-      conversationId,
+      toId: chat.toId,
+      buyerUsername: buyer.username,
+      conversationId: chat.conversationId,
       updatedAt: now,
     })
-    if (conversationId) result.linked++
-    else result.notFound++
+    result.linked++
   }
 
   return result
