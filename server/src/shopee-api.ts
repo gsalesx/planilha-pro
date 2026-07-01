@@ -508,8 +508,8 @@ export async function fetchConversationMap(
   let indexed = 0
   let pages = 0
   let prevTimestamp: number | undefined
-  let newestChatAt: string | null = null
-  let oldestScannedChatAt: string | null = null
+  let newestTs: number | undefined
+  let oldestTs: number | undefined
 
   const allFound = (): boolean => {
     if (!options.targetUsernames || options.targetUsernames.size === 0) return false
@@ -535,8 +535,6 @@ export async function fetchConversationMap(
     pages++
     if (list.length === 0) break
 
-    let pageNewestTs: number | undefined
-    let pageOldestTs: number | undefined
     for (const row of list) {
       scanned++
       const entry = parseConversationRow(row)
@@ -545,12 +543,10 @@ export async function fetchConversationMap(
       byUsername.set(entry.toName.toLowerCase(), entry)
       const ts = conversationMessageTimeNano(row)
       if (ts != null) {
-        if (pageNewestTs == null || ts > pageNewestTs) pageNewestTs = ts
-        if (pageOldestTs == null || ts < pageOldestTs) pageOldestTs = ts
+        if (newestTs == null || ts > newestTs) newestTs = ts
+        if (oldestTs == null || ts < oldestTs) oldestTs = ts
       }
     }
-    if (pageNewestTs != null && pages === 1) newestChatAt = nanoToIso(pageNewestTs)
-    if (pageOldestTs != null) oldestScannedChatAt = nanoToIso(pageOldestTs)
 
     if (allFound() || scanned >= maxConversations) break
 
@@ -559,6 +555,9 @@ export async function fetchConversationMap(
     prevTimestamp = nextTimestampNano
     nextTimestampNano = next
   }
+
+  const newestChatAt = newestTs != null ? nanoToIso(newestTs) : null
+  const oldestScannedChatAt = oldestTs != null ? nanoToIso(oldestTs) : null
 
   return { byUsername, scanned, indexed, pages, newestChatAt, oldestScannedChatAt }
 }

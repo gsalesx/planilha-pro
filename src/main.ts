@@ -1335,9 +1335,9 @@ function bindShopeeLinkConversations() {
         `Chats com ID reconhecido: ${result.conversationsIndexed}`,
       ]
       if (result.newestChatAt) {
-        detail.push(`Chat mais recente na 1ª página: ${result.newestChatAt.slice(0, 10)}`)
+        detail.push(`Chat mais recente varrido: ${result.newestChatAt.slice(0, 10)}`)
       }
-      if (result.oldestScannedChatAt && result.conversationPages > 1) {
+      if (result.oldestScannedChatAt) {
         detail.push(`Chat mais antigo varrido: ${result.oldestScannedChatAt.slice(0, 10)}`)
       }
       if (result.errors.length) {
