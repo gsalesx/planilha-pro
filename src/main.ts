@@ -85,18 +85,18 @@ function buildShell() {
             <input type="file" id="photos-input" accept=".xlsx,.xls" hidden />
             🖼 Atualizar Fotos
           </label>
+          <button type="button" class="btn btn-primary" id="shopee-link-conversations-btn" hidden title="Busca buyer_user_id nos pedidos e vincula conversation_id da Shopee (não altera a planilha)">
+            💬 Vincular conversas Shopee
+          </button>
+          <button type="button" class="btn btn-primary" id="shopee-import-btn" hidden title="Importa pedidos dos últimos 5 dias da Shopee">
+            ↓ Importar pedidos Shopee (5 dias)
+          </button>
           <button class="btn" id="logout-btn" title="Sair">Sair</button>
         </div>
       </header>
       <div class="etiqueta-bar" role="toolbar" aria-label="Etiquetas">
         <span id="selection-count" style="font-size:12px;color:#475569;font-weight:600;">1 linha selecionada</span>
         <button type="button" class="pending-mutations-btn" id="pending-mutations-btn" hidden>Pendências: 0</button>
-        <button type="button" class="btn shopee-link-conversations-btn" id="shopee-link-conversations-btn" hidden title="Busca buyer_user_id nos pedidos e vincula conversation_id da Shopee (não altera a planilha)">
-          💬 Vincular conversas
-        </button>
-        <button type="button" class="btn btn-primary shopee-import-bar-btn" id="shopee-import-btn" hidden title="Importa pedidos dos últimos 5 dias da Shopee">
-          ↓ Importar pedidos Shopee (5 dias)
-        </button>
         <span style="margin-right:auto"></span>
         <div class="zoom-controls" role="group" aria-label="Zoom da planilha">
           <button type="button" class="zoom-btn" id="zoom-out" title="Diminuir zoom" aria-label="Diminuir zoom">−</button>
