@@ -1283,7 +1283,7 @@ function bindShopeeLinkConversations() {
   const btn = document.querySelector<HTMLButtonElement>('#shopee-link-conversations-btn')
   if (!btn) return
   btn.addEventListener('click', async () => {
-    if (!currentWorkbookId) return
+    if (!currentWorkbookId || !isShopeeWorkbookId(currentWorkbookId)) return
     btn.disabled = true
     setStatusText('Vinculando conversas Shopee…')
     try {
@@ -1307,6 +1307,7 @@ function bindShopeeImport() {
   const btn = document.querySelector<HTMLButtonElement>('#shopee-import-btn')
   if (!btn) return
   btn.addEventListener('click', async () => {
+    if (!currentWorkbookId || !isShopeeWorkbookId(currentWorkbookId)) return
     btn.disabled = true
     setStatusText('Importando pedidos Shopee…')
     try {
