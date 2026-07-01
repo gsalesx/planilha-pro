@@ -2,6 +2,7 @@ import { db, nowMs } from './db.js'
 import {
   fetchConversationMap,
   SHOPEE_CONVERSATION_SCAN_MAX,
+  type ConversationPageMetric,
 } from './shopee-api.js'
 
 export interface ShopeeBuyerChatRow {
@@ -24,6 +25,8 @@ export interface LinkConversationsResult {
   oldestScannedChatAt: string | null
   connectedShopId: number | null
   chatShopIds: number[]
+  pageMetrics: ConversationPageMetric[]
+  resumeCursor: string | null
   errors: string[]
 }
 
@@ -107,7 +110,10 @@ export function getBuyerChatByUsername(username: string): ShopeeBuyerChatRow | u
  * Cruza col E (username) com to_name do get_conversation_list.
  * A Shopee não expõe busca por username — só lista paginada ou get_one_conversation(conversation_id).
  */
-export async function linkConversationsForWorkbook(workbookId: string): Promise<LinkConversationsResult> {
+export async function linkConversationsForWorkbook(
+  workbookId: string,
+  options: { maxConversations?: number; startTimestampNano?: string } = {},
+): Promise<LinkConversationsResult> {
   const result: LinkConversationsResult = {
     ordersQueried: 0,
     buyersFound: 0,
@@ -120,6 +126,8 @@ export async function linkConversationsForWorkbook(workbookId: string): Promise<
     oldestScannedChatAt: null,
     connectedShopId: null,
     chatShopIds: [],
+    pageMetrics: [],
+    resumeCursor: null,
     errors: [],
   }
 
@@ -138,7 +146,8 @@ export async function linkConversationsForWorkbook(workbookId: string): Promise<
   try {
     convMaps = await fetchConversationMap({
       targetUsernames,
-      maxConversations: SHOPEE_CONVERSATION_SCAN_MAX,
+      maxConversations: options.maxConversations ?? SHOPEE_CONVERSATION_SCAN_MAX,
+      startTimestampNano: options.startTimestampNano,
     })
   } catch (error) {
     result.errors.push(error instanceof Error ? error.message : String(error))
@@ -151,6 +160,8 @@ export async function linkConversationsForWorkbook(workbookId: string): Promise<
   result.oldestScannedChatAt = convMaps.oldestScannedChatAt
   result.connectedShopId = convMaps.connectedShopId
   result.chatShopIds = convMaps.chatShopIds
+  result.pageMetrics = convMaps.pageMetrics
+  result.resumeCursor = convMaps.resumeCursor
   if (
     result.connectedShopId != null &&
     result.chatShopIds.length > 0 &&

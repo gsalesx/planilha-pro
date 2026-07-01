@@ -14,6 +14,7 @@ import {
   getOrderList,
   getOrderDetail,
   getShopInfo,
+  SHOPEE_CONVERSATION_SCAN_MAX,
 } from '../shopee-api.js'
 import {
   mapShopeeOrderToItemRows,
@@ -420,8 +421,17 @@ router.post('/shopee/link-conversations', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'workbookId obrigatório' })
     return
   }
+  const maxRaw = Number(req.body?.maxConversations)
+  const maxConversations =
+    Number.isFinite(maxRaw) && maxRaw > 0
+      ? Math.min(Math.floor(maxRaw), SHOPEE_CONVERSATION_SCAN_MAX)
+      : undefined
+  const startTimestampNano =
+    typeof req.body?.startTimestampNano === 'string' && req.body.startTimestampNano.trim()
+      ? req.body.startTimestampNano.trim()
+      : undefined
   try {
-    const result = await linkConversationsForWorkbook(workbookId)
+    const result = await linkConversationsForWorkbook(workbookId, { maxConversations, startTimestampNano })
     res.json({ ok: true, workbookId, ...result })
   } catch (error) {
     res.status(502).json({

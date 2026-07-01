@@ -281,7 +281,10 @@ export async function syncShopeeWorkbookInitial(
   return acc
 }
 
-export async function linkShopeeConversations(workbookId: string): Promise<{
+export async function linkShopeeConversations(
+  workbookId: string,
+  options: { maxConversations?: number; startTimestampNano?: string } = {},
+): Promise<{
   ok: boolean
   workbookId: string
   ordersQueried: number
@@ -295,12 +298,23 @@ export async function linkShopeeConversations(workbookId: string): Promise<{
   oldestScannedChatAt: string | null
   connectedShopId: number | null
   chatShopIds: number[]
+  pageMetrics: Array<{
+    page: number
+    chatsOnPage: number
+    indexedOnPage: number
+    scannedTotal: number
+    newestOnPage: string | null
+    oldestOnPage: string | null
+    inputTimestampNano: string | null
+    nextTimestampNano: string | null
+  }>
+  resumeCursor: string | null
   errors: string[]
 }> {
   return request('/shopee/link-conversations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workbookId }),
+    body: JSON.stringify({ workbookId, ...options }),
   })
 }
 

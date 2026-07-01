@@ -429,7 +429,20 @@ export interface ShopeeConversationEntry {
 }
 
 /** Quantos chats varrer no vínculo (get_conversation_list). */
-export const SHOPEE_CONVERSATION_SCAN_MAX = 5000
+export const SHOPEE_CONVERSATION_SCAN_MAX = 200_000
+
+export interface ConversationPageMetric {
+  page: number
+  chatsOnPage: number
+  indexedOnPage: number
+  scannedTotal: number
+  newestOnPage: string | null
+  oldestOnPage: string | null
+  /** Cursor enviado nesta requisição (vazio na 1ª página). */
+  inputTimestampNano: string | null
+  /** Cursor para pedir a página seguinte — use em startTimestampNano para retomar. */
+  nextTimestampNano: string | null
+}
 
 function parseConversationRow(row: Record<string, unknown>): ShopeeConversationEntry | null {
   const toUserInfo =
@@ -545,6 +558,21 @@ function conversationMessageTimeNano(row: Record<string, unknown>): bigint | und
   return parseMessageTimeNano(raw)
 }
 
+function pageMessageTimeRange(list: Array<Record<string, unknown>>): {
+  newest: bigint | undefined
+  oldest: bigint | undefined
+} {
+  let newest: bigint | undefined
+  let oldest: bigint | undefined
+  for (const row of list) {
+    const ts = conversationMessageTimeNano(row)
+    if (ts == null) continue
+    if (newest == null || ts > newest) newest = ts
+    if (oldest == null || ts < oldest) oldest = ts
+  }
+  return { newest, oldest }
+}
+
 function nanoBigIntToIso(nano: bigint): string {
   return new Date(Number(nano / 1_000_000n)).toISOString()
 }
@@ -583,7 +611,12 @@ function resolveNextConversationTimestamp(
 
 /** Pagina get_conversation_list — até maxConversations ou achar todos os to_name pedidos. */
 export async function fetchConversationMap(
-  options: { targetUsernames?: Set<string>; maxConversations?: number } = {},
+  options: {
+    targetUsernames?: Set<string>
+    maxConversations?: number
+    /** Retomar varredura a partir deste next_timestamp_nano (copie do log de paginação). */
+    startTimestampNano?: string
+  } = {},
 ): Promise<{
   byUsername: Map<string, ShopeeConversationEntry>
   scanned: number
@@ -593,18 +626,25 @@ export async function fetchConversationMap(
   oldestScannedChatAt: string | null
   connectedShopId: number | null
   chatShopIds: number[]
+  pageMetrics: ConversationPageMetric[]
+  resumeCursor: string | null
 }> {
   const auth = loadShopeeAuth()
   const chatShopIds = new Set<number>()
   const byUsername = new Map<string, ShopeeConversationEntry>()
-  const maxConversations = Math.min(Math.max(options.maxConversations ?? SHOPEE_CONVERSATION_SCAN_MAX, 50), 5000)
-  let nextTimestampNano: string | undefined
+  const pageMetrics: ConversationPageMetric[] = []
+  const maxConversations = Math.min(
+    Math.max(options.maxConversations ?? SHOPEE_CONVERSATION_SCAN_MAX, 50),
+    SHOPEE_CONVERSATION_SCAN_MAX,
+  )
+  let nextTimestampNano: string | undefined = options.startTimestampNano?.trim() || undefined
   let scanned = 0
   let indexed = 0
   let pages = 0
   let prevTimestamp: string | undefined
   let newestTs: bigint | undefined
   let oldestTs: bigint | undefined
+  let lastNextCursor: string | null = null
 
   const allFound = (): boolean => {
     if (!options.targetUsernames || options.targetUsernames.size === 0) return false
@@ -615,6 +655,7 @@ export async function fetchConversationMap(
   }
 
   while (scanned < maxConversations) {
+    const inputTimestampNano = nextTimestampNano ?? null
     const pageSize = Math.min(50, maxConversations - scanned)
     const data = await getConversationList({
       direction: 'latest',
@@ -628,8 +669,21 @@ export async function fetchConversationMap(
     >
     const list = conversationListFromBody(body)
     pages++
-    if (list.length === 0) break
+    if (list.length === 0) {
+      pageMetrics.push({
+        page: pages,
+        chatsOnPage: 0,
+        indexedOnPage: 0,
+        scannedTotal: scanned,
+        newestOnPage: null,
+        oldestOnPage: null,
+        inputTimestampNano,
+        nextTimestampNano: null,
+      })
+      break
+    }
 
+    let indexedOnPage = 0
     for (const row of list) {
       scanned++
       const shopId = Number(row.shop_id ?? 0)
@@ -637,6 +691,7 @@ export async function fetchConversationMap(
       const entry = parseConversationRow(row)
       if (!entry) continue
       indexed++
+      indexedOnPage++
       byUsername.set(entry.toName.toLowerCase(), entry)
       const ts = conversationMessageTimeNano(row)
       if (ts != null) {
@@ -645,9 +700,22 @@ export async function fetchConversationMap(
       }
     }
 
+    const range = pageMessageTimeRange(list)
+    const next = resolveNextConversationTimestamp(body, list) ?? null
+    if (next) lastNextCursor = next
+    pageMetrics.push({
+      page: pages,
+      chatsOnPage: list.length,
+      indexedOnPage,
+      scannedTotal: scanned,
+      newestOnPage: range.newest != null ? nanoBigIntToIso(range.newest) : null,
+      oldestOnPage: range.oldest != null ? nanoBigIntToIso(range.oldest) : null,
+      inputTimestampNano,
+      nextTimestampNano: next,
+    })
+
     if (allFound() || scanned >= maxConversations) break
 
-    const next = resolveNextConversationTimestamp(body, list)
     if (next == null || next === prevTimestamp) break
     prevTimestamp = nextTimestampNano
     nextTimestampNano = next
@@ -665,5 +733,7 @@ export async function fetchConversationMap(
     oldestScannedChatAt,
     connectedShopId: auth?.shopId ?? null,
     chatShopIds: [...chatShopIds],
+    pageMetrics,
+    resumeCursor: lastNextCursor,
   }
 }

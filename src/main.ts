@@ -1303,6 +1303,63 @@ function leaveWorkbook() {
   serverUpdatedAt = 0
 }
 
+function fmtScanDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  return iso.slice(0, 10)
+}
+
+function samplePageMetrics(
+  metrics: Array<{
+    page: number
+    chatsOnPage: number
+    indexedOnPage: number
+    scannedTotal: number
+    newestOnPage: string | null
+    oldestOnPage: string | null
+    nextTimestampNano: string | null
+  }>,
+): typeof metrics {
+  if (metrics.length <= 30) return metrics
+  const picked = new Map<number, (typeof metrics)[number]>()
+  for (const m of metrics.slice(0, 8)) picked.set(m.page, m)
+  for (const m of metrics) {
+    if (m.page % 20 === 0) picked.set(m.page, m)
+  }
+  for (const m of metrics.slice(-12)) picked.set(m.page, m)
+  return [...picked.values()].sort((a, b) => a.page - b.page)
+}
+
+function formatPageMetricsLines(
+  metrics: Array<{
+    page: number
+    chatsOnPage: number
+    indexedOnPage: number
+    scannedTotal: number
+    newestOnPage: string | null
+    oldestOnPage: string | null
+    nextTimestampNano: string | null
+  }>,
+): string[] {
+  if (!metrics.length) return []
+  const sample = samplePageMetrics(metrics)
+  const lines: string[] = [
+    '',
+    `--- Paginação (${metrics.length} página(s); amostra abaixo) ---`,
+  ]
+  let prevPage = 0
+  for (const m of sample) {
+    if (prevPage && m.page > prevPage + 1) lines.push('…')
+    lines.push(
+      `Pág ${m.page}: ${m.chatsOnPage} chats (${m.indexedOnPage} indexados) | acum. ${m.scannedTotal} | ${fmtScanDate(m.oldestOnPage)} → ${fmtScanDate(m.newestOnPage)}`,
+    )
+    if (m.nextTimestampNano) {
+      lines.push(`     próximo cursor: ${m.nextTimestampNano}`)
+    }
+    prevPage = m.page
+  }
+  return lines
+}
+
 function bindShopeeLinkConversations() {
   const btn = document.querySelector<HTMLButtonElement>('#shopee-link-conversations-btn')
   if (!btn) return
@@ -1346,6 +1403,10 @@ function bindShopeeLinkConversations() {
       if (result.chatShopIds?.length) {
         detail.push(`shop_id nos chats: ${result.chatShopIds.join(', ')}`)
       }
+      detail.push(...formatPageMetricsLines(result.pageMetrics ?? []))
+      if (result.resumeCursor) {
+        detail.push('', 'Para retomar a varredura (startTimestampNano):', result.resumeCursor)
+      }
       if (result.errors.length) {
         detail.push('', 'Erros:', ...result.errors.slice(0, 8))
         if (result.errors.length > 8) detail.push(`… e mais ${result.errors.length - 8}`)
@@ -1355,6 +1416,9 @@ function bindShopeeLinkConversations() {
         body: detail.join('\n'),
       })
       if (result.errors.length) console.warn('[shopee-link-conversations]', result.errors)
+      if (result.pageMetrics?.length) {
+        console.info('[shopee-link-conversations] pageMetrics', result.pageMetrics)
+      }
     } catch (error) {
       const msg = (error as Error).message
       setShopeeActionBanner(`Falha ao vincular conversas: ${msg}`, 'error')
