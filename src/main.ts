@@ -1340,6 +1340,12 @@ function bindShopeeLinkConversations() {
       if (result.oldestScannedChatAt) {
         detail.push(`Chat mais antigo varrido: ${result.oldestScannedChatAt.slice(0, 10)}`)
       }
+      if (result.connectedShopId != null) {
+        detail.push(`Loja OAuth: ${result.connectedShopId}`)
+      }
+      if (result.chatShopIds?.length) {
+        detail.push(`shop_id nos chats: ${result.chatShopIds.join(', ')}`)
+      }
       if (result.errors.length) {
         detail.push('', 'Erros:', ...result.errors.slice(0, 8))
         if (result.errors.length > 8) detail.push(`… e mais ${result.errors.length - 8}`)

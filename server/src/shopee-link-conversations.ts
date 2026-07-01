@@ -22,6 +22,8 @@ export interface LinkConversationsResult {
   conversationPages: number
   newestChatAt: string | null
   oldestScannedChatAt: string | null
+  connectedShopId: number | null
+  chatShopIds: number[]
   errors: string[]
 }
 
@@ -116,6 +118,8 @@ export async function linkConversationsForWorkbook(workbookId: string): Promise<
     conversationPages: 0,
     newestChatAt: null,
     oldestScannedChatAt: null,
+    connectedShopId: null,
+    chatShopIds: [],
     errors: [],
   }
 
@@ -145,6 +149,17 @@ export async function linkConversationsForWorkbook(workbookId: string): Promise<
   result.conversationPages = convMaps.pages
   result.newestChatAt = convMaps.newestChatAt
   result.oldestScannedChatAt = convMaps.oldestScannedChatAt
+  result.connectedShopId = convMaps.connectedShopId
+  result.chatShopIds = convMaps.chatShopIds
+  if (
+    result.connectedShopId != null &&
+    result.chatShopIds.length > 0 &&
+    !result.chatShopIds.every((id) => id === result.connectedShopId)
+  ) {
+    result.errors.push(
+      `shop_id dos chats (${result.chatShopIds.join(', ')}) difere da loja OAuth (${result.connectedShopId}) — reautorize a loja certa no Shopee Test`,
+    )
+  }
   if (convMaps.indexed === 0 && convMaps.scanned > 0) {
     result.errors.push(
       'Nenhum chat com to_name/conversation_id reconhecível — confira get_conversation_list no Shopee Test',

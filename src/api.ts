@@ -293,6 +293,8 @@ export async function linkShopeeConversations(workbookId: string): Promise<{
   conversationPages: number
   newestChatAt: string | null
   oldestScannedChatAt: string | null
+  connectedShopId: number | null
+  chatShopIds: number[]
   errors: string[]
 }> {
   return request('/shopee/link-conversations', {

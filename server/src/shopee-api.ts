@@ -356,10 +356,10 @@ export interface ConversationListParams {
   type?: 'all' | 'pinned' | 'unread'
   pageSize?: number
   /**
-   * Paginação — request usa next_timestamp_nano (shinryak-shopee-api / doc legado).
-   * Valor vem de page_result.next_cursor.next_message_time_nano na página anterior.
+   * Paginação — request usa next_timestamp_nano (string; nanos não cabem em Number seguro).
+   * Com direction=latest a API começa no passado e avança em direção ao presente.
    */
-  nextTimestampNano?: number
+  nextTimestampNano?: string
 }
 
 export async function getConversationList(params: ConversationListParams = {}): Promise<ShopeeApiResponse> {
@@ -368,7 +368,7 @@ export async function getConversationList(params: ConversationListParams = {}): 
     type: params.type ?? 'all',
     page_size: params.pageSize ?? 20,
   }
-  if (params.nextTimestampNano != null) query.next_timestamp_nano = params.nextTimestampNano
+  if (params.nextTimestampNano) query.next_timestamp_nano = params.nextTimestampNano
   return shopApiGet('/api/v2/sellerchat/get_conversation_list', query)
 }
 
@@ -398,8 +398,8 @@ export interface ShopeeConversationEntry {
   toName: string
 }
 
-/** Quantos chats recentes varrer no vínculo (get_conversation_list). */
-export const SHOPEE_CONVERSATION_SCAN_MAX = 1000
+/** Quantos chats varrer no vínculo (get_conversation_list). */
+export const SHOPEE_CONVERSATION_SCAN_MAX = 5000
 
 function parseConversationRow(row: Record<string, unknown>): ShopeeConversationEntry | null {
   const toUserInfo =
@@ -440,25 +440,33 @@ function conversationListFromBody(body: Record<string, unknown>): Array<Record<s
   return Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : []
 }
 
-function conversationMessageTimeNano(row: Record<string, unknown>): number | undefined {
+function parseMessageTimeNano(raw: unknown): bigint | undefined {
+  if (raw == null || raw === '') return undefined
+  try {
+    const n = BigInt(String(raw))
+    return n > 0n ? n : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function conversationMessageTimeNano(row: Record<string, unknown>): bigint | undefined {
   const raw =
     row.last_message_timestamp ??
     row.latest_message_timestamp ??
     row.last_message_timestamp_nano ??
     row.latest_message_timestamp_nano
-  if (raw == null || raw === '') return undefined
-  const n = Number(raw)
-  return Number.isNaN(n) || n <= 0 ? undefined : n
+  return parseMessageTimeNano(raw)
 }
 
-function nanoToIso(nano: number): string {
-  return new Date(nano / 1_000_000).toISOString()
+function nanoBigIntToIso(nano: bigint): string {
+  return new Date(Number(nano / 1_000_000n)).toISOString()
 }
 
 function resolveNextConversationTimestamp(
   body: Record<string, unknown>,
   list: Array<Record<string, unknown>>,
-): number | undefined {
+): string | undefined {
   const pageResult =
     body.page_result && typeof body.page_result === 'object'
       ? (body.page_result as Record<string, unknown>)
@@ -469,25 +477,22 @@ function resolveNextConversationTimestamp(
   const rawNext = pageResult?.next_cursor ?? body.next_cursor
   if (typeof rawNext === 'object' && rawNext !== null) {
     const obj = rawNext as Record<string, unknown>
-    const nano = obj.next_message_time_nano ?? obj.next_timestamp_nano
-    const n = Number(nano)
-    if (!Number.isNaN(n) && n > 0) return n
+    const nano = parseMessageTimeNano(obj.next_message_time_nano ?? obj.next_timestamp_nano)
+    if (nano != null) return nano.toString()
   }
 
-  const flat = pageResult?.next_timestamp_nano ?? body.next_timestamp_nano
-  if (flat != null && flat !== '' && flat !== 0) {
-    const n = Number(flat)
-    if (!Number.isNaN(n) && n > 0) return n
-  }
+  const flat = parseMessageTimeNano(pageResult?.next_timestamp_nano ?? body.next_timestamp_nano)
+  if (flat != null) return flat.toString()
 
   if (typeof rawNext === 'string' || typeof rawNext === 'number') {
-    const n = Number(rawNext)
-    if (!Number.isNaN(n) && n > 0) return n
+    const nano = parseMessageTimeNano(rawNext)
+    if (nano != null) return nano.toString()
   }
 
-  // direction=latest: paginar do mais recente ao mais antigo — cursor = 1º item (menor timestamp)
-  const first = list[0]
-  return first ? conversationMessageTimeNano(first) : undefined
+  // direction=latest: próxima página avança no tempo — cursor = último item (maior timestamp)
+  const last = list[list.length - 1]
+  const lastTs = last ? conversationMessageTimeNano(last) : undefined
+  return lastTs?.toString()
 }
 
 /** Pagina get_conversation_list — até maxConversations ou achar todos os to_name pedidos. */
@@ -500,16 +505,20 @@ export async function fetchConversationMap(
   pages: number
   newestChatAt: string | null
   oldestScannedChatAt: string | null
+  connectedShopId: number | null
+  chatShopIds: number[]
 }> {
+  const auth = loadShopeeAuth()
+  const chatShopIds = new Set<number>()
   const byUsername = new Map<string, ShopeeConversationEntry>()
   const maxConversations = Math.min(Math.max(options.maxConversations ?? SHOPEE_CONVERSATION_SCAN_MAX, 50), 5000)
-  let nextTimestampNano: number | undefined
+  let nextTimestampNano: string | undefined
   let scanned = 0
   let indexed = 0
   let pages = 0
-  let prevTimestamp: number | undefined
-  let newestTs: number | undefined
-  let oldestTs: number | undefined
+  let prevTimestamp: string | undefined
+  let newestTs: bigint | undefined
+  let oldestTs: bigint | undefined
 
   const allFound = (): boolean => {
     if (!options.targetUsernames || options.targetUsernames.size === 0) return false
@@ -537,6 +546,8 @@ export async function fetchConversationMap(
 
     for (const row of list) {
       scanned++
+      const shopId = Number(row.shop_id ?? 0)
+      if (shopId > 0) chatShopIds.add(shopId)
       const entry = parseConversationRow(row)
       if (!entry) continue
       indexed++
@@ -556,8 +567,17 @@ export async function fetchConversationMap(
     nextTimestampNano = next
   }
 
-  const newestChatAt = newestTs != null ? nanoToIso(newestTs) : null
-  const oldestScannedChatAt = oldestTs != null ? nanoToIso(oldestTs) : null
+  const newestChatAt = newestTs != null ? nanoBigIntToIso(newestTs) : null
+  const oldestScannedChatAt = oldestTs != null ? nanoBigIntToIso(oldestTs) : null
 
-  return { byUsername, scanned, indexed, pages, newestChatAt, oldestScannedChatAt }
+  return {
+    byUsername,
+    scanned,
+    indexed,
+    pages,
+    newestChatAt,
+    oldestScannedChatAt,
+    connectedShopId: auth?.shopId ?? null,
+    chatShopIds: [...chatShopIds],
+  }
 }
