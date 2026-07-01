@@ -237,6 +237,28 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_shopee_buyer_chats_username ON shopee_buyer_chats (buyer_username);
 `)
 
+// Disparo único: mensagem automática na PRÓXIMA compra READY_TO_SHIP (teste de chat frio).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shopee_auto_greet (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    armed INTEGER NOT NULL DEFAULT 0,
+    message TEXT NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT OR IGNORE INTO shopee_auto_greet (id, armed, message, updated_at) VALUES (1, 0, '', 0);
+
+  CREATE TABLE IF NOT EXISTS shopee_auto_greet_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_sn TEXT NOT NULL,
+    buyer_user_id INTEGER,
+    buyer_username TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_shopee_auto_greet_log_created ON shopee_auto_greet_log (created_at);
+`)
+
 export function nowMs(): number {
   return Date.now()
 }

@@ -26,6 +26,13 @@ import {
   syncShopeeWorkbookOrders,
 } from '../shopee-order-sync.js'
 import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames, getWorkbookLinkStatus, clearBuyerChatsForWorkbook, getLinkScanBootstrap, saveLinkStartCursor, loadLinkStartCursor, warmLinkStartCursorChunk } from '../shopee-link-conversations.js'
+import {
+  armAutoGreet,
+  disarmAutoGreet,
+  getAutoGreetLog,
+  getAutoGreetState,
+  DEFAULT_GREET_MESSAGE,
+} from '../shopee-auto-greet.js'
 import { clearShopeeAuth, loadShopeeAuth } from '../shopee-store.js'
 import { db } from '../db.js'
 import { existsSync } from 'node:fs'
@@ -660,6 +667,28 @@ router.post('/shopee/link-conversations', requireAuth, async (req, res) => {
       error: error instanceof Error ? error.message : 'Erro ao vincular conversas',
     })
   }
+})
+
+/** GET /api/shopee/auto-greet — estado do disparo + últimos envios */
+router.get('/shopee/auto-greet', requireAuth, (_req, res) => {
+  res.json({
+    ok: true,
+    defaultMessage: DEFAULT_GREET_MESSAGE,
+    state: getAutoGreetState(),
+    log: getAutoGreetLog(20),
+  })
+})
+
+/** POST /api/shopee/auto-greet/arm — arma o disparo na PRÓXIMA compra READY_TO_SHIP */
+router.post('/shopee/auto-greet/arm', requireAuth, (req, res) => {
+  const message = typeof req.body?.message === 'string' ? req.body.message : undefined
+  const state = armAutoGreet(message)
+  res.json({ ok: true, state })
+})
+
+/** POST /api/shopee/auto-greet/disarm — cancela o disparo armado */
+router.post('/shopee/auto-greet/disarm', requireAuth, (_req, res) => {
+  res.json({ ok: true, state: disarmAutoGreet() })
 })
 
 /** POST /api/shopee/disconnect */

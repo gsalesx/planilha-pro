@@ -1,3 +1,4 @@
+import { maybeGreetOnReadyToShip } from './shopee-auto-greet.js'
 import {
   importShopeeOrderBySn,
   shopeeOrderExists,
@@ -72,6 +73,7 @@ export async function processShopeePush(parsed: unknown): Promise<void> {
 
   if (code === 3) {
     await handleOrderStatusPush(data)
+    await maybeGreetOnReadyToShip(extractOrderSn(data), extractStatus(data))
     return
   }
   if (code === 8) {
