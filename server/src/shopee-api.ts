@@ -456,8 +456,7 @@ export async function uploadChatImage(filePath: string): Promise<string> {
 export async function sendChatImageMessage(params: {
   toId: number
   imageUrl: string
-  conversationId?: string
-}): Promise<ShopeeApiResponse> {
+}): Promise<void> {
   const toId = Number(params.toId)
   if (!toId || toId <= 0) throw new Error('toId obrigatório')
   const imageUrl = params.imageUrl.trim()
@@ -467,10 +466,8 @@ export async function sendChatImageMessage(params: {
     message_type: 'image',
     content: { image_url: imageUrl },
   }
-  if (params.conversationId?.trim()) {
-    body.conversation_id = params.conversationId.trim()
-  }
-  return shopApiPost('/api/v2/sellerchat/send_message', body)
+  const data = await shopApiPost('/api/v2/sellerchat/send_message', body)
+  assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'send_message')
 }
 
 export interface ShopeeConversationEntry {

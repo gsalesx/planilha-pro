@@ -585,16 +585,14 @@ router.post('/shopee/messages/send-preview', requireAuth, async (req, res) => {
   }
   try {
     const shopeeImageUrl = await uploadChatImage(img.storage_path)
-    const data = await sendChatImageMessage({
+    await sendChatImageMessage({
       toId: chat.toId,
       imageUrl: shopeeImageUrl,
-      conversationId: chat.conversationId,
     })
     res.json({
       ok: true,
       query: { username, workbookId, orderKey, col },
       shopeeImageUrl,
-      shopee: data,
     })
   } catch (error) {
     res.status(502).json({
