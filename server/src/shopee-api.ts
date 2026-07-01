@@ -357,7 +357,7 @@ export interface ConversationListParams {
   pageSize?: number
   /**
    * Paginação — request usa next_timestamp_nano (string; nanos não cabem em Number seguro).
-   * Com direction=latest a API começa no passado e avança em direção ao presente.
+   * Com direction=oldest a 1ª página tende aos chats mais recentes; paginação segue com next_timestamp_nano.
    */
   nextTimestampNano?: string
 }
@@ -489,7 +489,7 @@ function resolveNextConversationTimestamp(
     if (nano != null) return nano.toString()
   }
 
-  // direction=latest: próxima página avança no tempo — cursor = último item (maior timestamp)
+  // fallback: último item da página (maior timestamp)
   const last = list[list.length - 1]
   const lastTs = last ? conversationMessageTimeNano(last) : undefined
   return lastTs?.toString()
@@ -531,7 +531,7 @@ export async function fetchConversationMap(
   while (scanned < maxConversations) {
     const pageSize = Math.min(50, maxConversations - scanned)
     const data = await getConversationList({
-      direction: 'latest',
+      direction: 'oldest',
       type: 'all',
       pageSize,
       nextTimestampNano,
