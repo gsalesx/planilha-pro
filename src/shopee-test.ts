@@ -187,14 +187,14 @@ async function boot(): Promise<void> {
 
     <h3 class="shopee-test-subheading">4a. Listar conversas</h3>
     <p class="shopee-test-hint">
-      Mesmos parâmetros do <strong>Vincular conversas</strong>: <code>direction=oldest</code>, <code>page_size=50</code>.
+      Mesmos parâmetros do <strong>Vincular conversas</strong>: <code>direction=latest</code> (a Shopee rejeita <code>oldest</code>), <code>page_size=50</code>.
       O resumo abaixo mostra todos os campos de username — compare com a col E da planilha.
     </p>
     <div class="shopee-test-form">
       <label>Direção
         <select id="chat-direction">
-          <option value="oldest" selected>oldest (igual vínculo)</option>
-          <option value="latest">latest</option>
+          <option value="latest" selected>latest (único aceito pela API)</option>
+          <option value="oldest">oldest (param_error)</option>
         </select>
       </label>
       <label>Tipo
