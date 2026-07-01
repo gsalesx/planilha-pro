@@ -74,8 +74,13 @@ async function getClipboardImageBlob(img: { url?: string; blob?: Blob }): Promis
 async function copyImageToClipboard(img: { url?: string; blob?: Blob }): Promise<void> {
   const clipboard = navigator.clipboard
   if (!clipboard?.write) throw new Error('Area de transferencia nao suporta imagens')
-  const blob = await getClipboardImageBlob(img)
-  await clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })])
+  // clipboard.write precisa ser chamado enquanto o gesto do clique ainda vale;
+  // o blob pode ser resolvido depois via Promise no ClipboardItem.
+  await clipboard.write([
+    new ClipboardItem({
+      'image/png': getClipboardImageBlob(img),
+    }),
+  ])
 }
 
 export interface CellChange {
@@ -92,6 +97,7 @@ export interface GridCallbacks {
   onCellImageChange?(rowIndex: number, colIndex: number): void
   onImageDelete?(rowIndex: number, colIndex: number): void
   onCommentRequest?(rowIndex: number, colIndex: number): void
+  onChatRequest?(rowIndex: number, colIndex: number): void
   onViewStateChange?(): void
 }
 
@@ -147,6 +153,7 @@ export class GridView {
   private minColumnCount = MIN_COLUMN_COUNT
   private columnWidthOverrides: Record<number, number> = { ...DEFAULT_COLUMN_WIDTH_OVERRIDES }
   private centeredColumns = new Set(DEFAULT_CENTERED_COLUMNS)
+  private linkedChatUsernames = new Set<string>()
 
   constructor(root: HTMLElement, callbacks: GridCallbacks) {
     this.root = root
@@ -170,6 +177,11 @@ export class GridView {
       this.dateFilter = available[0]
     }
     this.recomputeOrder()
+    this.render()
+  }
+
+  setLinkedChatUsernames(usernames: Iterable<string>) {
+    this.linkedChatUsernames = new Set([...usernames].map((u) => u.trim().toLowerCase()).filter(Boolean))
     this.render()
   }
 
@@ -735,6 +747,24 @@ export class GridView {
       })
       wrap.appendChild(text)
       wrap.appendChild(btn)
+      const buyerUsername = String(sheet.rows[row]?.[USER_COLUMN_INDEX] ?? '').trim()
+      if (buyerUsername && this.linkedChatUsernames.has(buyerUsername.toLowerCase())) {
+        const chatBtn = document.createElement('button')
+        chatBtn.type = 'button'
+        chatBtn.className = 'user-cell-copy recipient-chat-btn'
+        chatBtn.title = 'Abrir chat Shopee'
+        chatBtn.innerHTML = `
+          <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+            <path d="M3 4.5A2.5 2.5 0 0 1 5.5 2h9A2.5 2.5 0 0 1 17 4.5v6A2.5 2.5 0 0 1 14.5 13H10l-4.2 3.15A.5.5 0 0 1 5 14.75V4.5Z" />
+          </svg>
+        `
+        chatBtn.addEventListener('click', (event) => {
+          event.stopPropagation()
+          this.select(row, col)
+          this.callbacks.onChatRequest?.(row, col)
+        })
+        wrap.appendChild(chatBtn)
+      }
       td.appendChild(wrap)
     } else if (this.imageColumnIndices.has(col)) {
       td.classList.add('cell-image')

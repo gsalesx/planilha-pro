@@ -354,12 +354,56 @@ export async function linkShopeeConversationsScanChunk(
     pageNumber: number
     scannedBefore: number
     indexedBefore: number
+    advanceOnly?: boolean
   },
 ): Promise<LinkConversationsChunkResponse> {
   return request('/shopee/link-conversations/scan-chunk', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ workbookId, ...state }),
+  })
+}
+
+export type ShopeeChatMessage = {
+  id: string
+  fromId: number
+  toId: number
+  type: string
+  text: string
+  createdAt: number | null
+  fromBuyer: boolean
+}
+
+export async function fetchLinkedBuyerUsernames(): Promise<string[]> {
+  const data = await request<{ ok: boolean; usernames: string[] }>('/shopee/buyer-chats')
+  return data.usernames ?? []
+}
+
+export async function fetchShopeeChatHistory(username: string): Promise<{
+  ok: boolean
+  chat: {
+    buyerUsername: string
+    conversationId: string
+    toId: number
+    updatedAt: number
+  }
+  messages: ShopeeChatMessage[]
+  pages: number
+  truncated: boolean
+}> {
+  const qs = new URLSearchParams({ username })
+  return request(`/shopee/chat-history?${qs}`)
+}
+
+export async function sendShopeeChatMessage(opts: {
+  toId: number
+  conversationId: string
+  text: string
+}): Promise<unknown> {
+  return request('/shopee/messages/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
   })
 }
 

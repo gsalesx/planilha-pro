@@ -11,6 +11,7 @@ import {
   getItemList,
   getMessageList,
   sendChatMessage,
+  fetchAllChatMessages,
   getOrderList,
   getOrderDetail,
   getShopInfo,
@@ -22,7 +23,7 @@ import {
   parseShopeeOrderDetail,
   syncShopeeWorkbookOrders,
 } from '../shopee-order-sync.js'
-import { linkConversationsForWorkbook, linkConversationsScanChunk } from '../shopee-link-conversations.js'
+import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames } from '../shopee-link-conversations.js'
 import { clearShopeeAuth, loadShopeeAuth } from '../shopee-store.js'
 
 const router = Router()
@@ -340,6 +341,47 @@ router.get('/shopee/conversations', requireAuth, async (req, res) => {
   }
 })
 
+/** GET /api/shopee/buyer-chats — usernames com conversation_id vinculado */
+router.get('/shopee/buyer-chats', requireAuth, (_req, res) => {
+  res.json({ ok: true, usernames: listLinkedBuyerUsernames() })
+})
+
+/** GET /api/shopee/chat-history?username= — histórico completo do chat vinculado */
+router.get('/shopee/chat-history', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const username = typeof req.query.username === 'string' ? req.query.username.trim() : ''
+  if (!username) {
+    res.status(400).json({ error: 'username obrigatório' })
+    return
+  }
+  const chat = getBuyerChatByUsername(username)
+  if (!chat) {
+    res.status(404).json({ error: 'Chat não vinculado para este username (col E)' })
+    return
+  }
+  try {
+    const history = await fetchAllChatMessages(chat.conversationId, chat.toId)
+    res.json({
+      ok: true,
+      chat: {
+        buyerUsername: chat.buyerUsername,
+        conversationId: chat.conversationId,
+        toId: chat.toId,
+        updatedAt: chat.updatedAt,
+      },
+      ...history,
+    })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao buscar mensagens',
+    })
+  }
+})
+
 /** GET /api/shopee/messages — proxy get_message */
 router.get('/shopee/messages', requireAuth, async (req, res) => {
   if (!shopeeConfigured()) {
@@ -428,12 +470,14 @@ router.post('/shopee/link-conversations/scan-chunk', requireAuth, async (req, re
   const pageNumber = Math.max(Number(req.body?.pageNumber ?? 0), 0)
   const scannedBefore = Math.max(Number(req.body?.scannedBefore ?? 0), 0)
   const indexedBefore = Math.max(Number(req.body?.indexedBefore ?? 0), 0)
+  const advanceOnly = req.body?.advanceOnly === true
   try {
     const result = await linkConversationsScanChunk(workbookId, {
       nextTimestampNano,
       pageNumber,
       scannedBefore,
       indexedBefore,
+      advanceOnly,
     })
     res.json({ ok: true, workbookId, ...result })
   } catch (error) {

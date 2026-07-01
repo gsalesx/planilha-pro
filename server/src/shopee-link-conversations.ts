@@ -52,6 +52,9 @@ export interface LinkConversationsChunkResult {
 /** Col E — Nome de usuário (já vem no export Shopee / planilha manual). */
 const COL_USERNAME = 4
 
+/** Vínculo começa nesta página (1..284 só avançam cursor, sem gravar match). */
+export const SHOPEE_LINK_START_PAGE = 285
+
 interface SheetBuyer {
   username: string
 }
@@ -125,6 +128,13 @@ export function getBuyerChatByUsername(username: string): ShopeeBuyerChatRow | u
   }
 }
 
+export function listLinkedBuyerUsernames(): string[] {
+  const rows = db
+    .prepare('SELECT buyer_username FROM shopee_buyer_chats ORDER BY buyer_username COLLATE NOCASE')
+    .all() as Array<{ buyer_username: string }>
+  return rows.map((r) => r.buyer_username)
+}
+
 function countLinkedBuyers(buyers: SheetBuyer[]): number {
   let linked = 0
   for (const buyer of buyers) {
@@ -144,6 +154,8 @@ export async function linkConversationsScanChunk(
     pageNumber?: number
     scannedBefore?: number
     indexedBefore?: number
+    /** Só avança paginação — não tenta vincular (páginas antes de SHOPEE_LINK_START_PAGE). */
+    advanceOnly?: boolean
   } = {},
 ): Promise<LinkConversationsChunkResult> {
   const result: LinkConversationsChunkResult = {
@@ -206,19 +218,21 @@ export async function linkConversationsScanChunk(
 
   const now = nowMs()
   let linkedThisChunk = 0
-  for (const entry of page.entries) {
-    const key = entry.toName.toLowerCase()
-    if (!targetUsernames.has(key)) continue
-    const buyer = buyerByKey.get(key)
-    if (!buyer) continue
-    if (getBuyerChatByUsername(buyer.username)) continue
-    upsertBuyerChat({
-      toId: entry.toId,
-      buyerUsername: buyer.username,
-      conversationId: entry.conversationId,
-      updatedAt: now,
-    })
-    linkedThisChunk++
+  if (!options.advanceOnly) {
+    for (const entry of page.entries) {
+      const key = entry.toName.toLowerCase()
+      if (!targetUsernames.has(key)) continue
+      const buyer = buyerByKey.get(key)
+      if (!buyer) continue
+      if (getBuyerChatByUsername(buyer.username)) continue
+      upsertBuyerChat({
+        toId: entry.toId,
+        buyerUsername: buyer.username,
+        conversationId: entry.conversationId,
+        updatedAt: now,
+      })
+      linkedThisChunk++
+    }
   }
   result.linkedThisChunk = linkedThisChunk
   result.linked = countLinkedBuyers(buyers)
@@ -228,7 +242,7 @@ export async function linkConversationsScanChunk(
     result.done = true
     result.doneReason = 'no_more'
     result.hasMore = false
-  } else if (result.linked >= buyers.length) {
+  } else if (!options.advanceOnly && result.linked >= buyers.length) {
     result.done = true
     result.doneReason = 'all_found'
   } else if (!page.hasMore) {

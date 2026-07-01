@@ -797,3 +797,117 @@ export async function fetchConversationMap(
     resumeCursor: lastNextCursor,
   }
 }
+
+export interface ParsedChatMessage {
+  id: string
+  fromId: number
+  toId: number
+  type: string
+  text: string
+  createdAt: number | null
+  /** true = mensagem do comprador; false = loja/vendedor */
+  fromBuyer: boolean
+}
+
+function messageListFromBody(body: Record<string, unknown>): Array<Record<string, unknown>> {
+  const raw =
+    body.messages ??
+    body.message_list ??
+    (body.response && typeof body.response === 'object'
+      ? (body.response as Record<string, unknown>).messages
+      : undefined)
+  return Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : []
+}
+
+function messagePageNextOffset(body: Record<string, unknown>): string | null {
+  const pageResult =
+    body.page_result ??
+    (body.response && typeof body.response === 'object'
+      ? (body.response as Record<string, unknown>).page_result
+      : undefined)
+  if (!pageResult || typeof pageResult !== 'object') return null
+  const next = (pageResult as Record<string, unknown>).next_offset
+  if (next == null || next === '') return null
+  return String(next)
+}
+
+function extractMessageText(msg: Record<string, unknown>): string {
+  const content = msg.content
+  if (content && typeof content === 'object') {
+    const c = content as Record<string, unknown>
+    if (typeof c.text === 'string' && c.text.trim()) return c.text.trim()
+    if (typeof c.translation_text === 'string' && c.translation_text.trim()) return c.translation_text.trim()
+    if (typeof c.url === 'string' && c.url.trim()) return c.url.trim()
+  }
+  const type = String(msg.message_type ?? msg.type ?? 'unknown')
+  if (type === 'image' || type === 'sticker') return `[${type}]`
+  if (type === 'text') return '(mensagem vazia)'
+  return `[${type}]`
+}
+
+function parseMessageCreatedAt(msg: Record<string, unknown>): number | null {
+  const raw =
+    msg.created_timestamp ??
+    msg.create_time ??
+    msg.create_timestamp ??
+    msg.message_timestamp ??
+    msg.timestamp
+  if (raw == null || raw === '') return null
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return n < 1e12 ? n * 1000 : n
+}
+
+export function parseChatMessage(
+  msg: Record<string, unknown>,
+  buyerToId: number,
+): ParsedChatMessage | null {
+  const fromId = Number(msg.from_id ?? msg.sender_id ?? 0)
+  const toId = Number(msg.to_id ?? 0)
+  const id = String(msg.message_id ?? msg.id ?? '').trim()
+  if (!id) return null
+  const type = String(msg.message_type ?? msg.type ?? 'text')
+  return {
+    id,
+    fromId,
+    toId,
+    type,
+    text: extractMessageText(msg),
+    createdAt: parseMessageCreatedAt(msg),
+    fromBuyer: fromId === buyerToId,
+  }
+}
+
+/** Histórico completo — pagina get_message até acabar (ou maxPages). */
+export async function fetchAllChatMessages(
+  conversationId: string,
+  buyerToId: number,
+  options: { pageSize?: number; maxPages?: number } = {},
+): Promise<{ messages: ParsedChatMessage[]; pages: number; truncated: boolean }> {
+  const pageSize = Math.min(Math.max(options.pageSize ?? 50, 1), 50)
+  const maxPages = Math.min(Math.max(options.maxPages ?? 40, 1), 100)
+  const byId = new Map<string, ParsedChatMessage>()
+  let offset: string | undefined = ''
+  let pages = 0
+
+  while (pages < maxPages) {
+    const data = await getMessageList({ conversationId, pageSize, offset })
+    const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_message')
+    const list = messageListFromBody(body)
+    for (const row of list) {
+      const parsed = parseChatMessage(row, buyerToId)
+      if (parsed) byId.set(parsed.id, parsed)
+    }
+    pages++
+    const next = messagePageNextOffset(body)
+    if (!next || list.length === 0) break
+    offset = next
+  }
+
+  const messages = [...byId.values()].sort((a, b) => {
+    const ta = a.createdAt ?? 0
+    const tb = b.createdAt ?? 0
+    return ta - tb
+  })
+  return { messages, pages, truncated: pages >= maxPages }
+}

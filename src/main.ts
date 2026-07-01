@@ -13,6 +13,7 @@ import {
   serverWorkbookToLocal,
   syncShopeeWorkbookInitial,
   linkShopeeConversationsScanChunk,
+  fetchLinkedBuyerUsernames,
   uploadImage,
   type OrderStyleDelta,
 } from './api'
@@ -29,10 +30,14 @@ import { STATUS_COLUMN_INDEX } from './status'
 import type { CellValue, WorkbookData } from './types'
 import { showWorkbooksList } from './workbooks-list'
 import { isShopeeWorkbookId } from './shopee-workbook'
+import { openShopeeChatPanel } from './shopee-chat-panel'
 import { FIXED_HEADERS, parseXlsx } from './xlsx-parser'
 
 const POLL_INTERVAL_MS = 8000
 const ID_COL = 0
+const PRODUCT_COL = 1
+const QTY_COL = 3
+const BUYER_USERNAME_COL = 4
 
 let workbook: WorkbookData | null = null
 let grid: GridView
@@ -700,6 +705,44 @@ function handleCommentRequest(row: number, col: number) {
   })
 }
 
+function cellText(row: CellValue[], col: number): string {
+  const v = row[col]
+  return v == null ? '' : String(v).trim()
+}
+
+async function refreshLinkedBuyerChats() {
+  if (!grid) return
+  try {
+    const usernames = await fetchLinkedBuyerUsernames()
+    grid.setLinkedChatUsernames(usernames)
+  } catch {
+    grid.setLinkedChatUsernames([])
+  }
+}
+
+function handleChatRequest(row: number, col: number) {
+  if (!workbook || col !== RECIPIENT_COLUMN_INDEX) return
+  const sheet = workbook.sheets[workbook.sheetOrder[0]]
+  if (!sheet) return
+  const cells = sheet.rows[row]
+  if (!cells) return
+  const buyerUsername = cellText(cells, BUYER_USERNAME_COL)
+  if (!buyerUsername) {
+    openAlertDialog({ title: 'Chat Shopee', body: 'Esta linha não tem username na coluna E.' })
+    return
+  }
+  void openShopeeChatPanel({
+    orderId: cellText(cells, ID_COL) || '—',
+    product: cellText(cells, PRODUCT_COL),
+    model: cellText(cells, MODEL_COLUMN_INDEX),
+    quantity: cellText(cells, QTY_COL),
+    status: cellText(cells, STATUS_COLUMN_INDEX),
+    buyerUsername,
+    recipient: cellText(cells, RECIPIENT_COLUMN_INDEX),
+    sheetDate: sheet.rowDates?.[row] ?? '',
+  })
+}
+
 function getCurrentSelectedRows(): number[] {
   const sel = grid.getSelection()
   if (!sel) return []
@@ -1361,6 +1404,8 @@ function formatPageMetricsLines(
 }
 
 function bindShopeeLinkConversations() {
+  /** Igual server SHOPEE_LINK_START_PAGE — match só a partir desta página. */
+  const SHOPEE_LINK_START_PAGE = 285
   const btn = document.querySelector<HTMLButtonElement>('#shopee-link-conversations-btn')
   if (!btn) return
   btn.addEventListener('click', async () => {
@@ -1402,11 +1447,13 @@ function bindShopeeLinkConversations() {
         const maxPages = 10_000
 
         while (!done && pageNumber < maxPages) {
+          const advanceOnly = pageNumber < SHOPEE_LINK_START_PAGE - 1
           const chunk = await linkShopeeConversationsScanChunk(workbookId, {
             nextTimestampNano,
             pageNumber,
             scannedBefore,
             indexedBefore,
+            advanceOnly,
           })
           ordersQueried = chunk.ordersQueried
           buyersFound = chunk.buyersFound
@@ -1416,19 +1463,29 @@ function bindShopeeLinkConversations() {
           indexedBefore = chunk.conversationsIndexed
           if (chunk.errors.length) errors.push(...chunk.errors)
           if (chunk.pageMetric) {
-            pageMetricsSample.push(chunk.pageMetric)
+            if (!advanceOnly) pageMetricsSample.push(chunk.pageMetric)
             const n = chunk.pageMetric.newestOnPage
             const o = chunk.pageMetric.oldestOnPage
             if (n && (!newestGlobal || n > newestGlobal)) newestGlobal = n
             if (o && (!oldestGlobal || o < oldestGlobal)) oldestGlobal = o
             const pm = chunk.pageMetric
-            setStatusText(
-              `Pág ${pm.page}: ${pm.chatsOnPage} chats | acum. ${pm.scannedTotal} | ${fmtScanDate(pm.oldestOnPage)} → ${fmtScanDate(pm.newestOnPage)} | ${linked}/${buyersFound} vinculados`,
-            )
-            setShopeeActionBanner(
-              `Varrendo conversas Shopee… página ${pm.page}, ${pm.scannedTotal} chats, ${linked} de ${buyersFound} vinculados`,
-              'loading',
-            )
+            if (advanceOnly) {
+              setStatusText(
+                `Avançando até pág ${SHOPEE_LINK_START_PAGE}… ${pm.page}/${SHOPEE_LINK_START_PAGE - 1} | acum. ${pm.scannedTotal} | ${fmtScanDate(pm.oldestOnPage)} → ${fmtScanDate(pm.newestOnPage)}`,
+              )
+              setShopeeActionBanner(
+                `Posicionando na página ${SHOPEE_LINK_START_PAGE}… (${pm.page}/${SHOPEE_LINK_START_PAGE - 1})`,
+                'loading',
+              )
+            } else {
+              setStatusText(
+                `Pág ${pm.page}: ${pm.chatsOnPage} chats | acum. ${pm.scannedTotal} | ${fmtScanDate(pm.oldestOnPage)} → ${fmtScanDate(pm.newestOnPage)} | ${linked}/${buyersFound} vinculados`,
+              )
+              setShopeeActionBanner(
+                `Varrendo conversas Shopee… página ${pm.page}, ${pm.scannedTotal} chats, ${linked} de ${buyersFound} vinculados`,
+                'loading',
+              )
+            }
           }
           resumeCursor = chunk.nextTimestampNano
           done = chunk.done
@@ -1448,6 +1505,7 @@ function bindShopeeLinkConversations() {
         setShopeeActionBanner(short, ok ? 'success' : 'error')
         setStatusText(short)
         const detail = [
+          `Varredura a partir da página ${SHOPEE_LINK_START_PAGE}`,
           `Pedidos únicos consultados: ${ordersQueried}`,
           `Compradores na planilha (col E): ${buyersFound}`,
           `Conversas vinculadas: ${linked}`,
@@ -1475,6 +1533,7 @@ function bindShopeeLinkConversations() {
         if (pageMetricsSample.length) {
           console.info('[shopee-link-conversations] pageMetrics', pageMetricsSample)
         }
+        await refreshLinkedBuyerChats()
       })
     } catch (error) {
       const msg = (error as Error).message
@@ -1544,6 +1603,7 @@ async function enterWorkbook(workbookId: string) {
       onConfirm: () => deleteImageAt(row, col),
     }),
     onCommentRequest: handleCommentRequest,
+    onChatRequest: handleChatRequest,
     onViewStateChange: () => {
       setUrlGridViewState(grid.getViewState())
       updateStatusCounts()
@@ -1568,6 +1628,7 @@ async function enterWorkbook(workbookId: string) {
   } finally {
     stopSheetLoading()
   }
+  await refreshLinkedBuyerChats()
   startPolling()
 }
 
