@@ -6,6 +6,7 @@ import {
   buildAuthPartnerUrl,
   exchangeAuthCode,
   getConversationList,
+  summarizeConversationPage,
   getItemBaseInfo,
   getItemList,
   getMessageList,
@@ -307,10 +308,24 @@ router.get('/shopee/conversations', requireAuth, async (req, res) => {
   const direction = req.query.direction === 'oldest' ? 'oldest' : 'latest'
   const type =
     req.query.type === 'pinned' || req.query.type === 'unread' ? req.query.type : 'all'
-  const pageSize = Math.min(Math.max(Number(req.query.pageSize ?? 20), 1), 50)
+  const pageSize = Math.min(Math.max(Number(req.query.pageSize ?? 50), 1), 50)
+  const nextTimestampNano =
+    typeof req.query.nextTimestampNano === 'string' && req.query.nextTimestampNano.trim()
+      ? req.query.nextTimestampNano.trim()
+      : undefined
   try {
-    const data = await getConversationList({ direction, type, pageSize })
-    res.json({ ok: true, query: { direction, type, pageSize }, shopee: data })
+    const data = await getConversationList({ direction, type, pageSize, nextTimestampNano })
+    const body =
+      data.response != null && typeof data.response === 'object'
+        ? (data.response as Record<string, unknown>)
+        : undefined
+    const summary = body && !data.error ? summarizeConversationPage(body) : null
+    res.json({
+      ok: true,
+      query: { direction, type, pageSize, nextTimestampNano: nextTimestampNano ?? null },
+      summary,
+      shopee: data,
+    })
   } catch (error) {
     res.status(502).json({
       ok: false,

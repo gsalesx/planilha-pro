@@ -430,6 +430,62 @@ function parseConversationRow(row: Record<string, unknown>): ShopeeConversationE
   return { conversationId, toId, toName }
 }
 
+/** Campos de username que a Shopee pode devolver num chat (para debug / vínculo). */
+export function conversationUsernameFields(row: Record<string, unknown>): Record<string, string | null> {
+  const toUserInfo =
+    row.to_user_info && typeof row.to_user_info === 'object'
+      ? (row.to_user_info as Record<string, unknown>)
+      : undefined
+  const pick = (v: unknown): string | null => {
+    const s = String(v ?? '').trim()
+    return s || null
+  }
+  return {
+    to_name: pick(row.to_name),
+    to_user_name: pick(row.to_user_name),
+    username: pick(row.username),
+    buyer_username: pick(row.buyer_username),
+    to_user_info_name: pick(toUserInfo?.name),
+    to_user_info_user_name: pick(toUserInfo?.user_name),
+    parsed_for_link: parseConversationRow(row)?.toName ?? null,
+  }
+}
+
+export function summarizeConversationPage(body: Record<string, unknown>): {
+  count: number
+  more: boolean | null
+  nextTimestampNano: string | null
+  rows: Array<{
+    conversation_id: string | null
+    to_id: number | null
+    shop_id: number | null
+    last_message_ts: string | null
+    usernames: Record<string, string | null>
+  }>
+} {
+  const list = conversationListFromBody(body)
+  const pageResult =
+    body.page_result && typeof body.page_result === 'object'
+      ? (body.page_result as Record<string, unknown>)
+      : undefined
+  const moreRaw = pageResult?.more ?? body.more
+  const more = moreRaw === true || moreRaw === 'true' || moreRaw === 1 ? true : moreRaw === false ? false : null
+  return {
+    count: list.length,
+    more,
+    nextTimestampNano: resolveNextConversationTimestamp(body, list) ?? null,
+    rows: list.map((row) => ({
+      conversation_id: String(row.conversation_id ?? '').trim() || null,
+      to_id: Number(row.to_id ?? 0) || null,
+      shop_id: Number(row.shop_id ?? 0) || null,
+      last_message_ts: String(
+        row.last_message_timestamp ?? row.latest_message_timestamp_nano ?? row.latest_message_timestamp ?? '',
+      ).trim() || null,
+      usernames: conversationUsernameFields(row),
+    })),
+  }
+}
+
 function conversationListFromBody(body: Record<string, unknown>): Array<Record<string, unknown>> {
   const raw =
     body.conversations ??

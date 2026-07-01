@@ -186,12 +186,15 @@ async function boot(): Promise<void> {
     <h2>4. Mensagens (chat)</h2>
 
     <h3 class="shopee-test-subheading">4a. Listar conversas</h3>
-    <p class="shopee-test-hint">Lista vários chats da loja. <strong>Ignora</strong> o conversation_id abaixo.</p>
+    <p class="shopee-test-hint">
+      Mesmos parâmetros do <strong>Vincular conversas</strong>: <code>direction=oldest</code>, <code>page_size=50</code>.
+      O resumo abaixo mostra todos os campos de username — compare com a col E da planilha.
+    </p>
     <div class="shopee-test-form">
       <label>Direção
         <select id="chat-direction">
-          <option value="latest" selected>latest</option>
-          <option value="oldest">oldest</option>
+          <option value="oldest" selected>oldest (igual vínculo)</option>
+          <option value="latest">latest</option>
         </select>
       </label>
       <label>Tipo
@@ -201,8 +204,15 @@ async function boot(): Promise<void> {
           <option value="unread">unread</option>
         </select>
       </label>
-      <label>Por página <input type="number" id="chat-page-size" value="20" min="1" max="50" /></label>
+      <label>Por página <input type="number" id="chat-page-size" value="50" min="1" max="50" /></label>
+      <label>next_timestamp_nano (2ª página em diante)
+        <input type="text" id="chat-next-ts" placeholder="vazio = 1ª página" />
+      </label>
+      <label>Filtrar username
+        <input type="text" id="chat-filter-name" placeholder="ex: giihfitcher" />
+      </label>
       <button type="button" class="btn btn-primary" id="btn-conversations">Listar conversas</button>
+      <button type="button" class="btn" id="btn-conversations-next">Usar próximo cursor</button>
     </div>
 
     <h3 class="shopee-test-subheading">4b. Mensagens de um chat</h3>
@@ -367,12 +377,92 @@ async function boot(): Promise<void> {
     void run('get_item_base_info', () => api(`/shopee/products/detail?${qs}`))
   })
 
+  let lastConvNextTs: string | null = null
+
+  function formatConversationSummary(data: {
+    summary?: {
+      count: number
+      more: boolean | null
+      nextTimestampNano: string | null
+      rows: Array<{
+        conversation_id: string | null
+        usernames: Record<string, string | null>
+        last_message_ts: string | null
+      }>
+    } | null
+    shopee?: { error?: string; message?: string }
+  }): string {
+    const shopeeErr = data.shopee?.error
+    if (shopeeErr) {
+      return `Erro Shopee: ${shopeeErr}${data.shopee?.message ? ` — ${data.shopee.message}` : ''}`
+    }
+    const summary = data.summary
+    if (!summary) return 'Sem resumo (resposta vazia).'
+    const filter = (messagesBox.querySelector('#chat-filter-name') as HTMLInputElement).value.trim().toLowerCase()
+    const lines: string[] = [
+      `Chats nesta página: ${summary.count}`,
+      `Mais páginas: ${summary.more === true ? 'sim' : summary.more === false ? 'não' : '?'}`,
+      `Próximo cursor (next_timestamp_nano): ${summary.nextTimestampNano ?? '(nenhum)'}`,
+      '',
+      '--- Usernames por chat (compare com col E) ---',
+    ]
+    let shown = 0
+    for (const row of summary.rows) {
+      const u = row.usernames
+      const haystack = Object.values(u).filter(Boolean).join(' ').toLowerCase()
+      if (filter && !haystack.includes(filter)) continue
+      shown++
+      lines.push(
+        `#${shown} conv=${row.conversation_id ?? '?'} | parsed_for_link=${u.parsed_for_link ?? '—'}`,
+        `    to_name=${u.to_name ?? '—'} | to_user_info.user_name=${u.to_user_info_user_name ?? '—'} | buyer_username=${u.buyer_username ?? '—'}`,
+      )
+    }
+    if (filter && shown === 0) {
+      lines.push(`(nenhum chat contém "${filter}" nesta página)`)
+    }
+    return lines.join('\n')
+  }
+
   messagesBox.querySelector('#btn-conversations')!.addEventListener('click', () => {
     const direction = (messagesBox.querySelector('#chat-direction') as HTMLSelectElement).value
     const type = (messagesBox.querySelector('#chat-type') as HTMLSelectElement).value
     const pageSize = (messagesBox.querySelector('#chat-page-size') as HTMLInputElement).value
+    const nextTs = (messagesBox.querySelector('#chat-next-ts') as HTMLInputElement).value.trim()
     const qs = new URLSearchParams({ direction, type, pageSize })
-    void run('get_conversation_list', () => api(`/shopee/conversations?${qs}`))
+    if (nextTs) qs.set('nextTimestampNano', nextTs)
+    out.textContent = 'get_conversation_list…'
+    void (async () => {
+      try {
+        const data = await api<{
+          summary?: {
+            count: number
+            more: boolean | null
+            nextTimestampNano: string | null
+            rows: Array<{
+              conversation_id: string | null
+              usernames: Record<string, string | null>
+              last_message_ts: string | null
+            }>
+          } | null
+          shopee?: { error?: string; message?: string }
+        }>(`/shopee/conversations?${qs}`)
+        lastConvNextTs = data.summary?.nextTimestampNano ?? null
+        const summaryText = formatConversationSummary(data)
+        out.textContent = `=== get_conversation_list ===\n${summaryText}\n\n--- JSON completo ---\n${JSON.stringify(data, null, 2)}`
+      } catch (error) {
+        out.textContent = `=== get_conversation_list ===\nErro: ${(error as Error).message}`
+      }
+    })()
+  })
+
+  messagesBox.querySelector('#btn-conversations-next')!.addEventListener('click', () => {
+    const input = messagesBox.querySelector('#chat-next-ts') as HTMLInputElement
+    if (!lastConvNextTs) {
+      out.textContent = 'Erro: liste conversas primeiro — não há cursor salvo.'
+      return
+    }
+    input.value = lastConvNextTs
+    messagesBox.querySelector('#btn-conversations')!.dispatchEvent(new Event('click'))
   })
 
   messagesBox.querySelector('#btn-messages')!.addEventListener('click', () => {
