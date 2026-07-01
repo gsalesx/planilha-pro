@@ -187,14 +187,15 @@ async function boot(): Promise<void> {
 
     <h3 class="shopee-test-subheading">4a. Listar conversas</h3>
     <p class="shopee-test-hint">
-      Mesmos parâmetros do <strong>Vincular conversas</strong>: <code>direction=latest</code> (a Shopee rejeita <code>oldest</code>), <code>page_size=50</code>.
-      O resumo abaixo mostra todos os campos de username — compare com a col E da planilha.
+      Vínculo usa <code>direction=latest</code>. Teste <code>newest</code> / <code>oldest</code> aqui — compare datas da 1ª página.
+      O resumo mostra campos de username para cruzar com a col E.
     </p>
     <div class="shopee-test-form">
       <label>Direção
         <select id="chat-direction">
-          <option value="latest" selected>latest (único aceito pela API)</option>
-          <option value="oldest">oldest (param_error)</option>
+          <option value="latest" selected>latest (produção / vínculo)</option>
+          <option value="newest">newest (teste)</option>
+          <option value="oldest">oldest (teste — costuma param_error)</option>
         </select>
       </label>
       <label>Tipo
@@ -213,6 +214,7 @@ async function boot(): Promise<void> {
       </label>
       <button type="button" class="btn btn-primary" id="btn-conversations">Listar conversas</button>
       <button type="button" class="btn" id="btn-conversations-next">Usar próximo cursor</button>
+      <button type="button" class="btn" id="btn-conversations-compare">Comparar latest / newest / oldest</button>
     </div>
 
     <h3 class="shopee-test-subheading">4b. Mensagens de um chat</h3>
@@ -379,7 +381,7 @@ async function boot(): Promise<void> {
 
   let lastConvNextTs: string | null = null
 
-  function formatConversationSummary(data: {
+  type ConvApiData = {
     summary?: {
       count: number
       more: boolean | null
@@ -391,7 +393,19 @@ async function boot(): Promise<void> {
       }>
     } | null
     shopee?: { error?: string; message?: string }
-  }): string {
+  }
+
+  function formatNanoTs(raw: string | null | undefined): string {
+    if (!raw) return '—'
+    try {
+      const ms = Number(BigInt(raw) / 1_000_000n)
+      return new Date(ms).toISOString().slice(0, 19).replace('T', ' ')
+    } catch {
+      return raw
+    }
+  }
+
+  function formatConversationSummary(data: ConvApiData): string {
     const shopeeErr = data.shopee?.error
     if (shopeeErr) {
       return `Erro Shopee: ${shopeeErr}${data.shopee?.message ? ` — ${data.shopee.message}` : ''}`
@@ -433,19 +447,7 @@ async function boot(): Promise<void> {
     out.textContent = 'get_conversation_list…'
     void (async () => {
       try {
-        const data = await api<{
-          summary?: {
-            count: number
-            more: boolean | null
-            nextTimestampNano: string | null
-            rows: Array<{
-              conversation_id: string | null
-              usernames: Record<string, string | null>
-              last_message_ts: string | null
-            }>
-          } | null
-          shopee?: { error?: string; message?: string }
-        }>(`/shopee/conversations?${qs}`)
+        const data = await api<ConvApiData>(`/shopee/conversations?${qs}`)
         lastConvNextTs = data.summary?.nextTimestampNano ?? null
         const summaryText = formatConversationSummary(data)
         out.textContent = `=== get_conversation_list ===\n${summaryText}\n\n--- JSON completo ---\n${JSON.stringify(data, null, 2)}`
@@ -463,6 +465,46 @@ async function boot(): Promise<void> {
     }
     input.value = lastConvNextTs
     messagesBox.querySelector('#btn-conversations')!.dispatchEvent(new Event('click'))
+  })
+
+  messagesBox.querySelector('#btn-conversations-compare')!.addEventListener('click', () => {
+    const type = (messagesBox.querySelector('#chat-type') as HTMLSelectElement).value
+    const pageSize = '20'
+    out.textContent = 'Comparando latest / newest / oldest…'
+    void (async () => {
+      const lines: string[] = [
+        '=== Comparar direction (1ª página, page_size=20) ===',
+        'Objetivo: ver qual traz chats mais recentes primeiro (como queríamos com oldest).',
+        '',
+      ]
+      for (const direction of ['latest', 'newest', 'oldest'] as const) {
+        const qs = new URLSearchParams({ direction, type, pageSize })
+        try {
+          const data = await api<ConvApiData>(`/shopee/conversations?${qs}`)
+          const err = data.shopee?.error
+          if (err) {
+            lines.push(`## ${direction}`)
+            lines.push(`ERRO: ${err}${data.shopee?.message ? ` — ${data.shopee.message}` : ''}`)
+            lines.push('')
+            continue
+          }
+          const s = data.summary
+          const first = s?.rows?.[0]
+          const last = s?.rows?.length ? s.rows[s.rows.length - 1] : undefined
+          lines.push(`## ${direction}`)
+          lines.push(`Chats: ${s?.count ?? 0} | more: ${s?.more === true ? 'sim' : s?.more === false ? 'não' : '?'}`)
+          lines.push(`1º chat: ${first?.usernames?.parsed_for_link ?? '—'} | msg ${formatNanoTs(first?.last_message_ts)}`)
+          lines.push(`Último da página: ${last?.usernames?.parsed_for_link ?? '—'} | msg ${formatNanoTs(last?.last_message_ts)}`)
+          lines.push(`next_timestamp_nano: ${s?.nextTimestampNano ?? '—'}`)
+          lines.push('')
+        } catch (error) {
+          lines.push(`## ${direction}`)
+          lines.push(`Falha HTTP: ${(error as Error).message}`)
+          lines.push('')
+        }
+      }
+      out.textContent = lines.join('\n')
+    })()
   })
 
   messagesBox.querySelector('#btn-messages')!.addEventListener('click', () => {

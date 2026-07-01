@@ -305,7 +305,11 @@ router.get('/shopee/conversations', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'Shopee não configurada' })
     return
   }
-  const direction = req.query.direction === 'oldest' ? 'oldest' : 'latest'
+  const directionRaw = typeof req.query.direction === 'string' ? req.query.direction.trim().toLowerCase() : 'latest'
+  const direction =
+    directionRaw === 'oldest' || directionRaw === 'newest' || directionRaw === 'latest'
+      ? directionRaw
+      : 'latest'
   const type =
     req.query.type === 'pinned' || req.query.type === 'unread' ? req.query.type : 'all'
   const pageSize = Math.min(Math.max(Number(req.query.pageSize ?? 50), 1), 50)
