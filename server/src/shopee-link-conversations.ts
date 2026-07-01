@@ -4,6 +4,7 @@ import {
   fetchConversationMap,
   getOrderDetail,
   ORDER_BUYER_FIELDS,
+  SHOPEE_CONVERSATION_SCAN_MAX,
   type ShopeeApiResponse,
 } from './shopee-api.js'
 
@@ -20,6 +21,8 @@ export interface LinkConversationsResult {
   linked: number
   notFound: number
   conversationsScanned: number
+  conversationsIndexed: number
+  conversationPages: number
   errors: string[]
 }
 
@@ -117,6 +120,8 @@ export async function linkConversationsForWorkbook(workbookId: string): Promise<
     linked: 0,
     notFound: 0,
     conversationsScanned: 0,
+    conversationsIndexed: 0,
+    conversationPages: 0,
     errors: [],
   }
 
@@ -144,12 +149,19 @@ export async function linkConversationsForWorkbook(workbookId: string): Promise<
   const targetIds = new Set(buyers.map((b) => b.buyerUserId))
   let convMaps: Awaited<ReturnType<typeof fetchConversationMap>>
   try {
-    convMaps = await fetchConversationMap(targetIds)
+    convMaps = await fetchConversationMap(targetIds, { maxConversations: SHOPEE_CONVERSATION_SCAN_MAX })
   } catch (error) {
     result.errors.push(error instanceof Error ? error.message : String(error))
     return result
   }
   result.conversationsScanned = convMaps.scanned
+  result.conversationsIndexed = convMaps.indexed
+  result.conversationPages = convMaps.pages
+  if (convMaps.indexed === 0 && convMaps.scanned > 0) {
+    result.errors.push(
+      'Nenhum chat com to_id/conversation_id reconhecível — confira get_conversation_list no Shopee Test',
+    )
+  }
 
   const now = nowMs()
   for (const buyer of buyers) {

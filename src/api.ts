@@ -289,6 +289,8 @@ export async function linkShopeeConversations(workbookId: string): Promise<{
   linked: number
   notFound: number
   conversationsScanned: number
+  conversationsIndexed: number
+  conversationPages: number
   errors: string[]
 }> {
   return request('/shopee/link-conversations', {

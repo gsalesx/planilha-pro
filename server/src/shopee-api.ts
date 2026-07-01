@@ -394,17 +394,109 @@ export interface ShopeeConversationEntry {
   toName: string
 }
 
-/** Pagina get_conversation_list até acabar ou achar todos os to_id pedidos. */
-export async function fetchConversationMap(targetBuyerIds?: Set<number>): Promise<{
+/** Quantos chats recentes varrer no vínculo (get_conversation_list). */
+export const SHOPEE_CONVERSATION_SCAN_MAX = 1000
+
+function parseConversationRow(row: Record<string, unknown>): ShopeeConversationEntry | null {
+  const toUserInfo =
+    row.to_user_info && typeof row.to_user_info === 'object'
+      ? (row.to_user_info as Record<string, unknown>)
+      : undefined
+  const toId = Number(
+    row.to_id ??
+      row.to_user_id ??
+      row.buyer_user_id ??
+      row.buyer_id ??
+      row.user_id ??
+      toUserInfo?.user_id ??
+      toUserInfo?.to_id ??
+      0,
+  )
+  const conversationId = String(row.conversation_id ?? row.id ?? row.latest_conversation_id ?? '').trim()
+  const toName = String(
+    row.to_name ??
+      row.to_user_name ??
+      row.username ??
+      row.buyer_username ??
+      toUserInfo?.name ??
+      toUserInfo?.user_name ??
+      '',
+  ).trim()
+  if (!toId || !conversationId) return null
+  return { conversationId, toId, toName }
+}
+
+function conversationListFromBody(body: Record<string, unknown>): Array<Record<string, unknown>> {
+  const raw =
+    body.conversations ??
+    body.conversation_list ??
+    body.list ??
+    body.conversation ??
+    body.items
+  return Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : []
+}
+
+function resolveNextConversationCursor(
+  body: Record<string, unknown>,
+  list: Array<Record<string, unknown>>,
+): number | undefined {
+  const pageResult =
+    body.page_result && typeof body.page_result === 'object'
+      ? (body.page_result as Record<string, unknown>)
+      : undefined
+  const more = pageResult?.more ?? body.more
+  const rawNext =
+    pageResult?.next_timestamp_nano ??
+    body.next_timestamp_nano ??
+    pageResult?.next_cursor ??
+    body.next_cursor ??
+    pageResult?.cursor ??
+    body.cursor
+
+  if (rawNext != null && rawNext !== '' && rawNext !== 0) {
+    const n = Number(rawNext)
+    if (!Number.isNaN(n) && n > 0) return n
+  }
+
+  if (more === true || more === 'true' || more === 1) {
+    const last = list[list.length - 1]
+    if (last) {
+      const ts =
+        last.latest_message_timestamp_nano ??
+        last.last_message_timestamp_nano ??
+        last.latest_message_timestamp ??
+        last.last_message_timestamp ??
+        last.last_message_time ??
+        last.update_time
+      if (ts != null && ts !== '') {
+        const n = Number(ts)
+        if (!Number.isNaN(n) && n > 0) return n
+      }
+    }
+  }
+
+  return undefined
+}
+
+/** Pagina get_conversation_list — até maxConversations ou achar todos os to_id pedidos. */
+export async function fetchConversationMap(
+  targetBuyerIds?: Set<number>,
+  options: { maxConversations?: number } = {},
+): Promise<{
   byBuyerId: Map<number, ShopeeConversationEntry>
   byUsername: Map<string, ShopeeConversationEntry>
   scanned: number
+  indexed: number
+  pages: number
 }> {
   const byBuyerId = new Map<number, ShopeeConversationEntry>()
   const byUsername = new Map<string, ShopeeConversationEntry>()
+  const maxConversations = Math.min(Math.max(options.maxConversations ?? SHOPEE_CONVERSATION_SCAN_MAX, 50), 5000)
   let nextTimestamp: number | undefined
   let scanned = 0
-  const pageSize = 50
+  let indexed = 0
+  let pages = 0
+  let prevCursor: number | undefined
 
   const allFound = (): boolean => {
     if (!targetBuyerIds || targetBuyerIds.size === 0) return false
@@ -414,39 +506,38 @@ export async function fetchConversationMap(targetBuyerIds?: Set<number>): Promis
     return true
   }
 
-  while (true) {
+  while (scanned < maxConversations) {
+    const pageSize = Math.min(50, maxConversations - scanned)
     const data = await getConversationList({
       direction: 'latest',
       type: 'all',
       pageSize,
       nextTimestamp,
     })
-    const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_conversation_list') as {
-      conversations?: Array<Record<string, unknown>>
-      conversation_list?: Array<Record<string, unknown>>
-      page_result?: { next_timestamp_nano?: number }
-      next_timestamp_nano?: number
-    }
-    const list = body.conversations ?? body.conversation_list ?? []
+    const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_conversation_list') as Record<
+      string,
+      unknown
+    >
+    const list = conversationListFromBody(body)
+    pages++
     if (list.length === 0) break
 
     for (const row of list) {
       scanned++
-      const toId = Number(row.to_id ?? row.to_user_id ?? 0)
-      const conversationId = String(row.conversation_id ?? '').trim()
-      const toName = String(row.to_name ?? row.to_user_name ?? '').trim()
-      if (!toId || !conversationId) continue
-      const entry = { conversationId, toId, toName }
-      byBuyerId.set(toId, entry)
-      if (toName) byUsername.set(toName.toLowerCase(), entry)
+      const entry = parseConversationRow(row)
+      if (!entry) continue
+      indexed++
+      byBuyerId.set(entry.toId, entry)
+      if (entry.toName) byUsername.set(entry.toName.toLowerCase(), entry)
     }
 
-    if (allFound()) break
+    if (allFound() || scanned >= maxConversations) break
 
-    const next = body.page_result?.next_timestamp_nano ?? body.next_timestamp_nano
-    if (next == null || next === 0) break
-    nextTimestamp = Number(next)
+    const next = resolveNextConversationCursor(body, list)
+    if (next == null || next === prevCursor) break
+    prevCursor = nextTimestamp
+    nextTimestamp = next
   }
 
-  return { byBuyerId, byUsername, scanned }
+  return { byBuyerId, byUsername, scanned, indexed, pages }
 }

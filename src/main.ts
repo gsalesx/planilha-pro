@@ -1331,7 +1331,8 @@ function bindShopeeLinkConversations() {
         `Compradores na API: ${result.buyersFound}`,
         `Conversas vinculadas: ${result.linked}`,
         `Sem chat encontrado: ${result.notFound}`,
-        `Chats escaneados na Shopee: ${result.conversationsScanned}`,
+        `Chats listados na Shopee: ${result.conversationsScanned} (${result.conversationPages} página(s))`,
+        `Chats com ID reconhecido: ${result.conversationsIndexed}`,
       ]
       if (result.errors.length) {
         detail.push('', 'Erros:', ...result.errors.slice(0, 8))
