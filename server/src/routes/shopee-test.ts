@@ -23,7 +23,7 @@ import {
   parseShopeeOrderDetail,
   syncShopeeWorkbookOrders,
 } from '../shopee-order-sync.js'
-import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames, getWorkbookLinkStatus, clearBuyerChatsForWorkbook, getLinkScanBootstrap, saveLinkStartCursor, loadLinkStartCursor } from '../shopee-link-conversations.js'
+import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames, getWorkbookLinkStatus, clearBuyerChatsForWorkbook, getLinkScanBootstrap, saveLinkStartCursor, loadLinkStartCursor, warmLinkStartCursorChunk } from '../shopee-link-conversations.js'
 import { clearShopeeAuth, loadShopeeAuth } from '../shopee-store.js'
 
 const router = Router()
@@ -398,6 +398,22 @@ router.post('/shopee/link-conversations/start-cursor', requireAuth, (req, res) =
 router.get('/shopee/link-conversations/start-cursor', requireAuth, (_req, res) => {
   const cursor = loadLinkStartCursor()
   res.json({ ok: true, configured: Boolean(cursor), cursor: cursor ?? null })
+})
+
+/** POST /api/shopee/link-conversations/warm-cursor/chunk — avança 1 página até 284 e grava cursor da 285 */
+router.post('/shopee/link-conversations/warm-cursor/chunk', requireAuth, async (req, res) => {
+  const pageNumber = Math.max(0, Number(req.body?.pageNumber ?? 0))
+  const nextTimestampNano =
+    typeof req.body?.nextTimestampNano === 'string' ? req.body.nextTimestampNano.trim() : undefined
+  try {
+    const result = await warmLinkStartCursorChunk({ pageNumber, nextTimestampNano })
+    res.json({ ok: true, ...result })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
 })
 
 /** POST /api/shopee/buyer-chats/clear — apaga vínculos dos compradores desta planilha */

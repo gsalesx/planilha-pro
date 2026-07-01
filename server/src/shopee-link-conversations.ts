@@ -95,6 +95,79 @@ export function saveLinkStartCursor(nextTimestampNano: string): void {
   )
 }
 
+export interface WarmLinkStartCursorChunkResult {
+  pageNumber: number
+  nextTimestampNano: string | null
+  chatsOnPage: number
+  done: boolean
+  saved: boolean
+  startPage: number
+  error?: string
+}
+
+/** Avança uma página na Shopee até a 284; na 284 grava o cursor da página 285. */
+export async function warmLinkStartCursorChunk(state: {
+  pageNumber: number
+  nextTimestampNano?: string
+}): Promise<WarmLinkStartCursorChunkResult> {
+  const targetPage = SHOPEE_LINK_START_PAGE - 1
+  const pageNumber = Math.max(0, state.pageNumber)
+  const scannedBefore = pageNumber * SHOPEE_LINK_CONVERSATION_PAGE_SIZE
+
+  const page = await fetchConversationPage({
+    pageNumber: pageNumber + 1,
+    nextTimestampNano: state.nextTimestampNano,
+    scannedBefore,
+  })
+
+  const newPageNumber = pageNumber + 1
+  const nextTs = page.pageMetric.nextTimestampNano
+
+  if (newPageNumber >= targetPage) {
+    if (!nextTs) {
+      return {
+        pageNumber: newPageNumber,
+        nextTimestampNano: null,
+        chatsOnPage: page.pageMetric.chatsOnPage,
+        done: true,
+        saved: false,
+        startPage: SHOPEE_LINK_START_PAGE,
+        error: `Página ${newPageNumber} sem next_timestamp_nano — não foi possível gravar o cursor.`,
+      }
+    }
+    saveLinkStartCursor(nextTs)
+    return {
+      pageNumber: newPageNumber,
+      nextTimestampNano: nextTs,
+      chatsOnPage: page.pageMetric.chatsOnPage,
+      done: true,
+      saved: true,
+      startPage: SHOPEE_LINK_START_PAGE,
+    }
+  }
+
+  if (!page.hasMore || !nextTs) {
+    return {
+      pageNumber: newPageNumber,
+      nextTimestampNano: nextTs,
+      chatsOnPage: page.pageMetric.chatsOnPage,
+      done: true,
+      saved: false,
+      startPage: SHOPEE_LINK_START_PAGE,
+      error: `Parou na página ${newPageNumber}: não há mais chats ou cursor vazio (faltam ${targetPage - newPageNumber} páginas).`,
+    }
+  }
+
+  return {
+    pageNumber: newPageNumber,
+    nextTimestampNano: nextTs,
+    chatsOnPage: page.pageMetric.chatsOnPage,
+    done: false,
+    saved: false,
+    startPage: SHOPEE_LINK_START_PAGE,
+  }
+}
+
 /** Estado inicial da varredura — pula páginas 1..284 sem request. */
 export function getLinkScanBootstrap(): {
   startPage: number

@@ -187,9 +187,9 @@ async function boot(): Promise<void> {
 
     <h3 class="shopee-test-subheading">4a. Listar conversas</h3>
     <p class="shopee-test-hint">
-      Vínculo usa <code>direction=latest</code> e começa na <strong>página 285</strong> (cursor salvo).
-      Avance com "Usar próximo cursor" até a 284; o valor no campo é o cursor da 285 — clique em
-      <strong>Definir início do vínculo</strong>.
+      Vínculo usa <code>direction=latest</code> e começa na <strong>página 285</strong> (cursor salvo em
+      <code>/data</code>). Use <strong>Preparar cursor automaticamente</strong> — varre páginas 1→284 e grava o
+      cursor da 285. Status: <span id="link-start-status">—</span>
     </p>
     <div class="shopee-test-form">
       <label>Direção
@@ -213,9 +213,10 @@ async function boot(): Promise<void> {
       <label>Filtrar username
         <input type="text" id="chat-filter-name" placeholder="ex: giihfitcher" />
       </label>
-      <button type="button" class="btn btn-primary" id="btn-conversations">Listar conversas</button>
+      <button type="button" class="btn btn-primary" id="btn-warm-link-start" title="Varre conversas da página 1 até 284 e grava o cursor da página 285">Preparar cursor automaticamente (→ pág 285)</button>
+      <button type="button" class="btn" id="btn-conversations">Listar conversas</button>
       <button type="button" class="btn" id="btn-conversations-next">Usar próximo cursor</button>
-      <button type="button" class="btn" id="btn-save-link-start" title="Grava o next_timestamp_nano atual como início do vínculo (página 285)">Definir início do vínculo (pág 285)</button>
+      <button type="button" class="btn" id="btn-save-link-start" title="Grava o next_timestamp_nano atual como início do vínculo (página 285)">Definir início manual (pág 285)</button>
       <button type="button" class="btn" id="btn-conversations-compare">Comparar latest / newest / oldest</button>
     </div>
 
@@ -400,6 +401,24 @@ async function boot(): Promise<void> {
   })
 
   let lastConvNextTs: string | null = null
+  let warmLinkStartRunning = false
+
+  const linkStartStatusEl = messagesBox.querySelector('#link-start-status') as HTMLSpanElement
+
+  async function refreshLinkStartStatus(): Promise<void> {
+    try {
+      const data = await api<{ configured: boolean; cursor: string | null }>(
+        '/shopee/link-conversations/start-cursor',
+      )
+      linkStartStatusEl.textContent = data.configured
+        ? `configurado (${data.cursor?.slice(0, 8)}…)`
+        : 'não configurado'
+    } catch {
+      linkStartStatusEl.textContent = 'erro ao ler'
+    }
+  }
+
+  void refreshLinkStartStatus()
 
   type ConvApiData = {
     summary?: {
@@ -477,6 +496,63 @@ async function boot(): Promise<void> {
     })()
   })
 
+  messagesBox.querySelector('#btn-warm-link-start')!.addEventListener('click', () => {
+    if (warmLinkStartRunning) return
+    const btn = messagesBox.querySelector('#btn-warm-link-start') as HTMLButtonElement
+    warmLinkStartRunning = true
+    btn.disabled = true
+    out.textContent = 'Preparando cursor da página 285… página 0/284'
+    void (async () => {
+      type WarmChunk = {
+        ok: boolean
+        pageNumber: number
+        nextTimestampNano: string | null
+        chatsOnPage: number
+        done: boolean
+        saved: boolean
+        startPage: number
+        error?: string
+      }
+      let pageNumber = 0
+      let nextTimestampNano: string | undefined
+      const targetPage = 284
+      try {
+        while (true) {
+          const data = await api<WarmChunk>('/shopee/link-conversations/warm-cursor/chunk', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pageNumber, nextTimestampNano }),
+          })
+          if (data.nextTimestampNano) {
+            lastConvNextTs = data.nextTimestampNano
+            ;(messagesBox.querySelector('#chat-next-ts') as HTMLInputElement).value = data.nextTimestampNano
+          }
+          out.textContent = [
+            '=== Preparar cursor página 285 ===',
+            `Página ${data.pageNumber}/${targetPage} | ${data.chatsOnPage} chats nesta página`,
+            data.done
+              ? data.saved
+                ? `Concluído — cursor salvo (início do vínculo na pág ${data.startPage}).\nnext_timestamp_nano: ${data.nextTimestampNano}`
+                : `Parou: ${data.error ?? 'sem cursor'}`
+              : 'Aguarde…',
+          ].join('\n')
+          if (data.done) {
+            await refreshLinkStartStatus()
+            break
+          }
+          pageNumber = data.pageNumber
+          nextTimestampNano = data.nextTimestampNano ?? undefined
+          if (!nextTimestampNano) break
+        }
+      } catch (error) {
+        out.textContent = `Erro ao preparar cursor: ${(error as Error).message}`
+      } finally {
+        warmLinkStartRunning = false
+        btn.disabled = false
+      }
+    })()
+  })
+
   messagesBox.querySelector('#btn-conversations-next')!.addEventListener('click', () => {
     const input = messagesBox.querySelector('#chat-next-ts') as HTMLInputElement
     if (!lastConvNextTs) {
@@ -506,6 +582,7 @@ async function boot(): Promise<void> {
           body: JSON.stringify({ nextTimestampNano: cursor }),
         })
         out.textContent = `Cursor salvo para início do vínculo na página ${data.startPage}.\nnext_timestamp_nano: ${data.nextTimestampNano}`
+        await refreshLinkStartStatus()
       } catch (error) {
         out.textContent = `Erro ao salvar cursor: ${(error as Error).message}`
       }
