@@ -1334,6 +1334,12 @@ function bindShopeeLinkConversations() {
         `Chats listados na Shopee: ${result.conversationsScanned} (${result.conversationPages} página(s))`,
         `Chats com ID reconhecido: ${result.conversationsIndexed}`,
       ]
+      if (result.newestChatAt) {
+        detail.push(`Chat mais recente na 1ª página: ${result.newestChatAt.slice(0, 10)}`)
+      }
+      if (result.oldestScannedChatAt && result.conversationPages > 1) {
+        detail.push(`Chat mais antigo varrido: ${result.oldestScannedChatAt.slice(0, 10)}`)
+      }
       if (result.errors.length) {
         detail.push('', 'Erros:', ...result.errors.slice(0, 8))
         if (result.errors.length > 8) detail.push(`… e mais ${result.errors.length - 8}`)

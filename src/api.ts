@@ -291,6 +291,8 @@ export async function linkShopeeConversations(workbookId: string): Promise<{
   conversationsScanned: number
   conversationsIndexed: number
   conversationPages: number
+  newestChatAt: string | null
+  oldestScannedChatAt: string | null
   errors: string[]
 }> {
   return request('/shopee/link-conversations', {

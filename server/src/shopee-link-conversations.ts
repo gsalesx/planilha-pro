@@ -20,6 +20,8 @@ export interface LinkConversationsResult {
   conversationsScanned: number
   conversationsIndexed: number
   conversationPages: number
+  newestChatAt: string | null
+  oldestScannedChatAt: string | null
   errors: string[]
 }
 
@@ -112,6 +114,8 @@ export async function linkConversationsForWorkbook(workbookId: string): Promise<
     conversationsScanned: 0,
     conversationsIndexed: 0,
     conversationPages: 0,
+    newestChatAt: null,
+    oldestScannedChatAt: null,
     errors: [],
   }
 
@@ -139,6 +143,8 @@ export async function linkConversationsForWorkbook(workbookId: string): Promise<
   result.conversationsScanned = convMaps.scanned
   result.conversationsIndexed = convMaps.indexed
   result.conversationPages = convMaps.pages
+  result.newestChatAt = convMaps.newestChatAt
+  result.oldestScannedChatAt = convMaps.oldestScannedChatAt
   if (convMaps.indexed === 0 && convMaps.scanned > 0) {
     result.errors.push(
       'Nenhum chat com to_name/conversation_id reconhecível — confira get_conversation_list no Shopee Test',
