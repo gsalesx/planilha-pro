@@ -281,6 +281,23 @@ export async function syncShopeeWorkbookInitial(
   return acc
 }
 
+export async function linkShopeeConversations(workbookId: string): Promise<{
+  ok: boolean
+  workbookId: string
+  ordersQueried: number
+  buyersFound: number
+  linked: number
+  notFound: number
+  conversationsScanned: number
+  errors: string[]
+}> {
+  return request('/shopee/link-conversations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workbookId }),
+  })
+}
+
 /** Converte payload do servidor pra WorkbookData (formato que a grid usa) */
 export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook): WorkbookData {
   const rows: CellValue[][] = []

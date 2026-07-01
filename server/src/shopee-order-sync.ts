@@ -3,7 +3,7 @@ import {
   assertShopeeOk,
   fetchOrderListPage,
   getOrderDetail,
-  SHOPEE_LIST_ORDER_STATUSES,
+  SHOPEE_SYNC_ORDER_STATUS,
   type ShopeeApiResponse,
 } from './shopee-api.js'
 import {
@@ -280,39 +280,26 @@ async function collectOrderSnsPage(
   return sns
 }
 
-/** Lista todos os pedidos na janela — API exige order_status por request, então consulta cada status e dedupe. */
+/** Lista pedidos RETRY_SHIP na janela (poll e import manual). */
 async function collectOrderSns(
   timeFrom: number,
   timeTo: number,
   errors?: string[],
 ): Promise<string[]> {
-  const seen = new Set<string>()
-
   try {
-    for (const sn of await collectOrderSnsPage(timeFrom, timeTo, undefined)) seen.add(sn)
-    if (seen.size > 0) return [...seen]
-  } catch {
-    // order_status obrigatório na maioria das lojas — cai no loop abaixo
+    return collectOrderSnsPage(timeFrom, timeTo, SHOPEE_SYNC_ORDER_STATUS)
+  } catch (error) {
+    const msg = `${SHOPEE_SYNC_ORDER_STATUS}: ${error instanceof Error ? error.message : String(error)}`
+    console.warn('[shopee-sync] get_order_list falhou —', msg)
+    errors?.push(msg)
+    return []
   }
-
-  for (const orderStatus of SHOPEE_LIST_ORDER_STATUSES) {
-    try {
-      for (const sn of await collectOrderSnsPage(timeFrom, timeTo, orderStatus)) seen.add(sn)
-    } catch (error) {
-      const msg = `${orderStatus}: ${error instanceof Error ? error.message : String(error)}`
-      console.warn('[shopee-sync] get_order_list ignorado —', msg)
-      errors?.push(msg)
-    }
-  }
-  return [...seen]
 }
 
 /** Janela de busca — 20h com poll a cada 8h garante sobreposição se uma execução falhar. */
 export const SHOPEE_POLL_LOOKBACK_HOURS = 20
 
-/**
- * Importa pedidos recentes via API (todos os status, sem filtro na planilha).
- */
+/** Importa pedidos recentes via API — só status RETRY_SHIP. */
 export async function syncRecentShopeeOrders(options: {
   hours?: number
 } = {}): Promise<ShopeeSyncResult> {

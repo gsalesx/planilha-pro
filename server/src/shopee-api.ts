@@ -233,25 +233,21 @@ export async function getOrderList(params: OrderListParams): Promise<ShopeeApiRe
 const ORDER_DETAIL_FIELDS =
   'buyer_username,recipient_address,item_list,order_status,create_time,ship_by_date'
 
-export async function getOrderDetail(orderSnList: string[]): Promise<ShopeeApiResponse> {
+export async function getOrderDetail(
+  orderSnList: string[],
+  optionalFields: string = ORDER_DETAIL_FIELDS,
+): Promise<ShopeeApiResponse> {
   if (!orderSnList.length) throw new Error('orderSnList obrigatório')
   return shopApiGet('/api/v2/order/get_order_detail', {
     order_sn_list: orderSnList.slice(0, 50).join(','),
-    response_optional_fields: ORDER_DETAIL_FIELDS,
+    response_optional_fields: optionalFields,
   })
 }
 
-/** Status aceitos em get_order_list — consultamos todos e unimos (API não lista “todos” de uma vez). */
-export const SHOPEE_LIST_ORDER_STATUSES = [
-  'UNPAID',
-  'READY_TO_SHIP',
-  'PROCESSED',
-  'SHIPPED',
-  'COMPLETED',
-  'IN_CANCEL',
-  'CANCELLED',
-  'INVOICE_PENDING',
-] as const
+export const ORDER_BUYER_FIELDS = 'buyer_user_id,buyer_username'
+
+/** Único status consultado no poll/import automático (get_order_list). */
+export const SHOPEE_SYNC_ORDER_STATUS = 'RETRY_SHIP'
 
 export interface OrderListPage {
   orderSnList: string[]
@@ -390,4 +386,67 @@ export async function getMessageList(params: MessageListParams): Promise<ShopeeA
     query.offset = ''
   }
   return shopApiGet('/api/v2/sellerchat/get_message', query)
+}
+
+export interface ShopeeConversationEntry {
+  conversationId: string
+  toId: number
+  toName: string
+}
+
+/** Pagina get_conversation_list até acabar ou achar todos os to_id pedidos. */
+export async function fetchConversationMap(targetBuyerIds?: Set<number>): Promise<{
+  byBuyerId: Map<number, ShopeeConversationEntry>
+  byUsername: Map<string, ShopeeConversationEntry>
+  scanned: number
+}> {
+  const byBuyerId = new Map<number, ShopeeConversationEntry>()
+  const byUsername = new Map<string, ShopeeConversationEntry>()
+  let nextTimestamp: number | undefined
+  let scanned = 0
+  const pageSize = 50
+
+  const allFound = (): boolean => {
+    if (!targetBuyerIds || targetBuyerIds.size === 0) return false
+    for (const id of targetBuyerIds) {
+      if (!byBuyerId.has(id)) return false
+    }
+    return true
+  }
+
+  while (true) {
+    const data = await getConversationList({
+      direction: 'latest',
+      type: 'all',
+      pageSize,
+      nextTimestamp,
+    })
+    const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_conversation_list') as {
+      conversations?: Array<Record<string, unknown>>
+      conversation_list?: Array<Record<string, unknown>>
+      page_result?: { next_timestamp_nano?: number }
+      next_timestamp_nano?: number
+    }
+    const list = body.conversations ?? body.conversation_list ?? []
+    if (list.length === 0) break
+
+    for (const row of list) {
+      scanned++
+      const toId = Number(row.to_id ?? row.to_user_id ?? 0)
+      const conversationId = String(row.conversation_id ?? '').trim()
+      const toName = String(row.to_name ?? row.to_user_name ?? '').trim()
+      if (!toId || !conversationId) continue
+      const entry = { conversationId, toId, toName }
+      byBuyerId.set(toId, entry)
+      if (toName) byUsername.set(toName.toLowerCase(), entry)
+    }
+
+    if (allFound()) break
+
+    const next = body.page_result?.next_timestamp_nano ?? body.next_timestamp_nano
+    if (next == null || next === 0) break
+    nextTimestamp = Number(next)
+  }
+
+  return { byBuyerId, byUsername, scanned }
 }

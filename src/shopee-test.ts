@@ -138,7 +138,7 @@ async function boot(): Promise<void> {
   syncBox.innerHTML = `
     <h2>2b. Sincronizar planilha automática</h2>
     <p class="shopee-test-hint">
-      Importa pedidos de <strong>todos os status</strong> para a planilha fixa Shopee.
+      Importa pedidos com status <strong>RETRY_SHIP</strong> para a planilha fixa Shopee.
       Se o pedido já existir, só atualiza Status Shopee (H) e nome do destinatário (G).
       <a href="/?workbook=wb_shopee">Abrir planilha Shopee</a>
     </p>

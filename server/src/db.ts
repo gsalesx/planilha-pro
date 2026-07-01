@@ -226,6 +226,17 @@ db.exec(`
   }
 }
 
+// Mapa comprador Shopee → chat (fora da planilha; usado para envio de prévias etc.)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shopee_buyer_chats (
+    buyer_user_id INTEGER NOT NULL PRIMARY KEY,
+    buyer_username TEXT NOT NULL DEFAULT '',
+    conversation_id TEXT NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_shopee_buyer_chats_username ON shopee_buyer_chats (buyer_username);
+`)
+
 export function nowMs(): number {
   return Date.now()
 }

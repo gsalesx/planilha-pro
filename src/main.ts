@@ -12,6 +12,7 @@ import {
   replaceWorkbook,
   serverWorkbookToLocal,
   syncShopeeWorkbookInitial,
+  linkShopeeConversations,
   uploadImage,
   type OrderStyleDelta,
 } from './api'
@@ -90,6 +91,9 @@ function buildShell() {
       <div class="etiqueta-bar" role="toolbar" aria-label="Etiquetas">
         <span id="selection-count" style="font-size:12px;color:#475569;font-weight:600;">1 linha selecionada</span>
         <button type="button" class="pending-mutations-btn" id="pending-mutations-btn" hidden>Pendências: 0</button>
+        <button type="button" class="btn shopee-link-conversations-btn" id="shopee-link-conversations-btn" hidden title="Busca buyer_user_id nos pedidos e vincula conversation_id da Shopee (não altera a planilha)">
+          💬 Vincular conversas
+        </button>
         <button type="button" class="btn btn-primary shopee-import-bar-btn" id="shopee-import-btn" hidden title="Importa pedidos dos últimos 5 dias da Shopee">
           ↓ Importar pedidos Shopee (5 dias)
         </button>
@@ -1275,6 +1279,30 @@ function leaveWorkbook() {
   serverUpdatedAt = 0
 }
 
+function bindShopeeLinkConversations() {
+  const btn = document.querySelector<HTMLButtonElement>('#shopee-link-conversations-btn')
+  if (!btn) return
+  btn.addEventListener('click', async () => {
+    if (!currentWorkbookId) return
+    btn.disabled = true
+    setStatusText('Vinculando conversas Shopee…')
+    try {
+      const result = await linkShopeeConversations(currentWorkbookId)
+      setStatusText(
+        `Conversas: ${result.linked} vinculadas, ${result.notFound} sem chat (${result.buyersFound} compradores)`,
+      )
+      if (result.errors.length) {
+        alert(`${result.errors.length} erro(s) — veja o console`)
+        console.warn('[shopee-link-conversations]', result.errors)
+      }
+    } catch (error) {
+      setStatusText(`Erro ao vincular conversas: ${(error as Error).message}`)
+    } finally {
+      btn.disabled = false
+    }
+  })
+}
+
 function bindShopeeImport() {
   const btn = document.querySelector<HTMLButtonElement>('#shopee-import-btn')
   if (!btn) return
@@ -1302,9 +1330,11 @@ function bindShopeeImport() {
 function applyShopeeWorkbookToolbar(workbookId: string) {
   const isShopee = isShopeeWorkbookId(workbookId)
   const importBtn = document.querySelector<HTMLButtonElement>('#shopee-import-btn')
+  const linkBtn = document.querySelector<HTMLButtonElement>('#shopee-link-conversations-btn')
   const xlsxUpdate = document.querySelector<HTMLLabelElement>('#xlsx-update-label')
   const xlsxPhotos = document.querySelector<HTMLLabelElement>('#xlsx-photos-label')
   if (importBtn) importBtn.hidden = !isShopee
+  if (linkBtn) linkBtn.hidden = isShopee
   if (xlsxUpdate) xlsxUpdate.hidden = isShopee
   if (xlsxPhotos) xlsxPhotos.hidden = isShopee
 }
@@ -1348,6 +1378,7 @@ async function enterWorkbook(workbookId: string) {
   bindPendingMutationsButton()
   applyShopeeWorkbookToolbar(workbookId)
   bindShopeeImport()
+  bindShopeeLinkConversations()
   try {
     await refreshFromServer({ force: true })
   } finally {

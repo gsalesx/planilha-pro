@@ -19,6 +19,7 @@ import {
   parseShopeeOrderDetail,
   syncShopeeWorkbookOrders,
 } from '../shopee-order-sync.js'
+import { linkConversationsForWorkbook } from '../shopee-link-conversations.js'
 import { clearShopeeAuth, loadShopeeAuth } from '../shopee-store.js'
 
 const router = Router()
@@ -350,6 +351,28 @@ router.get('/shopee/messages', requireAuth, async (req, res) => {
     res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** POST /api/shopee/link-conversations — buyer_user_id + conversation_id (não altera pedidos) */
+router.post('/shopee/link-conversations', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const workbookId = typeof req.body?.workbookId === 'string' ? req.body.workbookId.trim() : ''
+  if (!workbookId) {
+    res.status(400).json({ error: 'workbookId obrigatório' })
+    return
+  }
+  try {
+    const result = await linkConversationsForWorkbook(workbookId)
+    res.json({ ok: true, workbookId, ...result })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao vincular conversas',
     })
   }
 })
