@@ -352,8 +352,8 @@ export async function fetchAllItemIds(statuses = SHOPEE_ITEM_LIST_STATUSES): Pro
 }
 
 export interface ConversationListParams {
-  /** latest = aceito; oldest/newest = só para teste no Shopee Test */
-  direction?: 'latest' | 'oldest' | 'newest' | string
+  /** latest = aceito; older = candidato ao enum correto; oldest/newest = só para teste no Shopee Test */
+  direction?: 'latest' | 'older' | 'oldest' | 'newest' | string
   type?: 'all' | 'pinned' | 'unread'
   pageSize?: number
   /**

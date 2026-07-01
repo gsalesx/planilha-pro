@@ -195,6 +195,7 @@ async function boot(): Promise<void> {
       <label>Direção
         <select id="chat-direction">
           <option value="latest" selected>latest (produção / vínculo)</option>
+          <option value="older">older (teste — enum candidato)</option>
           <option value="newest">newest (teste)</option>
           <option value="oldest">oldest (teste — costuma param_error)</option>
         </select>
@@ -592,14 +593,14 @@ async function boot(): Promise<void> {
   messagesBox.querySelector('#btn-conversations-compare')!.addEventListener('click', () => {
     const type = (messagesBox.querySelector('#chat-type') as HTMLSelectElement).value
     const pageSize = '20'
-    out.textContent = 'Comparando latest / newest / oldest…'
+    out.textContent = 'Comparando latest / older / newest / oldest…'
     void (async () => {
       const lines: string[] = [
         '=== Comparar direction (1ª página, page_size=20) ===',
-        'Objetivo: ver qual traz chats mais recentes primeiro (como queríamos com oldest).',
+        'Objetivo: ver qual enum a Shopee aceita sem param_error e qual traz chats mais antigos.',
         '',
       ]
-      for (const direction of ['latest', 'newest', 'oldest'] as const) {
+      for (const direction of ['latest', 'older', 'newest', 'oldest'] as const) {
         const qs = new URLSearchParams({ direction, type, pageSize })
         try {
           const data = await api<ConvApiData>(`/shopee/conversations?${qs}`)

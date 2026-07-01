@@ -310,7 +310,10 @@ router.get('/shopee/conversations', requireAuth, async (req, res) => {
   }
   const directionRaw = typeof req.query.direction === 'string' ? req.query.direction.trim().toLowerCase() : 'latest'
   const direction =
-    directionRaw === 'oldest' || directionRaw === 'newest' || directionRaw === 'latest'
+    directionRaw === 'oldest' ||
+    directionRaw === 'older' ||
+    directionRaw === 'newest' ||
+    directionRaw === 'latest'
       ? directionRaw
       : 'latest'
   const type =
