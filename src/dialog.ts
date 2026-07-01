@@ -156,3 +156,42 @@ export function openTextareaDialog(opts: {
   textarea.focus()
   textarea.select()
 }
+
+/** Modal informativo — só botão OK. */
+export function openAlertDialog(opts: {
+  title: string
+  body: string
+  confirmLabel?: string
+}): void {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  const bodyHtml = opts.body
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
+  overlay.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-title">${opts.title}</div>
+      <div class="modal-body">${bodyHtml}</div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-primary modal-confirm">${opts.confirmLabel ?? 'OK'}</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(overlay)
+  const close = () => overlay.remove()
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) close()
+  })
+  const confirmBtn = overlay.querySelector<HTMLButtonElement>('.modal-confirm')!
+  confirmBtn.addEventListener('click', close)
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' || event.key === 'Enter') {
+      close()
+      document.removeEventListener('keydown', onKey)
+    }
+  }
+  document.addEventListener('keydown', onKey)
+  confirmBtn.focus()
+}

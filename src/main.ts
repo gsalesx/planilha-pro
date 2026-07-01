@@ -16,7 +16,7 @@ import {
   uploadImage,
   type OrderStyleDelta,
 } from './api'
-import { openConfirmDialog, openTextareaDialog } from './dialog'
+import { openAlertDialog, openConfirmDialog, openTextareaDialog } from './dialog'
 import {
   GridView,
   MODEL_COLUMN_INDEX,
@@ -94,6 +94,7 @@ function buildShell() {
           <button class="btn" id="logout-btn" title="Sair">Sair</button>
         </div>
       </header>
+      <div id="shopee-action-banner" class="shopee-action-banner" hidden role="status" aria-live="polite"></div>
       <div class="etiqueta-bar" role="toolbar" aria-label="Etiquetas">
         <span id="selection-count" style="font-size:12px;color:#475569;font-weight:600;">1 linha selecionada</span>
         <button type="button" class="pending-mutations-btn" id="pending-mutations-btn" hidden>Pendências: 0</button>
@@ -142,6 +143,29 @@ function buildShell() {
 
 function setStatusText(text: string) {
   el<HTMLSpanElement>('#status-text').textContent = text
+}
+
+function setToolbarBtnVisible(node: HTMLElement | null, visible: boolean) {
+  if (!node) return
+  node.hidden = !visible
+  node.style.display = visible ? '' : 'none'
+}
+
+function setShopeeActionBanner(
+  message: string,
+  tone: 'loading' | 'success' | 'error' | 'hidden',
+) {
+  const banner = document.querySelector<HTMLDivElement>('#shopee-action-banner')
+  if (!banner) return
+  if (tone === 'hidden') {
+    banner.hidden = true
+    banner.textContent = ''
+    delete banner.dataset.tone
+    return
+  }
+  banner.hidden = false
+  banner.dataset.tone = tone
+  banner.textContent = message
 }
 
 function setFilename(text: string) {
@@ -1283,22 +1307,50 @@ function bindShopeeLinkConversations() {
   const btn = document.querySelector<HTMLButtonElement>('#shopee-link-conversations-btn')
   if (!btn) return
   btn.addEventListener('click', async () => {
-    if (!currentWorkbookId || !isShopeeWorkbookId(currentWorkbookId)) return
+    if (!currentWorkbookId || isShopeeWorkbookId(currentWorkbookId)) return
+    const prevLabel = btn.textContent ?? ''
     btn.disabled = true
+    btn.textContent = 'Vinculando…'
+    setShopeeActionBanner(
+      'Consultando pedidos na Shopee e buscando conversas de cada comprador. Isso pode levar alguns minutos…',
+      'loading',
+    )
+    renderSheetLoading()
     setStatusText('Vinculando conversas Shopee…')
     try {
       const result = await linkShopeeConversations(currentWorkbookId)
-      setStatusText(
-        `Conversas: ${result.linked} vinculadas, ${result.notFound} sem chat (${result.buyersFound} compradores)`,
-      )
+      const ok = result.errors.length === 0 && result.buyersFound > 0
+      const short =
+        result.buyersFound === 0
+          ? 'Nenhum comprador encontrado nos pedidos desta planilha.'
+          : `${result.linked} conversa(s) vinculada(s), ${result.notFound} sem chat (${result.buyersFound} compradores).`
+      setShopeeActionBanner(short, ok ? 'success' : 'error')
+      setStatusText(short)
+      const detail = [
+        `Pedidos únicos consultados: ${result.ordersQueried}`,
+        `Compradores na API: ${result.buyersFound}`,
+        `Conversas vinculadas: ${result.linked}`,
+        `Sem chat encontrado: ${result.notFound}`,
+        `Chats escaneados na Shopee: ${result.conversationsScanned}`,
+      ]
       if (result.errors.length) {
-        alert(`${result.errors.length} erro(s) — veja o console`)
-        console.warn('[shopee-link-conversations]', result.errors)
+        detail.push('', 'Erros:', ...result.errors.slice(0, 8))
+        if (result.errors.length > 8) detail.push(`… e mais ${result.errors.length - 8}`)
       }
+      openAlertDialog({
+        title: result.errors.length ? 'Vincular conversas — com avisos' : 'Vincular conversas — concluído',
+        body: detail.join('\n'),
+      })
+      if (result.errors.length) console.warn('[shopee-link-conversations]', result.errors)
     } catch (error) {
-      setStatusText(`Erro ao vincular conversas: ${(error as Error).message}`)
+      const msg = (error as Error).message
+      setShopeeActionBanner(`Falha ao vincular conversas: ${msg}`, 'error')
+      setStatusText(`Erro ao vincular conversas: ${msg}`)
+      openAlertDialog({ title: 'Vincular conversas — erro', body: msg })
     } finally {
       btn.disabled = false
+      btn.textContent = prevLabel
+      stopSheetLoading()
     }
   })
 }
@@ -1330,14 +1382,11 @@ function bindShopeeImport() {
 
 function applyShopeeWorkbookToolbar(workbookId: string) {
   const isShopee = isShopeeWorkbookId(workbookId)
-  const importBtn = document.querySelector<HTMLButtonElement>('#shopee-import-btn')
-  const linkBtn = document.querySelector<HTMLButtonElement>('#shopee-link-conversations-btn')
-  const xlsxUpdate = document.querySelector<HTMLLabelElement>('#xlsx-update-label')
-  const xlsxPhotos = document.querySelector<HTMLLabelElement>('#xlsx-photos-label')
-  if (importBtn) importBtn.hidden = !isShopee
-  if (linkBtn) linkBtn.hidden = isShopee
-  if (xlsxUpdate) xlsxUpdate.hidden = isShopee
-  if (xlsxPhotos) xlsxPhotos.hidden = isShopee
+  setToolbarBtnVisible(document.querySelector('#shopee-import-btn'), isShopee)
+  setToolbarBtnVisible(document.querySelector('#shopee-link-conversations-btn'), !isShopee)
+  setToolbarBtnVisible(document.querySelector('#xlsx-update-label'), !isShopee)
+  setToolbarBtnVisible(document.querySelector('#xlsx-photos-label'), !isShopee)
+  setShopeeActionBanner('', 'hidden')
 }
 
 async function enterWorkbook(workbookId: string) {

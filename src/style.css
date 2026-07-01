@@ -159,6 +159,32 @@ button {
   gap: 8px;
 }
 
+.app-header .toolbar-actions > [hidden] {
+  display: none !important;
+}
+
+.shopee-action-banner {
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.shopee-action-banner[data-tone='loading'] {
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.shopee-action-banner[data-tone='success'] {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.shopee-action-banner[data-tone='error'] {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
 /* ============================================================
    Search box (header)
    ============================================================ */
