@@ -43,6 +43,11 @@ export const env = {
   shopeeEnv: (process.env.SHOPEE_ENV === 'sandbox' ? 'sandbox' : 'production') as ShopeeRuntimeEnv,
   /** Redirect OAuth — ex. https://planilha.guilhermesales.com/api/shopee/oauth/callback */
   shopeeRedirectUrl: envTrim('SHOPEE_REDIRECT_URL'),
+  /**
+   * Cursor next_timestamp_nano para começar o vínculo na página SHOPEE_LINK_START_PAGE (285).
+   * É o "próximo cursor" devolvido após a página 284 no Shopee Test.
+   */
+  shopeeLinkStartTimestampNano: envTrim('SHOPEE_LINK_START_TIMESTAMP_NANO'),
 }
 
 export const isProd = env.nodeEnv === 'production'

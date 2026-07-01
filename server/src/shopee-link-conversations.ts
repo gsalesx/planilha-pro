@@ -1,4 +1,8 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+
 import { db, nowMs } from './db.js'
+import { env } from './env.js'
 import {
   fetchConversationMap,
   fetchConversationPage,
@@ -52,8 +56,66 @@ export interface LinkConversationsChunkResult {
 /** Col E — Nome de usuário (já vem no export Shopee / planilha manual). */
 const COL_USERNAME = 4
 
-/** Vínculo começa nesta página (1..284 só avançam cursor, sem gravar match). */
+/** Vínculo sempre começa nesta página (via cursor da página anterior). */
 export const SHOPEE_LINK_START_PAGE = 285
+
+export const SHOPEE_LINK_CONVERSATION_PAGE_SIZE = 50
+
+function linkStartCursorPath(): string {
+  mkdirSync(env.dataDir, { recursive: true })
+  return path.join(env.dataDir, 'shopee-link-start-cursor.json')
+}
+
+/** Cursor gravado (env ou /data) — input da 1ª request = página 285. */
+export function loadLinkStartCursor(): string | null {
+  const fromEnv = env.shopeeLinkStartTimestampNano
+  if (fromEnv) return fromEnv
+  const file = linkStartCursorPath()
+  if (!existsSync(file)) return null
+  try {
+    const data = JSON.parse(readFileSync(file, 'utf8')) as { nextTimestampNano?: string }
+    const cursor = data.nextTimestampNano?.trim()
+    return cursor || null
+  } catch {
+    return null
+  }
+}
+
+export function saveLinkStartCursor(nextTimestampNano: string): void {
+  const cursor = nextTimestampNano.trim()
+  if (!cursor) throw new Error('nextTimestampNano obrigatório')
+  writeFileSync(
+    linkStartCursorPath(),
+    JSON.stringify(
+      { nextTimestampNano: cursor, startPage: SHOPEE_LINK_START_PAGE, updatedAt: nowMs() },
+      null,
+      2,
+    ),
+    'utf8',
+  )
+}
+
+/** Estado inicial da varredura — pula páginas 1..284 sem request. */
+export function getLinkScanBootstrap(): {
+  startPage: number
+  pageNumber: number
+  nextTimestampNano: string
+  scannedBefore: number
+} {
+  const cursor = loadLinkStartCursor()
+  if (!cursor) {
+    throw new Error(
+      `Cursor da página ${SHOPEE_LINK_START_PAGE} não configurado. No Shopee Test, avance até a página ${SHOPEE_LINK_START_PAGE - 1}, copie o próximo next_timestamp_nano e use "Definir início do vínculo (pág ${SHOPEE_LINK_START_PAGE})" — ou defina SHOPEE_LINK_START_TIMESTAMP_NANO no servidor.`,
+    )
+  }
+  const skippedPages = SHOPEE_LINK_START_PAGE - 1
+  return {
+    startPage: SHOPEE_LINK_START_PAGE,
+    pageNumber: skippedPages,
+    nextTimestampNano: cursor,
+    scannedBefore: skippedPages * SHOPEE_LINK_CONVERSATION_PAGE_SIZE,
+  }
+}
 
 interface SheetBuyer {
   username: string
@@ -186,8 +248,6 @@ export async function linkConversationsScanChunk(
     pageNumber?: number
     scannedBefore?: number
     indexedBefore?: number
-    /** Só avança paginação — não tenta vincular (páginas antes de SHOPEE_LINK_START_PAGE). */
-    advanceOnly?: boolean
   } = {},
 ): Promise<LinkConversationsChunkResult> {
   const result: LinkConversationsChunkResult = {
@@ -250,21 +310,19 @@ export async function linkConversationsScanChunk(
 
   const now = nowMs()
   let linkedThisChunk = 0
-  if (!options.advanceOnly) {
-    for (const entry of page.entries) {
-      const key = entry.toName.toLowerCase()
-      if (!targetUsernames.has(key)) continue
-      const buyer = buyerByKey.get(key)
-      if (!buyer) continue
-      if (getBuyerChatByUsername(buyer.username)) continue
-      upsertBuyerChat({
-        toId: entry.toId,
-        buyerUsername: buyer.username,
-        conversationId: entry.conversationId,
-        updatedAt: now,
-      })
-      linkedThisChunk++
-    }
+  for (const entry of page.entries) {
+    const key = entry.toName.toLowerCase()
+    if (!targetUsernames.has(key)) continue
+    const buyer = buyerByKey.get(key)
+    if (!buyer) continue
+    if (getBuyerChatByUsername(buyer.username)) continue
+    upsertBuyerChat({
+      toId: entry.toId,
+      buyerUsername: buyer.username,
+      conversationId: entry.conversationId,
+      updatedAt: now,
+    })
+    linkedThisChunk++
   }
   result.linkedThisChunk = linkedThisChunk
   result.linked = countLinkedBuyers(buyers)
@@ -274,7 +332,7 @@ export async function linkConversationsScanChunk(
     result.done = true
     result.doneReason = 'no_more'
     result.hasMore = false
-  } else if (!options.advanceOnly && result.linked >= buyers.length) {
+  } else if (result.linked >= buyers.length) {
     result.done = true
     result.doneReason = 'all_found'
   } else if (!page.hasMore) {

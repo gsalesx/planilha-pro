@@ -16,6 +16,7 @@ import {
   fetchLinkedBuyerUsernames,
   fetchShopeeLinkStatus,
   clearShopeeBuyerChats,
+  fetchShopeeLinkBootstrap,
   uploadImage,
   type OrderStyleDelta,
 } from './api'
@@ -1445,10 +1446,21 @@ function bindShopeeLinkConversations() {
       renderSheetLoading()
       setStatusText('Vinculando conversas Shopee…')
 
+      const bootstrap = await fetchShopeeLinkBootstrap()
+      if (!bootstrap.ok || !bootstrap.configured) {
+        openAlertDialog({
+          title: 'Cursor da página 285 não configurado',
+          body:
+            bootstrap.error ??
+            'No Shopee Test, avance até a página 284 (botão "Usar próximo cursor"), depois clique em "Definir início do vínculo (pág 285)".',
+        })
+        return
+      }
+
       await withPollingPaused(async () => {
-        let nextTimestampNano: string | undefined
-        let pageNumber = 0
-        let scannedBefore = 0
+        let nextTimestampNano: string | undefined = bootstrap.nextTimestampNano
+        let pageNumber = bootstrap.pageNumber
+        let scannedBefore = bootstrap.scannedBefore
         let indexedBefore = 0
         let linked = 0
         let buyersFound = 0
@@ -1471,13 +1483,11 @@ function bindShopeeLinkConversations() {
         const maxPages = 10_000
 
         while (!done && pageNumber < maxPages) {
-          const advanceOnly = pageNumber < SHOPEE_LINK_START_PAGE - 1
           const chunk = await linkShopeeConversationsScanChunk(workbookId, {
             nextTimestampNano,
             pageNumber,
             scannedBefore,
             indexedBefore,
-            advanceOnly,
           })
           ordersQueried = chunk.ordersQueried
           buyersFound = chunk.buyersFound
@@ -1487,29 +1497,19 @@ function bindShopeeLinkConversations() {
           indexedBefore = chunk.conversationsIndexed
           if (chunk.errors.length) errors.push(...chunk.errors)
           if (chunk.pageMetric) {
-            if (!advanceOnly) pageMetricsSample.push(chunk.pageMetric)
+            pageMetricsSample.push(chunk.pageMetric)
             const n = chunk.pageMetric.newestOnPage
             const o = chunk.pageMetric.oldestOnPage
             if (n && (!newestGlobal || n > newestGlobal)) newestGlobal = n
             if (o && (!oldestGlobal || o < oldestGlobal)) oldestGlobal = o
             const pm = chunk.pageMetric
-            if (advanceOnly) {
-              setStatusText(
-                `Avançando até pág ${SHOPEE_LINK_START_PAGE}… ${pm.page}/${SHOPEE_LINK_START_PAGE - 1} | acum. ${pm.scannedTotal} | ${fmtScanDate(pm.oldestOnPage)} → ${fmtScanDate(pm.newestOnPage)}`,
-              )
-              setShopeeActionBanner(
-                `Posicionando na página ${SHOPEE_LINK_START_PAGE}… (${pm.page}/${SHOPEE_LINK_START_PAGE - 1})`,
-                'loading',
-              )
-            } else {
-              setStatusText(
-                `Pág ${pm.page}: ${pm.chatsOnPage} chats | acum. ${pm.scannedTotal} | ${fmtScanDate(pm.oldestOnPage)} → ${fmtScanDate(pm.newestOnPage)} | ${linked}/${buyersFound} vinculados`,
-              )
-              setShopeeActionBanner(
-                `Varrendo conversas Shopee… página ${pm.page}, ${pm.scannedTotal} chats, ${linked} de ${buyersFound} vinculados`,
-                'loading',
-              )
-            }
+            setStatusText(
+              `Pág ${pm.page}: ${pm.chatsOnPage} chats | acum. ${pm.scannedTotal} | ${fmtScanDate(pm.oldestOnPage)} → ${fmtScanDate(pm.newestOnPage)} | ${linked}/${buyersFound} vinculados`,
+            )
+            setShopeeActionBanner(
+              `Varrendo conversas Shopee… página ${pm.page}, ${pm.scannedTotal} chats, ${linked} de ${buyersFound} vinculados`,
+              'loading',
+            )
           }
           resumeCursor = chunk.nextTimestampNano
           done = chunk.done

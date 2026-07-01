@@ -354,13 +354,39 @@ export async function linkShopeeConversationsScanChunk(
     pageNumber: number
     scannedBefore: number
     indexedBefore: number
-    advanceOnly?: boolean
   },
 ): Promise<LinkConversationsChunkResponse> {
   return request('/shopee/link-conversations/scan-chunk', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ workbookId, ...state }),
+  })
+}
+
+export async function fetchShopeeLinkBootstrap(): Promise<{
+  ok: boolean
+  configured?: boolean
+  startPage: number
+  pageNumber: number
+  nextTimestampNano: string
+  scannedBefore: number
+  cursorSource?: string
+  error?: string
+}> {
+  return request('/shopee/link-conversations/bootstrap')
+}
+
+export async function saveShopeeLinkStartCursor(nextTimestampNano: string): Promise<{
+  ok: boolean
+  nextTimestampNano: string
+  startPage: number
+  pageNumber: number
+  scannedBefore: number
+}> {
+  return request('/shopee/link-conversations/start-cursor', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nextTimestampNano }),
   })
 }
 

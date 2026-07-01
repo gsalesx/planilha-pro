@@ -187,8 +187,9 @@ async function boot(): Promise<void> {
 
     <h3 class="shopee-test-subheading">4a. Listar conversas</h3>
     <p class="shopee-test-hint">
-      Vínculo usa <code>direction=latest</code>. Teste <code>newest</code> / <code>oldest</code> aqui — compare datas da 1ª página.
-      O resumo mostra campos de username para cruzar com a col E.
+      Vínculo usa <code>direction=latest</code> e começa na <strong>página 285</strong> (cursor salvo).
+      Avance com "Usar próximo cursor" até a 284; o valor no campo é o cursor da 285 — clique em
+      <strong>Definir início do vínculo</strong>.
     </p>
     <div class="shopee-test-form">
       <label>Direção
@@ -214,6 +215,7 @@ async function boot(): Promise<void> {
       </label>
       <button type="button" class="btn btn-primary" id="btn-conversations">Listar conversas</button>
       <button type="button" class="btn" id="btn-conversations-next">Usar próximo cursor</button>
+      <button type="button" class="btn" id="btn-save-link-start" title="Grava o next_timestamp_nano atual como início do vínculo (página 285)">Definir início do vínculo (pág 285)</button>
       <button type="button" class="btn" id="btn-conversations-compare">Comparar latest / newest / oldest</button>
     </div>
 
@@ -483,6 +485,31 @@ async function boot(): Promise<void> {
     }
     input.value = lastConvNextTs
     messagesBox.querySelector('#btn-conversations')!.dispatchEvent(new Event('click'))
+  })
+
+  messagesBox.querySelector('#btn-save-link-start')!.addEventListener('click', () => {
+    const cursor = (messagesBox.querySelector('#chat-next-ts') as HTMLInputElement).value.trim()
+    if (!cursor) {
+      out.textContent =
+        'Erro: informe next_timestamp_nano (avance até a página 284 com "Usar próximo cursor", depois salve o próximo cursor).'
+      return
+    }
+    void (async () => {
+      try {
+        const data = await api<{
+          ok: boolean
+          nextTimestampNano: string
+          startPage: number
+        }>('/shopee/link-conversations/start-cursor', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nextTimestampNano: cursor }),
+        })
+        out.textContent = `Cursor salvo para início do vínculo na página ${data.startPage}.\nnext_timestamp_nano: ${data.nextTimestampNano}`
+      } catch (error) {
+        out.textContent = `Erro ao salvar cursor: ${(error as Error).message}`
+      }
+    })()
   })
 
   messagesBox.querySelector('#btn-conversations-compare')!.addEventListener('click', () => {

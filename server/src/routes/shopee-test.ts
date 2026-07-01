@@ -23,7 +23,7 @@ import {
   parseShopeeOrderDetail,
   syncShopeeWorkbookOrders,
 } from '../shopee-order-sync.js'
-import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames, getWorkbookLinkStatus, clearBuyerChatsForWorkbook } from '../shopee-link-conversations.js'
+import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames, getWorkbookLinkStatus, clearBuyerChatsForWorkbook, getLinkScanBootstrap, saveLinkStartCursor, loadLinkStartCursor } from '../shopee-link-conversations.js'
 import { clearShopeeAuth, loadShopeeAuth } from '../shopee-store.js'
 
 const router = Router()
@@ -356,6 +356,50 @@ router.get('/shopee/link-conversations/status', requireAuth, (req, res) => {
   res.json({ ok: true, workbookId, ...getWorkbookLinkStatus(workbookId) })
 })
 
+/** GET /api/shopee/link-conversations/bootstrap — cursor inicial (página 285) */
+router.get('/shopee/link-conversations/bootstrap', requireAuth, (_req, res) => {
+  try {
+    const bootstrap = getLinkScanBootstrap()
+    res.json({
+      ok: true,
+      configured: true,
+      cursorSource: env.shopeeLinkStartTimestampNano ? 'env' : 'file',
+      ...bootstrap,
+    })
+  } catch (error) {
+    res.json({
+      ok: false,
+      configured: false,
+      error: error instanceof Error ? error.message : 'Cursor não configurado',
+    })
+  }
+})
+
+/** POST /api/shopee/link-conversations/start-cursor — grava cursor da pág. 285 em /data */
+router.post('/shopee/link-conversations/start-cursor', requireAuth, (req, res) => {
+  const nextTimestampNano =
+    typeof req.body?.nextTimestampNano === 'string' ? req.body.nextTimestampNano.trim() : ''
+  if (!nextTimestampNano) {
+    res.status(400).json({ error: 'nextTimestampNano obrigatório' })
+    return
+  }
+  try {
+    saveLinkStartCursor(nextTimestampNano)
+    res.json({ ok: true, ...getLinkScanBootstrap() })
+  } catch (error) {
+    res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Falha ao salvar cursor',
+    })
+  }
+})
+
+/** GET /api/shopee/link-conversations/start-cursor — status do cursor salvo */
+router.get('/shopee/link-conversations/start-cursor', requireAuth, (_req, res) => {
+  const cursor = loadLinkStartCursor()
+  res.json({ ok: true, configured: Boolean(cursor), cursor: cursor ?? null })
+})
+
 /** POST /api/shopee/buyer-chats/clear — apaga vínculos dos compradores desta planilha */
 router.post('/shopee/buyer-chats/clear', requireAuth, (req, res) => {
   const workbookId = typeof req.body?.workbookId === 'string' ? req.body.workbookId.trim() : ''
@@ -491,14 +535,12 @@ router.post('/shopee/link-conversations/scan-chunk', requireAuth, async (req, re
   const pageNumber = Math.max(Number(req.body?.pageNumber ?? 0), 0)
   const scannedBefore = Math.max(Number(req.body?.scannedBefore ?? 0), 0)
   const indexedBefore = Math.max(Number(req.body?.indexedBefore ?? 0), 0)
-  const advanceOnly = req.body?.advanceOnly === true
   try {
     const result = await linkConversationsScanChunk(workbookId, {
       nextTimestampNano,
       pageNumber,
       scannedBefore,
       indexedBefore,
-      advanceOnly,
     })
     res.json({ ok: true, workbookId, ...result })
   } catch (error) {
