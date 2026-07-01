@@ -56,8 +56,17 @@ export interface LinkConversationsChunkResult {
 /** Col E — Nome de usuário (já vem no export Shopee / planilha manual). */
 const COL_USERNAME = 4
 
-/** Vínculo sempre começa nesta página (via cursor da página anterior). */
+/** Shopee Test (warm-cursor): início histórico na pág. 285. Vínculo produção: older, max 10 págs. */
 export const SHOPEE_LINK_START_PAGE = 285
+
+/**
+ * Warm-cursor 2026-07-01 (direction latest, pág. 285).
+ * Fallback se SHOPEE_LINK_START_TIMESTAMP_NANO e /data estiverem vazios.
+ */
+export const SHOPEE_LINK_CURSOR_FALLBACK_NANO = '1781192143549324413'
+
+/** Vínculo: direction older, até esta página (50 chats/página). */
+export const SHOPEE_LINK_MAX_PAGES = 10
 
 export const SHOPEE_LINK_CONVERSATION_PAGE_SIZE = 50
 
@@ -66,19 +75,21 @@ function linkStartCursorPath(): string {
   return path.join(env.dataDir, 'shopee-link-start-cursor.json')
 }
 
-/** Cursor gravado (env ou /data) — input da 1ª request = página 285. */
+/** Cursor gravado (env, /data ou fallback) — input da 1ª request = página 285. */
 export function loadLinkStartCursor(): string | null {
   const fromEnv = env.shopeeLinkStartTimestampNano
   if (fromEnv) return fromEnv
   const file = linkStartCursorPath()
-  if (!existsSync(file)) return null
-  try {
-    const data = JSON.parse(readFileSync(file, 'utf8')) as { nextTimestampNano?: string }
-    const cursor = data.nextTimestampNano?.trim()
-    return cursor || null
-  } catch {
-    return null
+  if (existsSync(file)) {
+    try {
+      const data = JSON.parse(readFileSync(file, 'utf8')) as { nextTimestampNano?: string }
+      const cursor = data.nextTimestampNano?.trim()
+      if (cursor) return cursor
+    } catch {
+      /* arquivo corrompido — usa fallback */
+    }
   }
+  return SHOPEE_LINK_CURSOR_FALLBACK_NANO
 }
 
 export function saveLinkStartCursor(nextTimestampNano: string): void {
@@ -409,6 +420,9 @@ export async function linkConversationsScanChunk(
     result.done = true
     result.doneReason = 'all_found'
   } else if (!page.hasMore) {
+    result.done = true
+    result.doneReason = 'no_more'
+  } else if (pageNumber >= SHOPEE_LINK_MAX_PAGES) {
     result.done = true
     result.doneReason = 'no_more'
   } else {

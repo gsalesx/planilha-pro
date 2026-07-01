@@ -16,7 +16,6 @@ import {
   fetchLinkedBuyerUsernames,
   fetchShopeeLinkStatus,
   clearShopeeBuyerChats,
-  fetchShopeeLinkBootstrap,
   uploadImage,
   type OrderStyleDelta,
 } from './api'
@@ -24,6 +23,7 @@ import { openAlertDialog, openConfirmDialog, openTextareaDialog } from './dialog
 import {
   GridView,
   MODEL_COLUMN_INDEX,
+  PHOTO_COLUMN_INDEX,
   RECIPIENT_COLUMN_INDEX,
   type GridViewState,
 } from './grid'
@@ -723,6 +723,28 @@ async function refreshLinkedBuyerChats() {
   }
 }
 
+function handlePreviewRequest(row: number, col: number) {
+  if (!workbook || col !== RECIPIENT_COLUMN_INDEX) return
+  const sheet = workbook.sheets[workbook.sheetOrder[0]]
+  if (!sheet) return
+  const cells = sheet.rows[row]
+  if (!cells) return
+  const buyerUsername = cellText(cells, BUYER_USERNAME_COL)
+  if (!buyerUsername) return
+  if (!grid?.getLinkedChatUsernames().has(buyerUsername.toLowerCase())) {
+    openAlertDialog({ title: 'Enviar prévia', body: 'Chat não vinculado.' })
+    return
+  }
+  if (!sheet.images[`${row}:${PHOTO_COLUMN_INDEX}`]) {
+    openAlertDialog({ title: 'Enviar prévia', body: 'Esta linha não tem foto na coluna H.' })
+    return
+  }
+  openAlertDialog({
+    title: 'Enviar prévia',
+    body: 'Envio da prévia no chat Shopee será implementado em seguida.',
+  })
+}
+
 function handleChatRequest(row: number, col: number) {
   if (!workbook || col !== RECIPIENT_COLUMN_INDEX) return
   const sheet = workbook.sheets[workbook.sheetOrder[0]]
@@ -732,6 +754,14 @@ function handleChatRequest(row: number, col: number) {
   const buyerUsername = cellText(cells, BUYER_USERNAME_COL)
   if (!buyerUsername) {
     openAlertDialog({ title: 'Chat Shopee', body: 'Esta linha não tem username na coluna E.' })
+    return
+  }
+  const linked = grid?.getLinkedChatUsernames().has(buyerUsername.toLowerCase())
+  if (!linked) {
+    openAlertDialog({
+      title: 'Chat Shopee',
+      body: 'Chat não vinculado. Use "Vincular conversas Shopee" na barra de ferramentas.',
+    })
     return
   }
   void openShopeeChatPanel({
@@ -1407,8 +1437,7 @@ function formatPageMetricsLines(
 }
 
 function bindShopeeLinkConversations() {
-  /** Igual server SHOPEE_LINK_START_PAGE — match só a partir desta página. */
-  const SHOPEE_LINK_START_PAGE = 285
+  const SHOPEE_LINK_MAX_PAGES = 10
   const btn = document.querySelector<HTMLButtonElement>('#shopee-link-conversations-btn')
   if (!btn) return
   btn.addEventListener('click', async () => {
@@ -1423,7 +1452,7 @@ function bindShopeeLinkConversations() {
         const relink = await new Promise<boolean>((resolve) => {
           openConfirmDialog({
             title: 'Conversas já vinculadas',
-            body: `${status.linked} de ${status.buyersFound} compradores desta planilha já têm chat vinculado.\n\nVincular novamente apaga os vínculos atuais e varre a Shopee de novo (a partir da página ${SHOPEE_LINK_START_PAGE}).`,
+            body: `${status.linked} de ${status.buyersFound} compradores desta planilha já têm chat vinculado.\n\nVincular novamente apaga os vínculos atuais e varre a Shopee de novo (older, até ${SHOPEE_LINK_MAX_PAGES} páginas).`,
             confirmLabel: 'Vincular novamente',
             danger: true,
             onConfirm: () => resolve(true),
@@ -1440,27 +1469,16 @@ function bindShopeeLinkConversations() {
       }
 
       setShopeeActionBanner(
-        'Consultando pedidos na Shopee e buscando conversas de cada comprador. Isso pode levar alguns minutos…',
+        'Buscando conversas na Shopee (older, até 10 páginas)…',
         'loading',
       )
       renderSheetLoading()
       setStatusText('Vinculando conversas Shopee…')
 
-      const bootstrap = await fetchShopeeLinkBootstrap()
-      if (!bootstrap.ok || !bootstrap.configured) {
-        openAlertDialog({
-          title: 'Cursor da página 285 não configurado',
-          body:
-            bootstrap.error ??
-            'No Shopee Test, avance até a página 284 (botão "Usar próximo cursor"), depois clique em "Definir início do vínculo (pág 285)".',
-        })
-        return
-      }
-
       await withPollingPaused(async () => {
-        let nextTimestampNano: string | undefined = bootstrap.nextTimestampNano
-        let pageNumber = bootstrap.pageNumber
-        let scannedBefore = bootstrap.scannedBefore
+        let nextTimestampNano: string | undefined
+        let pageNumber = 0
+        let scannedBefore = 0
         let indexedBefore = 0
         let linked = 0
         let buyersFound = 0
@@ -1480,7 +1498,7 @@ function bindShopeeLinkConversations() {
         let resumeCursor: string | null = null
         let newestGlobal: string | null = null
         let oldestGlobal: string | null = null
-        const maxPages = 10_000
+        const maxPages = SHOPEE_LINK_MAX_PAGES
 
         while (!done && pageNumber < maxPages) {
           const chunk = await linkShopeeConversationsScanChunk(workbookId, {
@@ -1529,7 +1547,7 @@ function bindShopeeLinkConversations() {
         setShopeeActionBanner(short, ok ? 'success' : 'error')
         setStatusText(short)
         const detail = [
-          `Varredura a partir da página ${SHOPEE_LINK_START_PAGE}`,
+          `Varredura older (máx. ${SHOPEE_LINK_MAX_PAGES} páginas)`,
           `Pedidos únicos consultados: ${ordersQueried}`,
           `Compradores na planilha (col E): ${buyersFound}`,
           `Conversas vinculadas: ${linked}`,
@@ -1538,7 +1556,13 @@ function bindShopeeLinkConversations() {
           `Chats com ID reconhecido: ${indexedBefore}`,
         ]
         if (doneReason === 'all_found') detail.push('Parou: todos os compradores vinculados.')
-        if (doneReason === 'no_more') detail.push('Parou: fim da lista de conversas na Shopee.')
+        if (doneReason === 'no_more') {
+          detail.push(
+            pageNumber >= SHOPEE_LINK_MAX_PAGES
+              ? `Parou: limite de ${SHOPEE_LINK_MAX_PAGES} páginas.`
+              : 'Parou: fim da lista de conversas na Shopee.',
+          )
+        }
         if (newestGlobal) detail.push(`Chat mais recente varrido: ${newestGlobal.slice(0, 10)}`)
         if (oldestGlobal) detail.push(`Chat mais antigo varrido: ${oldestGlobal.slice(0, 10)}`)
         detail.push(...formatPageMetricsLines(pageMetricsSample))
@@ -1628,6 +1652,7 @@ async function enterWorkbook(workbookId: string) {
     }),
     onCommentRequest: handleCommentRequest,
     onChatRequest: handleChatRequest,
+    onPreviewRequest: handlePreviewRequest,
     onViewStateChange: () => {
       setUrlGridViewState(grid.getViewState())
       updateStatusCounts()

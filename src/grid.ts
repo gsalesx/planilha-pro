@@ -98,6 +98,7 @@ export interface GridCallbacks {
   onImageDelete?(rowIndex: number, colIndex: number): void
   onCommentRequest?(rowIndex: number, colIndex: number): void
   onChatRequest?(rowIndex: number, colIndex: number): void
+  onPreviewRequest?(rowIndex: number, colIndex: number): void
   onViewStateChange?(): void
 }
 
@@ -183,6 +184,10 @@ export class GridView {
   setLinkedChatUsernames(usernames: Iterable<string>) {
     this.linkedChatUsernames = new Set([...usernames].map((u) => u.trim().toLowerCase()).filter(Boolean))
     this.render()
+  }
+
+  getLinkedChatUsernames(): ReadonlySet<string> {
+    return this.linkedChatUsernames
   }
 
   private applyWorkbookLayout(workbookId: string): void {
@@ -731,40 +736,22 @@ export class GridView {
       const text = document.createElement('span')
       text.className = 'user-cell-text'
       text.textContent = value == null ? '' : String(value)
-      const btn = document.createElement('button')
-      btn.type = 'button'
-      btn.className = 'user-cell-copy recipient-comment-btn' + (comment ? ' has-comment' : '')
-      btn.title = comment || 'Adicionar comentário'
-      btn.innerHTML = `
+      const menuBtn = document.createElement('button')
+      menuBtn.type = 'button'
+      menuBtn.className = 'user-cell-copy recipient-menu-btn' + (comment ? ' has-comment' : '')
+      menuBtn.title = 'Ações do destinatário'
+      menuBtn.innerHTML = `
         <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-          <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2h7A2.5 2.5 0 0 1 16 4.5v5A2.5 2.5 0 0 1 13.5 12H9l-4.2 3.15A.5.5 0 0 1 4 14.75V4.5Z" />
+          <path d="M4 5.5h12M4 10h12M4 14.5h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none" />
         </svg>
       `
-      btn.addEventListener('click', (event) => {
+      menuBtn.addEventListener('click', (event) => {
         event.stopPropagation()
         this.select(row, col)
-        this.callbacks.onCommentRequest?.(row, col)
+        this.openRecipientActionMenu(row, col, menuBtn, sheet, comment)
       })
       wrap.appendChild(text)
-      wrap.appendChild(btn)
-      const buyerUsername = String(sheet.rows[row]?.[USER_COLUMN_INDEX] ?? '').trim()
-      if (buyerUsername && this.linkedChatUsernames.has(buyerUsername.toLowerCase())) {
-        const chatBtn = document.createElement('button')
-        chatBtn.type = 'button'
-        chatBtn.className = 'user-cell-copy recipient-chat-btn'
-        chatBtn.title = 'Abrir chat Shopee'
-        chatBtn.innerHTML = `
-          <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-            <path d="M3 4.5A2.5 2.5 0 0 1 5.5 2h9A2.5 2.5 0 0 1 17 4.5v6A2.5 2.5 0 0 1 14.5 13H10l-4.2 3.15A.5.5 0 0 1 5 14.75V4.5Z" />
-          </svg>
-        `
-        chatBtn.addEventListener('click', (event) => {
-          event.stopPropagation()
-          this.select(row, col)
-          this.callbacks.onChatRequest?.(row, col)
-        })
-        wrap.appendChild(chatBtn)
-      }
+      wrap.appendChild(menuBtn)
       td.appendChild(wrap)
     } else if (this.imageColumnIndices.has(col)) {
       td.classList.add('cell-image')
@@ -982,6 +969,65 @@ export class GridView {
 
     const firstHeaderRow = this.root.querySelector('thead tr:first-child')
     firstHeaderRow?.children[col + 1]?.classList.add('is-active')
+  }
+
+  private openRecipientActionMenu(
+    row: number,
+    col: number,
+    anchor: HTMLElement,
+    sheet: SheetData,
+    comment: string,
+  ) {
+    document.querySelector('.recipient-menu-popover')?.remove()
+
+    const buyerUsername = String(sheet.rows[row]?.[USER_COLUMN_INDEX] ?? '').trim()
+    const linked =
+      Boolean(buyerUsername) && this.linkedChatUsernames.has(buyerUsername.toLowerCase())
+    const hasPreview = Boolean(sheet.images[`${row}:${PHOTO_COLUMN_INDEX}`])
+
+    const popover = document.createElement('div')
+    popover.className = 'recipient-menu-popover status-popover'
+
+    const addItem = (label: string, action: () => void) => {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.textContent = label
+      btn.addEventListener('click', (event) => {
+        event.stopPropagation()
+        popover.remove()
+        action()
+      })
+      popover.appendChild(btn)
+    }
+
+    if (buyerUsername) {
+      addItem('Abrir chat', () => this.callbacks.onChatRequest?.(row, col))
+    }
+    if (linked && hasPreview) {
+      addItem('Enviar prévia', () => this.callbacks.onPreviewRequest?.(row, col))
+    }
+    addItem(comment ? 'Editar comentário' : 'Comentário', () =>
+      this.callbacks.onCommentRequest?.(row, col),
+    )
+
+    document.body.appendChild(popover)
+    const rect = anchor.getBoundingClientRect()
+    const popHeight = popover.offsetHeight
+    const popWidth = popover.offsetWidth
+    let top = rect.bottom + 4
+    let left = rect.right - popWidth
+    if (top + popHeight > window.innerHeight - 8) top = rect.top - popHeight - 4
+    if (left < 8) left = 8
+    popover.style.top = `${top}px`
+    popover.style.left = `${left}px`
+
+    const close = (event: MouseEvent) => {
+      if (!popover.contains(event.target as Node) && event.target !== anchor) {
+        popover.remove()
+        document.removeEventListener('mousedown', close)
+      }
+    }
+    window.setTimeout(() => document.addEventListener('mousedown', close), 0)
   }
 
   private openStatusPopover(row: number, col: number) {

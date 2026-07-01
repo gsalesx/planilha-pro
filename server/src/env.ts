@@ -44,8 +44,7 @@ export const env = {
   /** Redirect OAuth — ex. https://planilha.guilhermesales.com/api/shopee/oauth/callback */
   shopeeRedirectUrl: envTrim('SHOPEE_REDIRECT_URL'),
   /**
-   * Cursor next_timestamp_nano para começar o vínculo na página SHOPEE_LINK_START_PAGE (285).
-   * É o "próximo cursor" devolvido após a página 284 no Shopee Test.
+   * Cursor next_timestamp_nano para warm-cursor (pág. 285). Fallback em código: 1781192143549324413
    */
   shopeeLinkStartTimestampNano: envTrim('SHOPEE_LINK_START_TIMESTAMP_NANO'),
 }

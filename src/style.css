@@ -1300,37 +1300,20 @@ table.sheet tbody tr:hover .user-cell-copy {
   color: #047857;
   opacity: 1 !important;
 }
-.recipient-comment-btn svg {
+.recipient-menu-btn svg {
   width: 15px;
   height: 15px;
-  fill: currentColor;
 }
-.recipient-comment-btn.has-comment {
+.recipient-menu-btn.has-comment {
   background: #fb923c;
   border-color: #ea580c;
   color: #fff;
   opacity: 1 !important;
 }
-.recipient-comment-btn.has-comment:hover {
+.recipient-menu-btn.has-comment:hover {
   background: #f97316;
   border-color: #c2410c;
   color: #fff;
-}
-
-.recipient-chat-btn {
-  background: #fff7ed;
-  border-color: #fdba74;
-  color: #ea580c;
-}
-.recipient-chat-btn:hover {
-  background: #ffedd5;
-  border-color: #f97316;
-  color: #c2410c;
-}
-.recipient-chat-btn svg {
-  width: 15px;
-  height: 15px;
-  fill: currentColor;
 }
 
 body.shopee-chat-open {

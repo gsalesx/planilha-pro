@@ -614,6 +614,7 @@ export async function fetchConversationPage(options: {
   nextTimestampNano?: string
   pageNumber: number
   scannedBefore: number
+  direction?: 'latest' | 'older'
 }): Promise<{
   pageMetric: ConversationPageMetric
   entries: ShopeeConversationEntry[]
@@ -623,7 +624,7 @@ export async function fetchConversationPage(options: {
   const auth = loadShopeeAuth()
   const inputTimestampNano = options.nextTimestampNano?.trim() || null
   const data = await getConversationList({
-    direction: 'latest',
+    direction: options.direction ?? 'older',
     type: 'all',
     pageSize: 50,
     nextTimestampNano: inputTimestampNano ?? undefined,
