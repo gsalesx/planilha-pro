@@ -10,6 +10,7 @@ import {
   getItemBaseInfo,
   getItemList,
   getMessageList,
+  sendChatMessage,
   getOrderList,
   getOrderDetail,
   getShopInfo,
@@ -364,6 +365,40 @@ router.get('/shopee/messages', requireAuth, async (req, res) => {
         pageSize,
         offset: offset === '' ? 'latest' : offset,
       },
+      shopee: data,
+    })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** POST /api/shopee/messages/send — proxy send_message (texto) */
+router.post('/shopee/messages/send', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const toId = Number(req.body?.toId)
+  const text = typeof req.body?.text === 'string' ? req.body.text : ''
+  const conversationId =
+    typeof req.body?.conversationId === 'string' ? req.body.conversationId.trim() : undefined
+  const businessType = Number(req.body?.businessType ?? 0)
+  if (!toId || toId <= 0) {
+    res.status(400).json({ error: 'toId obrigatório' })
+    return
+  }
+  if (!text.trim()) {
+    res.status(400).json({ error: 'text obrigatório' })
+    return
+  }
+  try {
+    const data = await sendChatMessage({ toId, text, conversationId, businessType })
+    res.json({
+      ok: true,
+      query: { toId, conversationId: conversationId ?? null, businessType, text },
       shopee: data,
     })
   } catch (error) {

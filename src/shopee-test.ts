@@ -232,6 +232,24 @@ async function boot(): Promise<void> {
       <button type="button" class="btn btn-primary" id="btn-messages">Buscar página de mensagens</button>
       <button type="button" class="btn" id="btn-messages-all">Buscar histórico completo</button>
     </div>
+
+    <h3 class="shopee-test-subheading">4c. Enviar mensagem (send_message)</h3>
+    <p class="shopee-test-hint">
+      Envio manual de texto via API. Usa <code>to_id</code> do comprador (não o conversation_id).
+      Mensagem real — confira o chat no Seller Center depois.
+    </p>
+    <div class="shopee-test-form shopee-test-form--detail">
+      <label>to_id (comprador)
+        <input type="number" id="send-to-id" value="267446409" />
+      </label>
+      <label>conversation_id (referência / 4b)
+        <input type="text" id="send-conversation-id" value="1148673580414533416" />
+      </label>
+      <label>Texto
+        <input type="text" id="send-text" value="Teste API Planilha Pro — pode ignorar" />
+      </label>
+      <button type="button" class="btn btn-primary" id="btn-send-message">Enviar mensagem</button>
+    </div>
   `
   wrap.appendChild(messagesBox)
 
@@ -558,6 +576,27 @@ async function boot(): Promise<void> {
         messages: all,
       }
     })
+  })
+
+  messagesBox.querySelector('#btn-send-message')!.addEventListener('click', () => {
+    const toId = Number((messagesBox.querySelector('#send-to-id') as HTMLInputElement).value)
+    const conversationId = (messagesBox.querySelector('#send-conversation-id') as HTMLInputElement).value.trim()
+    const text = (messagesBox.querySelector('#send-text') as HTMLInputElement).value.trim()
+    if (!toId || toId <= 0) {
+      out.textContent = 'Erro: informe to_id válido'
+      return
+    }
+    if (!text) {
+      out.textContent = 'Erro: informe o texto da mensagem'
+      return
+    }
+    void run('send_message', () =>
+      api('/shopee/messages/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toId, conversationId, text }),
+      }),
+    )
   })
 
   if (new URLSearchParams(location.search).get('connected') === '1') {

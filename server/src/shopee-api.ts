@@ -393,6 +393,35 @@ export async function getMessageList(params: MessageListParams): Promise<ShopeeA
   return shopApiGet('/api/v2/sellerchat/get_message', query)
 }
 
+export interface SendChatMessageParams {
+  toId: number
+  text: string
+  /** Só obrigatório se business_type ≠ 0 */
+  conversationId?: string
+  businessType?: number
+}
+
+export async function sendChatMessage(params: SendChatMessageParams): Promise<ShopeeApiResponse> {
+  const toId = Number(params.toId)
+  if (!toId || toId <= 0) throw new Error('toId obrigatório')
+  const text = params.text.trim()
+  if (!text) throw new Error('texto da mensagem obrigatório')
+  const body: Record<string, unknown> = {
+    to_id: toId,
+    message_type: 'text',
+    content: { text },
+  }
+  const businessType = params.businessType ?? 0
+  if (businessType > 0) {
+    body.business_type = businessType
+    if (!params.conversationId?.trim()) {
+      throw new Error('conversation_id obrigatório quando business_type ≠ 0')
+    }
+    body.conversation_id = params.conversationId.trim()
+  }
+  return shopApiPost('/api/v2/sellerchat/send_message', body)
+}
+
 export interface ShopeeConversationEntry {
   conversationId: string
   toId: number
