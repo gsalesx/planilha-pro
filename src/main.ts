@@ -12,7 +12,7 @@ import {
   replaceWorkbook,
   serverWorkbookToLocal,
   syncShopeeWorkbookInitial,
-  linkShopeeConversations,
+  linkShopeeConversationsScanChunk,
   uploadImage,
   type OrderStyleDelta,
 } from './api'
@@ -1365,6 +1365,7 @@ function bindShopeeLinkConversations() {
   if (!btn) return
   btn.addEventListener('click', async () => {
     if (!currentWorkbookId || isShopeeWorkbookId(currentWorkbookId)) return
+    const workbookId = currentWorkbookId
     const prevLabel = btn.textContent ?? ''
     btn.disabled = true
     btn.textContent = 'Vinculando…'
@@ -1375,50 +1376,106 @@ function bindShopeeLinkConversations() {
     renderSheetLoading()
     setStatusText('Vinculando conversas Shopee…')
     try {
-      const result = await linkShopeeConversations(currentWorkbookId)
-      const ok = result.errors.length === 0 && result.buyersFound > 0
-      const short =
-        result.buyersFound === 0
-          ? 'Nenhum comprador encontrado nos pedidos desta planilha.'
-          : `${result.linked} conversa(s) vinculada(s), ${result.notFound} sem chat (${result.buyersFound} compradores).`
-      setShopeeActionBanner(short, ok ? 'success' : 'error')
-      setStatusText(short)
-      const detail = [
-        `Pedidos únicos consultados: ${result.ordersQueried}`,
-        `Compradores na planilha (col E): ${result.buyersFound}`,
-        `Conversas vinculadas: ${result.linked}`,
-        `Sem chat encontrado: ${result.notFound}`,
-        `Chats listados na Shopee: ${result.conversationsScanned} (${result.conversationPages} página(s))`,
-        `Chats com ID reconhecido: ${result.conversationsIndexed}`,
-      ]
-      if (result.newestChatAt) {
-        detail.push(`Chat mais recente varrido: ${result.newestChatAt.slice(0, 10)}`)
-      }
-      if (result.oldestScannedChatAt) {
-        detail.push(`Chat mais antigo varrido: ${result.oldestScannedChatAt.slice(0, 10)}`)
-      }
-      if (result.connectedShopId != null) {
-        detail.push(`Loja OAuth: ${result.connectedShopId}`)
-      }
-      if (result.chatShopIds?.length) {
-        detail.push(`shop_id nos chats: ${result.chatShopIds.join(', ')}`)
-      }
-      detail.push(...formatPageMetricsLines(result.pageMetrics ?? []))
-      if (result.resumeCursor) {
-        detail.push('', 'Para retomar a varredura (startTimestampNano):', result.resumeCursor)
-      }
-      if (result.errors.length) {
-        detail.push('', 'Erros:', ...result.errors.slice(0, 8))
-        if (result.errors.length > 8) detail.push(`… e mais ${result.errors.length - 8}`)
-      }
-      openAlertDialog({
-        title: result.errors.length ? 'Vincular conversas — com avisos' : 'Vincular conversas — concluído',
-        body: detail.join('\n'),
+      await withPollingPaused(async () => {
+        let nextTimestampNano: string | undefined
+        let pageNumber = 0
+        let scannedBefore = 0
+        let indexedBefore = 0
+        let linked = 0
+        let buyersFound = 0
+        let ordersQueried = 0
+        let done = false
+        let doneReason: string | null = null
+        const pageMetricsSample: Array<{
+          page: number
+          chatsOnPage: number
+          indexedOnPage: number
+          scannedTotal: number
+          newestOnPage: string | null
+          oldestOnPage: string | null
+          nextTimestampNano: string | null
+        }> = []
+        const errors: string[] = []
+        let resumeCursor: string | null = null
+        let newestGlobal: string | null = null
+        let oldestGlobal: string | null = null
+        const maxPages = 10_000
+
+        while (!done && pageNumber < maxPages) {
+          const chunk = await linkShopeeConversationsScanChunk(workbookId, {
+            nextTimestampNano,
+            pageNumber,
+            scannedBefore,
+            indexedBefore,
+          })
+          ordersQueried = chunk.ordersQueried
+          buyersFound = chunk.buyersFound
+          linked = chunk.linked
+          pageNumber = chunk.conversationPages
+          scannedBefore = chunk.conversationsScanned
+          indexedBefore = chunk.conversationsIndexed
+          if (chunk.errors.length) errors.push(...chunk.errors)
+          if (chunk.pageMetric) {
+            pageMetricsSample.push(chunk.pageMetric)
+            const n = chunk.pageMetric.newestOnPage
+            const o = chunk.pageMetric.oldestOnPage
+            if (n && (!newestGlobal || n > newestGlobal)) newestGlobal = n
+            if (o && (!oldestGlobal || o < oldestGlobal)) oldestGlobal = o
+            const pm = chunk.pageMetric
+            setStatusText(
+              `Pág ${pm.page}: ${pm.chatsOnPage} chats | acum. ${pm.scannedTotal} | ${fmtScanDate(pm.oldestOnPage)} → ${fmtScanDate(pm.newestOnPage)} | ${linked}/${buyersFound} vinculados`,
+            )
+            setShopeeActionBanner(
+              `Varrendo conversas Shopee… página ${pm.page}, ${pm.scannedTotal} chats, ${linked} de ${buyersFound} vinculados`,
+              'loading',
+            )
+          }
+          resumeCursor = chunk.nextTimestampNano
+          done = chunk.done
+          doneReason = chunk.doneReason
+          if (chunk.errors.length) break
+          if (done) break
+          if (!chunk.hasMore || !chunk.nextTimestampNano) break
+          nextTimestampNano = chunk.nextTimestampNano
+        }
+
+        const notFound = Math.max(buyersFound - linked, 0)
+        const ok = errors.length === 0 && buyersFound > 0
+        const short =
+          buyersFound === 0
+            ? 'Nenhum comprador encontrado nos pedidos desta planilha.'
+            : `${linked} conversa(s) vinculada(s), ${notFound} sem chat (${buyersFound} compradores).`
+        setShopeeActionBanner(short, ok ? 'success' : 'error')
+        setStatusText(short)
+        const detail = [
+          `Pedidos únicos consultados: ${ordersQueried}`,
+          `Compradores na planilha (col E): ${buyersFound}`,
+          `Conversas vinculadas: ${linked}`,
+          `Sem chat encontrado: ${notFound}`,
+          `Chats listados na Shopee: ${scannedBefore} (${pageNumber} página(s))`,
+          `Chats com ID reconhecido: ${indexedBefore}`,
+        ]
+        if (doneReason === 'all_found') detail.push('Parou: todos os compradores vinculados.')
+        if (doneReason === 'no_more') detail.push('Parou: fim da lista de conversas na Shopee.')
+        if (newestGlobal) detail.push(`Chat mais recente varrido: ${newestGlobal.slice(0, 10)}`)
+        if (oldestGlobal) detail.push(`Chat mais antigo varrido: ${oldestGlobal.slice(0, 10)}`)
+        detail.push(...formatPageMetricsLines(pageMetricsSample))
+        if (resumeCursor && !done) {
+          detail.push('', 'Para retomar (startTimestampNano):', resumeCursor)
+        }
+        if (errors.length) {
+          detail.push('', 'Erros:', ...errors.slice(0, 8))
+          if (errors.length > 8) detail.push(`… e mais ${errors.length - 8}`)
+        }
+        openAlertDialog({
+          title: errors.length ? 'Vincular conversas — com avisos' : 'Vincular conversas — concluído',
+          body: detail.join('\n'),
+        })
+        if (errors.length) console.warn('[shopee-link-conversations]', errors)
+        if (pageMetricsSample.length) {
+          console.info('[shopee-link-conversations] pageMetrics', pageMetricsSample)
+        }
       })
-      if (result.errors.length) console.warn('[shopee-link-conversations]', result.errors)
-      if (result.pageMetrics?.length) {
-        console.info('[shopee-link-conversations] pageMetrics', result.pageMetrics)
-      }
     } catch (error) {
       const msg = (error as Error).message
       setShopeeActionBanner(`Falha ao vincular conversas: ${msg}`, 'error')

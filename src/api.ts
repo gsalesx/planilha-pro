@@ -318,6 +318,51 @@ export async function linkShopeeConversations(
   })
 }
 
+export type LinkConversationsChunkResponse = {
+  ok: boolean
+  workbookId: string
+  ordersQueried: number
+  buyersFound: number
+  linked: number
+  linkedThisChunk: number
+  notFound: number
+  conversationsScanned: number
+  conversationsIndexed: number
+  conversationPages: number
+  pageMetric: {
+    page: number
+    chatsOnPage: number
+    indexedOnPage: number
+    scannedTotal: number
+    newestOnPage: string | null
+    oldestOnPage: string | null
+    inputTimestampNano: string | null
+    nextTimestampNano: string | null
+  } | null
+  nextTimestampNano: string | null
+  hasMore: boolean
+  done: boolean
+  doneReason: 'all_found' | 'no_more' | 'empty_page' | null
+  connectedShopId: number | null
+  errors: string[]
+}
+
+export async function linkShopeeConversationsScanChunk(
+  workbookId: string,
+  state: {
+    nextTimestampNano?: string
+    pageNumber: number
+    scannedBefore: number
+    indexedBefore: number
+  },
+): Promise<LinkConversationsChunkResponse> {
+  return request('/shopee/link-conversations/scan-chunk', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workbookId, ...state }),
+  })
+}
+
 /** Converte payload do servidor pra WorkbookData (formato que a grid usa) */
 export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook): WorkbookData {
   const rows: CellValue[][] = []

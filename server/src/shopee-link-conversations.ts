@@ -1,6 +1,7 @@
 import { db, nowMs } from './db.js'
 import {
   fetchConversationMap,
+  fetchConversationPage,
   SHOPEE_CONVERSATION_SCAN_MAX,
   type ConversationPageMetric,
 } from './shopee-api.js'
@@ -27,6 +28,24 @@ export interface LinkConversationsResult {
   chatShopIds: number[]
   pageMetrics: ConversationPageMetric[]
   resumeCursor: string | null
+  errors: string[]
+}
+
+export interface LinkConversationsChunkResult {
+  ordersQueried: number
+  buyersFound: number
+  linked: number
+  linkedThisChunk: number
+  notFound: number
+  conversationsScanned: number
+  conversationsIndexed: number
+  conversationPages: number
+  pageMetric: ConversationPageMetric | null
+  nextTimestampNano: string | null
+  hasMore: boolean
+  done: boolean
+  doneReason: 'all_found' | 'no_more' | 'empty_page' | null
+  connectedShopId: number | null
   errors: string[]
 }
 
@@ -104,6 +123,123 @@ export function getBuyerChatByUsername(username: string): ShopeeBuyerChatRow | u
     conversationId: row.conversation_id,
     updatedAt: row.updated_at,
   }
+}
+
+function countLinkedBuyers(buyers: SheetBuyer[]): number {
+  let linked = 0
+  for (const buyer of buyers) {
+    if (getBuyerChatByUsername(buyer.username)) linked++
+  }
+  return linked
+}
+
+/**
+ * Uma página da varredura — resposta leve para evitar timeout/502.
+ * Grava vínculos assim que encontra match na col E.
+ */
+export async function linkConversationsScanChunk(
+  workbookId: string,
+  options: {
+    nextTimestampNano?: string
+    pageNumber?: number
+    scannedBefore?: number
+    indexedBefore?: number
+  } = {},
+): Promise<LinkConversationsChunkResult> {
+  const result: LinkConversationsChunkResult = {
+    ordersQueried: 0,
+    buyersFound: 0,
+    linked: 0,
+    linkedThisChunk: 0,
+    notFound: 0,
+    conversationsScanned: options.scannedBefore ?? 0,
+    conversationsIndexed: options.indexedBefore ?? 0,
+    conversationPages: options.pageNumber ?? 0,
+    pageMetric: null,
+    nextTimestampNano: null,
+    hasMore: false,
+    done: true,
+    doneReason: null,
+    connectedShopId: null,
+    errors: [],
+  }
+
+  const buyers = uniqueBuyersFromSheet(workbookId)
+  const orderCount = (
+    db
+      .prepare('SELECT COUNT(DISTINCT id) AS n FROM orders WHERE workbook_id = ? AND TRIM(id) != ?')
+      .get(workbookId, '') as { n: number }
+  ).n
+  result.ordersQueried = orderCount
+  result.buyersFound = buyers.length
+  if (buyers.length === 0) {
+    result.doneReason = 'empty_page'
+    return result
+  }
+
+  const targetUsernames = new Set(buyers.map((b) => b.username.toLowerCase()))
+  const buyerByKey = new Map(buyers.map((b) => [b.username.toLowerCase(), b]))
+  const linkedBefore = countLinkedBuyers(buyers)
+  const pageNumber = (options.pageNumber ?? 0) + 1
+
+  let page: Awaited<ReturnType<typeof fetchConversationPage>>
+  try {
+    page = await fetchConversationPage({
+      nextTimestampNano: options.nextTimestampNano,
+      pageNumber,
+      scannedBefore: options.scannedBefore ?? 0,
+    })
+  } catch (error) {
+    result.errors.push(error instanceof Error ? error.message : String(error))
+    result.linked = linkedBefore
+    result.notFound = buyers.length - linkedBefore
+    return result
+  }
+
+  result.pageMetric = page.pageMetric
+  result.conversationsScanned = page.pageMetric.scannedTotal
+  result.conversationsIndexed = (options.indexedBefore ?? 0) + page.pageMetric.indexedOnPage
+  result.conversationPages = pageNumber
+  result.nextTimestampNano = page.pageMetric.nextTimestampNano
+  result.hasMore = page.hasMore
+  result.connectedShopId = page.connectedShopId
+
+  const now = nowMs()
+  let linkedThisChunk = 0
+  for (const entry of page.entries) {
+    const key = entry.toName.toLowerCase()
+    if (!targetUsernames.has(key)) continue
+    const buyer = buyerByKey.get(key)
+    if (!buyer) continue
+    if (getBuyerChatByUsername(buyer.username)) continue
+    upsertBuyerChat({
+      toId: entry.toId,
+      buyerUsername: buyer.username,
+      conversationId: entry.conversationId,
+      updatedAt: now,
+    })
+    linkedThisChunk++
+  }
+  result.linkedThisChunk = linkedThisChunk
+  result.linked = countLinkedBuyers(buyers)
+  result.notFound = buyers.length - result.linked
+
+  if (page.pageMetric.chatsOnPage === 0) {
+    result.done = true
+    result.doneReason = 'no_more'
+    result.hasMore = false
+  } else if (result.linked >= buyers.length) {
+    result.done = true
+    result.doneReason = 'all_found'
+  } else if (!page.hasMore) {
+    result.done = true
+    result.doneReason = 'no_more'
+  } else {
+    result.done = false
+    result.doneReason = null
+  }
+
+  return result
 }
 
 /**

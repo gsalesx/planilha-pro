@@ -22,7 +22,7 @@ import {
   parseShopeeOrderDetail,
   syncShopeeWorkbookOrders,
 } from '../shopee-order-sync.js'
-import { linkConversationsForWorkbook } from '../shopee-link-conversations.js'
+import { linkConversationsForWorkbook, linkConversationsScanChunk } from '../shopee-link-conversations.js'
 import { clearShopeeAuth, loadShopeeAuth } from '../shopee-store.js'
 
 const router = Router()
@@ -406,6 +406,40 @@ router.post('/shopee/messages/send', requireAuth, async (req, res) => {
     res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** POST /api/shopee/link-conversations/scan-chunk — uma página por request (evita 502) */
+router.post('/shopee/link-conversations/scan-chunk', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const workbookId = typeof req.body?.workbookId === 'string' ? req.body.workbookId.trim() : ''
+  if (!workbookId) {
+    res.status(400).json({ error: 'workbookId obrigatório' })
+    return
+  }
+  const nextTimestampNano =
+    typeof req.body?.nextTimestampNano === 'string' && req.body.nextTimestampNano.trim()
+      ? req.body.nextTimestampNano.trim()
+      : undefined
+  const pageNumber = Math.max(Number(req.body?.pageNumber ?? 0), 0)
+  const scannedBefore = Math.max(Number(req.body?.scannedBefore ?? 0), 0)
+  const indexedBefore = Math.max(Number(req.body?.indexedBefore ?? 0), 0)
+  try {
+    const result = await linkConversationsScanChunk(workbookId, {
+      nextTimestampNano,
+      pageNumber,
+      scannedBefore,
+      indexedBefore,
+    })
+    res.json({ ok: true, workbookId, ...result })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao varrer conversas',
     })
   }
 })

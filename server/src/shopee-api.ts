@@ -609,6 +609,66 @@ function resolveNextConversationTimestamp(
   return lastTs?.toString()
 }
 
+/** Uma página de get_conversation_list (para varredura fragmentada). */
+export async function fetchConversationPage(options: {
+  nextTimestampNano?: string
+  pageNumber: number
+  scannedBefore: number
+}): Promise<{
+  pageMetric: ConversationPageMetric
+  entries: ShopeeConversationEntry[]
+  hasMore: boolean
+  connectedShopId: number | null
+}> {
+  const auth = loadShopeeAuth()
+  const inputTimestampNano = options.nextTimestampNano?.trim() || null
+  const data = await getConversationList({
+    direction: 'latest',
+    type: 'all',
+    pageSize: 50,
+    nextTimestampNano: inputTimestampNano ?? undefined,
+  })
+  const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_conversation_list') as Record<
+    string,
+    unknown
+  >
+  const list = conversationListFromBody(body)
+  const entries: ShopeeConversationEntry[] = []
+  let indexedOnPage = 0
+  let scanned = options.scannedBefore
+
+  for (const row of list) {
+    scanned++
+    const entry = parseConversationRow(row)
+    if (!entry) continue
+    indexedOnPage++
+    entries.push(entry)
+  }
+
+  const range = pageMessageTimeRange(list)
+  const next = list.length > 0 ? resolveNextConversationTimestamp(body, list) ?? null : null
+  const hasMore =
+    list.length > 0 && next != null && next !== (inputTimestampNano ?? '')
+
+  const pageMetric: ConversationPageMetric = {
+    page: options.pageNumber,
+    chatsOnPage: list.length,
+    indexedOnPage,
+    scannedTotal: scanned,
+    newestOnPage: range.newest != null ? nanoBigIntToIso(range.newest) : null,
+    oldestOnPage: range.oldest != null ? nanoBigIntToIso(range.oldest) : null,
+    inputTimestampNano,
+    nextTimestampNano: next,
+  }
+
+  return {
+    pageMetric,
+    entries,
+    hasMore,
+    connectedShopId: auth?.shopId ?? null,
+  }
+}
+
 /** Pagina get_conversation_list — até maxConversations ou achar todos os to_name pedidos. */
 export async function fetchConversationMap(
   options: {
