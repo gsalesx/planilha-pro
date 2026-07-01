@@ -355,8 +355,11 @@ export interface ConversationListParams {
   direction?: 'latest' | 'oldest'
   type?: 'all' | 'pinned' | 'unread'
   pageSize?: number
-  /** page_result.next_cursor da página anterior (JSON stringificado). */
-  cursor?: string
+  /**
+   * Paginação — request usa next_timestamp_nano (shinryak-shopee-api / doc legado).
+   * Valor vem de page_result.next_cursor.next_message_time_nano na página anterior.
+   */
+  nextTimestampNano?: number
 }
 
 export async function getConversationList(params: ConversationListParams = {}): Promise<ShopeeApiResponse> {
@@ -365,7 +368,7 @@ export async function getConversationList(params: ConversationListParams = {}): 
     type: params.type ?? 'all',
     page_size: params.pageSize ?? 20,
   }
-  if (params.cursor) query.cursor = params.cursor
+  if (params.nextTimestampNano != null) query.next_timestamp_nano = params.nextTimestampNano
   return shopApiGet('/api/v2/sellerchat/get_conversation_list', query)
 }
 
@@ -452,7 +455,10 @@ function nanoToIso(nano: number): string {
   return new Date(nano / 1_000_000).toISOString()
 }
 
-function resolveNextConversationCursor(body: Record<string, unknown>): string | undefined {
+function resolveNextConversationTimestamp(
+  body: Record<string, unknown>,
+  list: Array<Record<string, unknown>>,
+): number | undefined {
   const pageResult =
     body.page_result && typeof body.page_result === 'object'
       ? (body.page_result as Record<string, unknown>)
@@ -461,16 +467,27 @@ function resolveNextConversationCursor(body: Record<string, unknown>): string | 
   if (more !== true && more !== 'true' && more !== 1) return undefined
 
   const rawNext = pageResult?.next_cursor ?? body.next_cursor
-  if (rawNext == null || rawNext === '' || rawNext === 0) return undefined
+  if (typeof rawNext === 'object' && rawNext !== null) {
+    const obj = rawNext as Record<string, unknown>
+    const nano = obj.next_message_time_nano ?? obj.next_timestamp_nano
+    const n = Number(nano)
+    if (!Number.isNaN(n) && n > 0) return n
+  }
 
-  if (typeof rawNext === 'object') {
-    return JSON.stringify(rawNext)
+  const flat = pageResult?.next_timestamp_nano ?? body.next_timestamp_nano
+  if (flat != null && flat !== '' && flat !== 0) {
+    const n = Number(flat)
+    if (!Number.isNaN(n) && n > 0) return n
   }
-  if (typeof rawNext === 'string') {
-    const trimmed = rawNext.trim()
-    return trimmed || undefined
+
+  if (typeof rawNext === 'string' || typeof rawNext === 'number') {
+    const n = Number(rawNext)
+    if (!Number.isNaN(n) && n > 0) return n
   }
-  return undefined
+
+  // direction=latest: paginar do mais recente ao mais antigo — cursor = 1º item (menor timestamp)
+  const first = list[0]
+  return first ? conversationMessageTimeNano(first) : undefined
 }
 
 /** Pagina get_conversation_list — até maxConversations ou achar todos os to_name pedidos. */
@@ -486,11 +503,11 @@ export async function fetchConversationMap(
 }> {
   const byUsername = new Map<string, ShopeeConversationEntry>()
   const maxConversations = Math.min(Math.max(options.maxConversations ?? SHOPEE_CONVERSATION_SCAN_MAX, 50), 5000)
-  let cursor: string | undefined
+  let nextTimestampNano: number | undefined
   let scanned = 0
   let indexed = 0
   let pages = 0
-  let prevCursor: string | undefined
+  let prevTimestamp: number | undefined
   let newestChatAt: string | null = null
   let oldestScannedChatAt: string | null = null
 
@@ -508,7 +525,7 @@ export async function fetchConversationMap(
       direction: 'latest',
       type: 'all',
       pageSize,
-      cursor,
+      nextTimestampNano,
     })
     const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_conversation_list') as Record<
       string,
@@ -518,13 +535,8 @@ export async function fetchConversationMap(
     pages++
     if (list.length === 0) break
 
-    const pageFirstTs = conversationMessageTimeNano(list[0]!)
-    if (pageFirstTs != null) {
-      const iso = nanoToIso(pageFirstTs)
-      if (pages === 1) newestChatAt = iso
-      oldestScannedChatAt = iso
-    }
-
+    let pageNewestTs: number | undefined
+    let pageOldestTs: number | undefined
     for (const row of list) {
       scanned++
       const entry = parseConversationRow(row)
@@ -532,15 +544,20 @@ export async function fetchConversationMap(
       indexed++
       byUsername.set(entry.toName.toLowerCase(), entry)
       const ts = conversationMessageTimeNano(row)
-      if (ts != null) oldestScannedChatAt = nanoToIso(ts)
+      if (ts != null) {
+        if (pageNewestTs == null || ts > pageNewestTs) pageNewestTs = ts
+        if (pageOldestTs == null || ts < pageOldestTs) pageOldestTs = ts
+      }
     }
+    if (pageNewestTs != null && pages === 1) newestChatAt = nanoToIso(pageNewestTs)
+    if (pageOldestTs != null) oldestScannedChatAt = nanoToIso(pageOldestTs)
 
     if (allFound() || scanned >= maxConversations) break
 
-    const next = resolveNextConversationCursor(body)
-    if (!next || next === prevCursor) break
-    prevCursor = cursor
-    cursor = next
+    const next = resolveNextConversationTimestamp(body, list)
+    if (next == null || next === prevTimestamp) break
+    prevTimestamp = nextTimestampNano
+    nextTimestampNano = next
   }
 
   return { byUsername, scanned, indexed, pages, newestChatAt, oldestScannedChatAt }
