@@ -1,4 +1,6 @@
 import { createHmac } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { basename } from 'node:path'
 
 import { env, type ShopeeRuntimeEnv } from './env.js'
 import { loadShopeeAuth, saveShopeeAuth, type ShopeeAuthRecord } from './shopee-store.js'
@@ -417,6 +419,55 @@ export async function sendChatMessage(params: SendChatMessageParams): Promise<Sh
     if (!params.conversationId?.trim()) {
       throw new Error('conversation_id obrigatório quando business_type ≠ 0')
     }
+    body.conversation_id = params.conversationId.trim()
+  }
+  return shopApiPost('/api/v2/sellerchat/send_message', body)
+}
+
+export async function uploadChatImage(filePath: string): Promise<string> {
+  const auth = await ensureShopAuth()
+  const apiPath = '/api/v2/sellerchat/upload_image'
+  const timestamp = Math.floor(Date.now() / 1000)
+  const sign = signShop(apiPath, timestamp, auth.accessToken, auth.shopId)
+  const url = buildSignedUrl(apiPath, sign, timestamp, {
+    access_token: auth.accessToken,
+    shop_id: auth.shopId,
+  })
+  const buffer = readFileSync(filePath)
+  const form = new FormData()
+  form.append('file', new Blob([buffer], { type: 'image/jpeg' }), basename(filePath) || 'preview.jpg')
+  const response = await fetch(url, { method: 'POST', body: form })
+  const data = await parseShopeeJson(response)
+  const body = assertShopeeOk(
+    data as ShopeeApiResponse<Record<string, unknown>>,
+    'upload_image',
+  )
+  const nested =
+    body.response != null && typeof body.response === 'object'
+      ? (body.response as Record<string, unknown>)
+      : body
+  const imageUrl = String(nested.url ?? nested.image_url ?? '').trim()
+  if (!imageUrl) {
+    throw new Error(`upload_image: URL não retornada — ${JSON.stringify(data).slice(0, 300)}`)
+  }
+  return imageUrl
+}
+
+export async function sendChatImageMessage(params: {
+  toId: number
+  imageUrl: string
+  conversationId?: string
+}): Promise<ShopeeApiResponse> {
+  const toId = Number(params.toId)
+  if (!toId || toId <= 0) throw new Error('toId obrigatório')
+  const imageUrl = params.imageUrl.trim()
+  if (!imageUrl) throw new Error('imageUrl obrigatório')
+  const body: Record<string, unknown> = {
+    to_id: toId,
+    message_type: 'image',
+    content: { image_url: imageUrl },
+  }
+  if (params.conversationId?.trim()) {
     body.conversation_id = params.conversationId.trim()
   }
   return shopApiPost('/api/v2/sellerchat/send_message', body)

@@ -2,6 +2,9 @@ import type { StatusOption, StatusValue } from './types'
 
 export const STATUS_COLUMN_INDEX = 5 // coluna F (Status)
 
+/** Status após envio de prévia no chat Shopee. */
+export const PREVIEW_SENT_STATUS = 'Prévia'
+
 export const STATUS_OPTIONS: StatusOption[] = [
   { label: '', color: '#ffffff' },
   { label: 'Pronto', color: '#34d399' },
@@ -12,6 +15,7 @@ export const STATUS_OPTIONS: StatusOption[] = [
   { label: 'Cancelado', color: '#dc2626', textColor: '#ffffff' },
   { label: 'Aprovado', color: '#86efac' },
   { label: 'Sem fotos', color: '#d1d5db' },
+  { label: 'Prévia', color: '#c4b5fd' },
 ]
 
 const STATUS_BY_LABEL = new Map<string, StatusOption>(

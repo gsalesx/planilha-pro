@@ -11,6 +11,8 @@ import {
   getItemList,
   getMessageList,
   sendChatMessage,
+  uploadChatImage,
+  sendChatImageMessage,
   fetchAllChatMessages,
   getOrderList,
   getOrderDetail,
@@ -25,6 +27,8 @@ import {
 } from '../shopee-order-sync.js'
 import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames, getWorkbookLinkStatus, clearBuyerChatsForWorkbook, getLinkScanBootstrap, saveLinkStartCursor, loadLinkStartCursor, warmLinkStartCursorChunk } from '../shopee-link-conversations.js'
 import { clearShopeeAuth, loadShopeeAuth } from '../shopee-store.js'
+import { db } from '../db.js'
+import { existsSync } from 'node:fs'
 
 const router = Router()
 
@@ -526,6 +530,63 @@ router.post('/shopee/messages/send', requireAuth, async (req, res) => {
     res.json({
       ok: true,
       query: { toId, conversationId: conversationId ?? null, businessType, text },
+      shopee: data,
+    })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** POST /api/shopee/messages/send-preview — upload imagem da planilha + send_message image */
+router.post('/shopee/messages/send-preview', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : ''
+  const workbookId = typeof req.body?.workbookId === 'string' ? req.body.workbookId.trim() : ''
+  const orderKey = typeof req.body?.orderKey === 'string' ? req.body.orderKey.trim() : ''
+  const col = Number(req.body?.col)
+  if (!username) {
+    res.status(400).json({ error: 'username obrigatório' })
+    return
+  }
+  if (!workbookId || !orderKey) {
+    res.status(400).json({ error: 'workbookId e orderKey obrigatórios' })
+    return
+  }
+  if (!Number.isFinite(col) || col < 0) {
+    res.status(400).json({ error: 'col inválida' })
+    return
+  }
+  const chat = getBuyerChatByUsername(username)
+  if (!chat) {
+    res.status(404).json({ error: 'Chat não vinculado' })
+    return
+  }
+  const img = db
+    .prepare(
+      'SELECT storage_path FROM images WHERE workbook_id = ? AND order_id = ? AND col = ?',
+    )
+    .get(workbookId, orderKey, col) as { storage_path: string } | undefined
+  if (!img?.storage_path || !existsSync(img.storage_path)) {
+    res.status(404).json({ error: 'Imagem não encontrada' })
+    return
+  }
+  try {
+    const shopeeImageUrl = await uploadChatImage(img.storage_path)
+    const data = await sendChatImageMessage({
+      toId: chat.toId,
+      imageUrl: shopeeImageUrl,
+      conversationId: chat.conversationId,
+    })
+    res.json({
+      ok: true,
+      query: { username, workbookId, orderKey, col },
+      shopeeImageUrl,
       shopee: data,
     })
   } catch (error) {

@@ -983,7 +983,9 @@ export class GridView {
     const buyerUsername = String(sheet.rows[row]?.[USER_COLUMN_INDEX] ?? '').trim()
     const linked =
       Boolean(buyerUsername) && this.linkedChatUsernames.has(buyerUsername.toLowerCase())
-    const hasPreview = Boolean(sheet.images[`${row}:${PHOTO_COLUMN_INDEX}`])
+    const hasPreview = this.photoColumnIndices.some((photoCol) =>
+      Boolean(sheet.images[`${row}:${photoCol}`]),
+    )
 
     const popover = document.createElement('div')
     popover.className = 'recipient-menu-popover status-popover'

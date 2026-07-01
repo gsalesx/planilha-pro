@@ -454,6 +454,19 @@ export async function sendShopeeChatMessage(opts: {
   })
 }
 
+export async function sendShopeePreview(opts: {
+  username: string
+  workbookId: string
+  orderKey: string
+  col: number
+}): Promise<{ ok: boolean; shopeeImageUrl?: string }> {
+  return request('/shopee/messages/send-preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+}
+
 /** Converte payload do servidor pra WorkbookData (formato que a grid usa) */
 export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook): WorkbookData {
   const rows: CellValue[][] = []

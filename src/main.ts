@@ -17,20 +17,20 @@ import {
   fetchShopeeLinkStatus,
   clearShopeeBuyerChats,
   uploadImage,
+  sendShopeePreview,
   type OrderStyleDelta,
 } from './api'
-import { openAlertDialog, openConfirmDialog, openTextareaDialog } from './dialog'
+import { openAlertDialog, openConfirmDialog, openPreviewPickerDialog, openTextareaDialog } from './dialog'
 import {
   GridView,
   MODEL_COLUMN_INDEX,
-  PHOTO_COLUMN_INDEX,
   RECIPIENT_COLUMN_INDEX,
   type GridViewState,
 } from './grid'
 import { showLoginScreen } from './login'
 import { formatHitRef, highlightMatch, searchWorkbook, type SearchHit } from './search'
-import { STATUS_COLUMN_INDEX } from './status'
-import type { CellValue, WorkbookData } from './types'
+import { STATUS_COLUMN_INDEX, PREVIEW_SENT_STATUS } from './status'
+import type { CellValue, SheetData, WorkbookData } from './types'
 import { showWorkbooksList } from './workbooks-list'
 import { isShopeeWorkbookId } from './shopee-workbook'
 import { openShopeeChatPanel } from './shopee-chat-panel'
@@ -723,6 +723,51 @@ async function refreshLinkedBuyerChats() {
   }
 }
 
+function listPreviewPhotoCols(sheet: SheetData, row: number): number[] {
+  const cols = grid?.getPhotoColumnIndices() ?? []
+  return cols.filter((col) => Boolean(sheet.images[`${row}:${col}`]))
+}
+
+async function sendPreviewForRow(row: number, photoCol: number): Promise<void> {
+  if (!workbook || !currentWorkbookId || !grid) return
+  const sheet = workbook.sheets[workbook.sheetOrder[0]]
+  if (!sheet) return
+  const orderKey = getOrderKey(row)
+  if (!orderKey) {
+    openAlertDialog({ title: 'Enviar prévia', body: 'Pedido sem ID.' })
+    return
+  }
+  const workbookId = currentWorkbookId
+  const buyerUsername = cellText(sheet.rows[row] ?? [], BUYER_USERNAME_COL)
+  if (!buyerUsername) return
+
+  setStatusText('Enviando prévia...')
+  try {
+    await withPollingPaused(async () => {
+      await sendShopeePreview({
+        username: buyerUsername,
+        workbookId,
+        orderKey,
+        col: photoCol,
+      })
+    })
+    if (!sheet.rows[row]) sheet.rows[row] = []
+    sheet.rows[row]![STATUS_COLUMN_INDEX] = PREVIEW_SENT_STATUS
+    grid.render()
+    await enqueueMutation(async () => {
+      if (!currentWorkbookId) return
+      const result = await patchOrderDelta(currentWorkbookId, orderKey, {
+        cells: [{ col: STATUS_COLUMN_INDEX, value: PREVIEW_SENT_STATUS }],
+      })
+      serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
+      setStatusText('Prévia enviada')
+    })
+  } catch (error) {
+    handleApiError(error, 'Falha ao enviar prévia')
+    throw error
+  }
+}
+
 function handlePreviewRequest(row: number, col: number) {
   if (!workbook || col !== RECIPIENT_COLUMN_INDEX) return
   const sheet = workbook.sheets[workbook.sheetOrder[0]]
@@ -735,13 +780,23 @@ function handlePreviewRequest(row: number, col: number) {
     openAlertDialog({ title: 'Enviar prévia', body: 'Chat não vinculado.' })
     return
   }
-  if (!sheet.images[`${row}:${PHOTO_COLUMN_INDEX}`]) {
-    openAlertDialog({ title: 'Enviar prévia', body: 'Esta linha não tem foto na coluna H.' })
+  const photoCols = listPreviewPhotoCols(sheet, row)
+  if (photoCols.length === 0) {
+    openAlertDialog({ title: 'Enviar prévia', body: 'Esta linha não tem foto.' })
     return
   }
-  openAlertDialog({
+  if (photoCols.length === 1) {
+    void sendPreviewForRow(row, photoCols[0]!)
+    return
+  }
+  openPreviewPickerDialog({
     title: 'Enviar prévia',
-    body: 'Envio da prévia no chat Shopee será implementado em seguida.',
+    items: photoCols.map((photoCol) => {
+      const img = sheet.images[`${row}:${photoCol}`]!
+      const header = String(sheet.headers[photoCol] ?? '').trim() || `Coluna ${photoCol + 1}`
+      return { col: photoCol, label: header, imageUrl: img.url ?? '' }
+    }).filter((item) => item.imageUrl),
+    onSend: (photoCol) => sendPreviewForRow(row, photoCol),
   })
 }
 

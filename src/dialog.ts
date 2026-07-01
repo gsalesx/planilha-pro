@@ -199,3 +199,84 @@ export function openAlertDialog(opts: {
   document.addEventListener('keydown', onKey)
   confirmBtn.focus()
 }
+
+export function openPreviewPickerDialog(opts: {
+  title: string
+  items: Array<{ col: number; label: string; imageUrl: string }>
+  onSend: (col: number) => Promise<void>
+}): void {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  const modal = document.createElement('div')
+  modal.className = 'modal modal-preview-picker'
+  modal.setAttribute('role', 'dialog')
+  modal.setAttribute('aria-modal', 'true')
+
+  const title = document.createElement('div')
+  title.className = 'modal-title'
+  title.textContent = opts.title
+  modal.appendChild(title)
+
+  const body = document.createElement('div')
+  body.className = 'modal-body preview-picker-grid'
+  for (const item of opts.items) {
+    const card = document.createElement('div')
+    card.className = 'preview-picker-card'
+
+    const img = document.createElement('img')
+    img.className = 'preview-picker-img'
+    img.src = item.imageUrl
+    img.alt = item.label
+    card.appendChild(img)
+
+    const label = document.createElement('div')
+    label.className = 'preview-picker-label'
+    label.textContent = item.label
+    card.appendChild(label)
+
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'btn btn-primary preview-picker-send'
+    btn.textContent = 'Enviar prévia'
+    btn.addEventListener('click', async () => {
+      btn.disabled = true
+      btn.textContent = 'Enviando...'
+      try {
+        await opts.onSend(item.col)
+        close()
+      } catch {
+        btn.disabled = false
+        btn.textContent = 'Enviar prévia'
+      }
+    })
+    card.appendChild(btn)
+    body.appendChild(card)
+  }
+  modal.appendChild(body)
+
+  const actions = document.createElement('div')
+  actions.className = 'modal-actions'
+  const cancelBtn = document.createElement('button')
+  cancelBtn.type = 'button'
+  cancelBtn.className = 'btn modal-cancel'
+  cancelBtn.textContent = 'Fechar'
+  actions.appendChild(cancelBtn)
+  modal.appendChild(actions)
+
+  overlay.appendChild(modal)
+  document.body.appendChild(overlay)
+
+  const close = () => overlay.remove()
+  cancelBtn.addEventListener('click', close)
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) close()
+  })
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      close()
+      document.removeEventListener('keydown', onKey)
+    }
+  }
+  document.addEventListener('keydown', onKey)
+  cancelBtn.focus()
+}

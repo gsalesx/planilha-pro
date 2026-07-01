@@ -8,6 +8,7 @@ export type StatusValue =
   | 'Cancelado'
   | 'Aprovado'
   | 'Sem fotos'
+  | 'Prévia'
 
 export interface StatusOption {
   label: StatusValue
