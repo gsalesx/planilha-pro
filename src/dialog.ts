@@ -4,6 +4,7 @@ export function openConfirmDialog(opts: {
   confirmLabel: string
   danger?: boolean
   onConfirm: () => Promise<void> | void
+  onCancel?: () => void
 }): void {
   const overlay = document.createElement('div')
   overlay.className = 'modal-overlay'
@@ -18,11 +19,14 @@ export function openConfirmDialog(opts: {
     </div>
   `
   document.body.appendChild(overlay)
-  const close = () => overlay.remove()
+  const close = (cancelled = false) => {
+    overlay.remove()
+    if (cancelled) opts.onCancel?.()
+  }
   overlay.addEventListener('click', (event) => {
-    if (event.target === overlay) close()
+    if (event.target === overlay) close(true)
   })
-  overlay.querySelector('.modal-cancel')!.addEventListener('click', close)
+  overlay.querySelector('.modal-cancel')!.addEventListener('click', () => close(true))
   const confirmBtn = overlay.querySelector<HTMLButtonElement>('.modal-confirm')!
   confirmBtn.addEventListener('click', async () => {
     confirmBtn.disabled = true
@@ -34,7 +38,7 @@ export function openConfirmDialog(opts: {
   })
   const onKey = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
-      close()
+      close(true)
       document.removeEventListener('keydown', onKey)
     }
   }

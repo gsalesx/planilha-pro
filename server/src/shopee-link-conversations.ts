@@ -135,6 +135,38 @@ export function listLinkedBuyerUsernames(): string[] {
   return rows.map((r) => r.buyer_username)
 }
 
+export function getWorkbookLinkStatus(workbookId: string): {
+  ordersQueried: number
+  buyersFound: number
+  linked: number
+  allLinked: boolean
+} {
+  const buyers = uniqueBuyersFromSheet(workbookId)
+  const orderCount = (
+    db
+      .prepare('SELECT COUNT(DISTINCT id) AS n FROM orders WHERE workbook_id = ? AND TRIM(id) != ?')
+      .get(workbookId, '') as { n: number }
+  ).n
+  const linked = countLinkedBuyers(buyers)
+  return {
+    ordersQueried: orderCount,
+    buyersFound: buyers.length,
+    linked,
+    allLinked: buyers.length > 0 && linked >= buyers.length,
+  }
+}
+
+/** Remove vínculos dos compradores (col E) desta planilha — para varrer de novo. */
+export function clearBuyerChatsForWorkbook(workbookId: string): number {
+  const buyers = uniqueBuyersFromSheet(workbookId)
+  let cleared = 0
+  const stmt = db.prepare('DELETE FROM shopee_buyer_chats WHERE buyer_username = ? COLLATE NOCASE')
+  for (const buyer of buyers) {
+    cleared += stmt.run(buyer.username).changes
+  }
+  return cleared
+}
+
 function countLinkedBuyers(buyers: SheetBuyer[]): number {
   let linked = 0
   for (const buyer of buyers) {

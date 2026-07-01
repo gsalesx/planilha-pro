@@ -370,8 +370,29 @@ export type ShopeeChatMessage = {
   toId: number
   type: string
   text: string
+  imageUrl: string | null
   createdAt: number | null
   fromBuyer: boolean
+}
+
+export async function fetchShopeeLinkStatus(workbookId: string): Promise<{
+  ok: boolean
+  workbookId: string
+  ordersQueried: number
+  buyersFound: number
+  linked: number
+  allLinked: boolean
+}> {
+  const qs = new URLSearchParams({ workbookId })
+  return request(`/shopee/link-conversations/status?${qs}`)
+}
+
+export async function clearShopeeBuyerChats(workbookId: string): Promise<{ ok: boolean; cleared: number }> {
+  return request('/shopee/buyer-chats/clear', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workbookId }),
+  })
 }
 
 export async function fetchLinkedBuyerUsernames(): Promise<string[]> {

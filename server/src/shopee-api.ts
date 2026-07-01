@@ -804,6 +804,7 @@ export interface ParsedChatMessage {
   toId: number
   type: string
   text: string
+  imageUrl: string | null
   createdAt: number | null
   /** true = mensagem do comprador; false = loja/vendedor */
   fromBuyer: boolean
@@ -829,6 +830,21 @@ function messagePageNextOffset(body: Record<string, unknown>): string | null {
   const next = (pageResult as Record<string, unknown>).next_offset
   if (next == null || next === '') return null
   return String(next)
+}
+
+function extractMessageImageUrl(msg: Record<string, unknown>, text: string): string | null {
+  const content = msg.content
+  if (content && typeof content === 'object') {
+    const c = content as Record<string, unknown>
+    for (const key of ['url', 'image_url', 'thumb_url', 'imageUrl', 'thumbUrl']) {
+      const raw = c[key]
+      if (typeof raw === 'string' && /^https?:\/\//i.test(raw.trim())) return raw.trim()
+    }
+  }
+  const type = String(msg.message_type ?? msg.type ?? '')
+  if ((type === 'image' || type === 'sticker') && /^https?:\/\//i.test(text)) return text
+  if (/^https?:\/\/img\.sp\.mms\.shopee/i.test(text)) return text
+  return null
 }
 
 function extractMessageText(msg: Record<string, unknown>): string {
@@ -867,12 +883,14 @@ export function parseChatMessage(
   const id = String(msg.message_id ?? msg.id ?? '').trim()
   if (!id) return null
   const type = String(msg.message_type ?? msg.type ?? 'text')
+  const text = extractMessageText(msg)
   return {
     id,
     fromId,
     toId,
     type,
-    text: extractMessageText(msg),
+    text,
+    imageUrl: extractMessageImageUrl(msg, text),
     createdAt: parseMessageCreatedAt(msg),
     fromBuyer: fromId === buyerToId,
   }

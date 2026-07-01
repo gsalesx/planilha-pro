@@ -14,6 +14,8 @@ import {
   syncShopeeWorkbookInitial,
   linkShopeeConversationsScanChunk,
   fetchLinkedBuyerUsernames,
+  fetchShopeeLinkStatus,
+  clearShopeeBuyerChats,
   uploadImage,
   type OrderStyleDelta,
 } from './api'
@@ -1414,13 +1416,35 @@ function bindShopeeLinkConversations() {
     const prevLabel = btn.textContent ?? ''
     btn.disabled = true
     btn.textContent = 'Vinculando…'
-    setShopeeActionBanner(
-      'Consultando pedidos na Shopee e buscando conversas de cada comprador. Isso pode levar alguns minutos…',
-      'loading',
-    )
-    renderSheetLoading()
-    setStatusText('Vinculando conversas Shopee…')
     try {
+      const status = await fetchShopeeLinkStatus(workbookId)
+      if (status.allLinked) {
+        const relink = await new Promise<boolean>((resolve) => {
+          openConfirmDialog({
+            title: 'Conversas já vinculadas',
+            body: `${status.linked} de ${status.buyersFound} compradores desta planilha já têm chat vinculado.\n\nVincular novamente apaga os vínculos atuais e varre a Shopee de novo (a partir da página ${SHOPEE_LINK_START_PAGE}).`,
+            confirmLabel: 'Vincular novamente',
+            danger: true,
+            onConfirm: () => resolve(true),
+            onCancel: () => resolve(false),
+          })
+        })
+        if (!relink) {
+          setStatusText(`${status.linked} compradores já vinculados — nada a fazer`)
+          setShopeeActionBanner('Todos os compradores já estão vinculados', 'success')
+          return
+        }
+        await clearShopeeBuyerChats(workbookId)
+        await refreshLinkedBuyerChats()
+      }
+
+      setShopeeActionBanner(
+        'Consultando pedidos na Shopee e buscando conversas de cada comprador. Isso pode levar alguns minutos…',
+        'loading',
+      )
+      renderSheetLoading()
+      setStatusText('Vinculando conversas Shopee…')
+
       await withPollingPaused(async () => {
         let nextTimestampNano: string | undefined
         let pageNumber = 0

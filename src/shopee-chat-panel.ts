@@ -53,6 +53,14 @@ function escapeHtml(text: string): string {
     .replace(/"/g, '&quot;')
 }
 
+function renderMessageBody(msg: ShopeeChatMessage): string {
+  if (msg.imageUrl) {
+    const url = escapeHtml(msg.imageUrl)
+    return `<a class="shopee-chat-image-link" href="${url}" target="_blank" rel="noopener noreferrer"><img class="shopee-chat-image" src="${url}" alt="Imagem enviada no chat" loading="lazy" /></a>`
+  }
+  return escapeHtml(msg.text)
+}
+
 function renderMessages(messages: ShopeeChatMessage[], buyerUsername: string): string {
   if (messages.length === 0) {
     return `<div class="shopee-chat-empty">Nenhuma mensagem nesta conversa.</div>`
@@ -70,7 +78,7 @@ function renderMessages(messages: ShopeeChatMessage[], buyerUsername: string): s
     parts.push(`
       <div class="shopee-chat-bubble-wrap ${side}">
         <div class="shopee-chat-bubble-meta">${escapeHtml(label)} · ${escapeHtml(fmtMessageTime(msg.createdAt))}</div>
-        <div class="shopee-chat-bubble ${side}">${escapeHtml(msg.text)}</div>
+        <div class="shopee-chat-bubble ${side}">${renderMessageBody(msg)}</div>
       </div>
     `)
   }

@@ -23,7 +23,7 @@ import {
   parseShopeeOrderDetail,
   syncShopeeWorkbookOrders,
 } from '../shopee-order-sync.js'
-import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames } from '../shopee-link-conversations.js'
+import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames, getWorkbookLinkStatus, clearBuyerChatsForWorkbook } from '../shopee-link-conversations.js'
 import { clearShopeeAuth, loadShopeeAuth } from '../shopee-store.js'
 
 const router = Router()
@@ -344,6 +344,27 @@ router.get('/shopee/conversations', requireAuth, async (req, res) => {
 /** GET /api/shopee/buyer-chats — usernames com conversation_id vinculado */
 router.get('/shopee/buyer-chats', requireAuth, (_req, res) => {
   res.json({ ok: true, usernames: listLinkedBuyerUsernames() })
+})
+
+/** GET /api/shopee/link-conversations/status?workbookId= */
+router.get('/shopee/link-conversations/status', requireAuth, (req, res) => {
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId.trim() : ''
+  if (!workbookId) {
+    res.status(400).json({ error: 'workbookId obrigatório' })
+    return
+  }
+  res.json({ ok: true, workbookId, ...getWorkbookLinkStatus(workbookId) })
+})
+
+/** POST /api/shopee/buyer-chats/clear — apaga vínculos dos compradores desta planilha */
+router.post('/shopee/buyer-chats/clear', requireAuth, (req, res) => {
+  const workbookId = typeof req.body?.workbookId === 'string' ? req.body.workbookId.trim() : ''
+  if (!workbookId) {
+    res.status(400).json({ error: 'workbookId obrigatório' })
+    return
+  }
+  const cleared = clearBuyerChatsForWorkbook(workbookId)
+  res.json({ ok: true, workbookId, cleared })
 })
 
 /** GET /api/shopee/chat-history?username= — histórico completo do chat vinculado */
