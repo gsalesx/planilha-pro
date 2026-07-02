@@ -94,7 +94,7 @@ async function runShopeeRecentPoll(): Promise<void> {
     const pending = await resyncPendingDateOrders()
     const readyToShip = await resyncReadyToShipDates()
     const errors = result.errors.length + pending.errors.length + readyToShip.errors.length
-    if (result.created > 0 || pending.updated > 0 || errors > 0) {
+    if (result.created > 0 || pending.updated > 0 || readyToShip.updated > 0 || errors > 0) {
       console.log('[shopee-poll] concluído', {
         listed: result.listed,
         created: result.created,
