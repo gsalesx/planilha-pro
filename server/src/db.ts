@@ -259,6 +259,27 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_shopee_auto_greet_log_created ON shopee_auto_greet_log (created_at);
 `)
 
+/**
+ * Captura diagnóstica de qualquer push com código desconhecido (não é 3/8) — usada pra
+ * descobrir o formato real do webchat_push antes de implementar o vínculo automático de
+ * verdade. Guarda o payload cru + um "chute" de campos prováveis (to_id, username, etc);
+ * nada aqui grava em shopee_buyer_chats.
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shopee_webchat_push_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    received_at INTEGER NOT NULL,
+    code INTEGER NOT NULL,
+    raw_json TEXT NOT NULL,
+    guessed_to_id INTEGER,
+    guessed_from_user_name TEXT,
+    guessed_to_user_name TEXT,
+    guessed_conversation_id TEXT,
+    guessed_content TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_shopee_webchat_push_log_received ON shopee_webchat_push_log (received_at);
+`)
+
 export function nowMs(): number {
   return Date.now()
 }

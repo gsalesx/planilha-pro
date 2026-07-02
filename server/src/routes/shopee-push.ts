@@ -14,6 +14,7 @@ import {
   verifyShopeePushSignatureAny,
 } from '../shopee-push.js'
 import { processShopeePush } from '../shopee-push-process.js'
+import { getRecentWebchatPushes } from '../shopee-webchat-push.js'
 
 const router = Router()
 
@@ -118,6 +119,15 @@ export function handleShopeePushPost(req: Request, res: Response): void {
 /** GET /api/shopee/push/recent — últimos pushes (auth UI/API). */
 router.get('/shopee/push/recent', requireAuth, (_req, res) => {
   res.json({ ok: true, items: getRecentShopeePushes() })
+})
+
+/**
+ * GET /api/shopee/webchat-push/recent — captura diagnóstica de pushes com código
+ * desconhecido (ver recordWebchatPushAttempt) — usar pra conferir o formato real do
+ * webchat_push assim que a Shopee mandar o primeiro.
+ */
+router.get('/shopee/webchat-push/recent', requireAuth, (_req, res) => {
+  res.json({ ok: true, items: getRecentWebchatPushes() })
 })
 
 export default router

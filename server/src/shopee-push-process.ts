@@ -5,6 +5,7 @@ import {
   updateShopeeOrderStatus,
 } from './shopee-order-sync.js'
 import { ensureShopeeWorkbook } from './shopee-workbook.js'
+import { recordWebchatPushAttempt } from './shopee-webchat-push.js'
 
 function pushCode(parsed: unknown): number | null {
   if (!parsed || typeof parsed !== 'object') return null
@@ -74,13 +75,26 @@ const PUSH_PROCESSING_ENABLED = false
 
 /** Processa pushes de pedido — chamar após responder 200 à Shopee. */
 export async function processShopeePush(parsed: unknown): Promise<void> {
-  if (!PUSH_PROCESSING_ENABLED) return
   const code = pushCode(parsed)
   if (code == null) return
   if (!parsed || typeof parsed !== 'object') return
+  const data = (parsed as { data?: unknown }).data
+
+  // Captura diagnóstica de qualquer código que não seja os já conhecidos (3/8) — roda mesmo
+  // com PUSH_PROCESSING_ENABLED=false, já que é só leitura/log, não mexe em pedidos/planilha.
+  // Com o console Shopee configurado pra mandar só webchat agora, isso deve ser o webchat_push.
+  if (code !== 3 && code !== 8) {
+    try {
+      recordWebchatPushAttempt(code, data)
+      console.log('[shopee-push] push desconhecido capturado (possível webchat_push)', { code })
+    } catch (error) {
+      console.warn('[shopee-push] falha ao capturar push desconhecido', error)
+    }
+  }
+
+  if (!PUSH_PROCESSING_ENABLED) return
 
   ensureShopeeWorkbook()
-  const data = (parsed as { data?: unknown }).data
 
   if (code === 3) {
     await handleOrderStatusPush(data)
