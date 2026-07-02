@@ -45,12 +45,23 @@ export interface ShopeeSyncResult {
   errors: string[]
 }
 
+/**
+ * O container roda em UTC (sem TZ setada). Um ship_by_date perto da virada do dia em BRT
+ * (ex.: 23h de sexta em SP = 02h de sábado em UTC) formatado com Date.getDate() local vira
+ * sábado no nosso banco enquanto o painel Shopee (BRT) ainda mostra sexta. Formatar explicitamente
+ * em America/Sao_Paulo em vez de depender do TZ do processo evita esse desvio de 1 dia.
+ */
+const BRAZIL_TZ = 'America/Sao_Paulo'
+
 function formatSheetDate(unixSec: number): string {
-  const d = new Date(unixSec * 1000)
-  const dd = String(d.getDate()).padStart(2, '0')
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const yyyy = d.getFullYear()
-  return `${dd}-${mm}-${yyyy}`
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: BRAZIL_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(unixSec * 1000))
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
+  return `${get('day')}-${get('month')}-${get('year')}`
 }
 
 /**

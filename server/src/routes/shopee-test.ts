@@ -254,11 +254,16 @@ router.get('/shopee/orders/detail', requireAuth, async (req, res) => {
       return
     }
     const items = order.item_list ?? []
+    const raw = order as unknown as { create_time?: number; ship_by_date?: number }
     res.json({
       ok: true,
       orderSn,
       itemCount: items.length,
       order_status: order.order_status ?? '',
+      create_time: raw.create_time ?? null,
+      create_time_iso: raw.create_time ? new Date(raw.create_time * 1000).toISOString() : null,
+      ship_by_date: raw.ship_by_date ?? null,
+      ship_by_date_iso: raw.ship_by_date ? new Date(raw.ship_by_date * 1000).toISOString() : null,
       item_list: items,
       mappedNow: {
         description: 'Como gravamos hoje: 1 linha por pedido (itens concatenados com ;)',
