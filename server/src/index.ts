@@ -8,7 +8,11 @@ import express from 'express'
 
 import { cleanupExpiredSessions } from './auth.js'
 import { env, isProd } from './env.js'
-import { syncRecentShopeeOrders, SHOPEE_POLL_LOOKBACK_HOURS } from './shopee-order-sync.js'
+import {
+  resyncPendingDateOrders,
+  syncRecentShopeeOrders,
+  SHOPEE_POLL_LOOKBACK_HOURS,
+} from './shopee-order-sync.js'
 import { loadShopeeAuth } from './shopee-store.js'
 import { ensureShopeeWorkbook } from './shopee-workbook.js'
 import backupRouter from './routes/backup.js'
@@ -71,7 +75,12 @@ setInterval(cleanupExpiredSessions, 60 * 60 * 1000)
 cleanupExpiredSessions()
 ensureShopeeWorkbook()
 
-/** Poll pedidos recentes — pedidos já READY_TO_SHIP não geram push até mudarem de status. */
+/**
+ * Poll pedidos recentes — única via de importação enquanto o push está desativado
+ * (ver PUSH_PROCESSING_ENABLED em shopee-push-process.ts). Além da janela de 20h, reconsulta
+ * também os pedidos presos na aba "Sem data de envio" (resyncPendingDateOrders), que podem
+ * ficar dias esperando a Shopee calcular o ship_by_date.
+ */
 const SHOPEE_POLL_MS = 8 * 60 * 60 * 1000
 let shopeePollBusy = false
 
@@ -80,12 +89,21 @@ async function runShopeeRecentPoll(): Promise<void> {
   shopeePollBusy = true
   try {
     const result = await syncRecentShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS })
-    if (result.created > 0 || result.errors.length > 0) {
+    const pending = await resyncPendingDateOrders()
+    if (
+      result.created > 0 ||
+      result.errors.length > 0 ||
+      pending.updated > 0 ||
+      pending.errors.length > 0
+    ) {
       console.log('[shopee-poll] concluído', {
         listed: result.listed,
         created: result.created,
         updated: result.updated,
         errors: result.errors.length,
+        pendingRechecked: pending.listed,
+        pendingResolved: pending.updated,
+        pendingErrors: pending.errors.length,
       })
     }
   } catch (error) {

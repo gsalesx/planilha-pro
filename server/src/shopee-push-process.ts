@@ -62,8 +62,19 @@ async function handlePlaceOrderPush(data: unknown): Promise<void> {
   console.log('[shopee-push] pedido importado (code 8 place_order)', { orderSn, action })
 }
 
+/**
+ * Desativado em 2026-07-03: importação/atualização de pedidos e a saudação automática passam a
+ * vir só do poll de 8h (ver syncRecentShopeeOrders/resyncPendingDateOrders em index.ts) — o push
+ * estava chegando com o pedido ainda sem ship_by_date calculado. O endpoint /api/shopee/push
+ * continua respondendo 200 normalmente (handleShopeePushPost) pra não invalidar a assinatura na
+ * Shopee; só o processamento fica parado aqui. Reativar: virar `true` de novo (ex.: quando entrar
+ * o gancho de "comprador mandou mensagem primeiro" no code de chat).
+ */
+const PUSH_PROCESSING_ENABLED = false
+
 /** Processa pushes de pedido — chamar após responder 200 à Shopee. */
 export async function processShopeePush(parsed: unknown): Promise<void> {
+  if (!PUSH_PROCESSING_ENABLED) return
   const code = pushCode(parsed)
   if (code == null) return
   if (!parsed || typeof parsed !== 'object') return

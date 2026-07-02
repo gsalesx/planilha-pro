@@ -248,9 +248,6 @@ export async function getOrderDetail(
 
 export const ORDER_BUYER_FIELDS = 'buyer_user_id,buyer_username'
 
-/** Único status consultado no poll/import automático (get_order_list). */
-export const SHOPEE_SYNC_ORDER_STATUS = 'RETRY_SHIP'
-
 export interface OrderListPage {
   orderSnList: string[]
   more: boolean

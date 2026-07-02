@@ -3,7 +3,6 @@ import {
   assertShopeeOk,
   fetchOrderListPage,
   getOrderDetail,
-  SHOPEE_SYNC_ORDER_STATUS,
   type ShopeeApiResponse,
 } from './shopee-api.js'
 import {
@@ -54,10 +53,18 @@ function formatSheetDate(unixSec: number): string {
   return `${dd}-${mm}-${yyyy}`
 }
 
+/**
+ * Aba própria pra pedidos sem ship_by_date resolvido ainda — fica visível no seletor de data
+ * (em vez de sumir com sheet_date vazio) e é reconsultada a cada poll de 8h (resyncPendingDateOrders).
+ */
+export const SHOPEE_PENDING_DATE_LABEL = 'Sem data de envio'
+
 /** Data do `<select>` no header — prevista de envio (ship_by_date), não data da compra. */
 function resolveSheetDate(order: ShopeeOrderDetail): string {
-  const ts = order.ship_by_date ?? order.create_time
-  return ts ? formatSheetDate(ts) : ''
+  // `||` (não `??`): a Shopee manda ship_by_date=0 (não null/undefined) quando ainda não calculou
+  // o prazo — precisa cair pro create_time nesse caso.
+  const ts = order.ship_by_date || order.create_time
+  return ts ? formatSheetDate(ts) : SHOPEE_PENDING_DATE_LABEL
 }
 
 function joinField(values: string[]): string {
@@ -280,16 +287,16 @@ async function collectOrderSnsPage(
   return sns
 }
 
-/** Lista pedidos RETRY_SHIP na janela (poll e import manual). */
+/** Lista pedidos de todos os status na janela (poll e import manual) — order_status omitido = sem filtro. */
 async function collectOrderSns(
   timeFrom: number,
   timeTo: number,
   errors?: string[],
 ): Promise<string[]> {
   try {
-    return collectOrderSnsPage(timeFrom, timeTo, SHOPEE_SYNC_ORDER_STATUS)
+    return collectOrderSnsPage(timeFrom, timeTo, undefined)
   } catch (error) {
-    const msg = `${SHOPEE_SYNC_ORDER_STATUS}: ${error instanceof Error ? error.message : String(error)}`
+    const msg = `get_order_list: ${error instanceof Error ? error.message : String(error)}`
     console.warn('[shopee-sync] get_order_list falhou —', msg)
     errors?.push(msg)
     return []
@@ -299,7 +306,7 @@ async function collectOrderSns(
 /** Janela de busca — 20h com poll a cada 8h garante sobreposição se uma execução falhar. */
 export const SHOPEE_POLL_LOOKBACK_HOURS = 20
 
-/** Importa pedidos recentes via API — só status RETRY_SHIP. */
+/** Importa pedidos recentes via API — todos os status (push desativado; poll é a única via). */
 export async function syncRecentShopeeOrders(options: {
   hours?: number
 } = {}): Promise<ShopeeSyncResult> {
@@ -311,6 +318,50 @@ export async function syncRecentShopeeOrders(options: {
   const result: ShopeeSyncResult = { listed: 0, created: 0, updated: 0, errors: [] }
   const orderSns = await collectOrderSns(timeFrom, timeTo, result.errors)
   result.listed = orderSns.length
+
+  for (let i = 0; i < orderSns.length; i += 50) {
+    const batch = orderSns.slice(i, i + 50)
+    try {
+      const data = await getOrderDetail(batch)
+      const orders = parseOrderList(data)
+      for (const order of orders) {
+        try {
+          const action = upsertShopeeOrder(order)
+          if (action === 'created') result.created++
+          else result.updated++
+        } catch (error) {
+          result.errors.push(
+            `${order.order_sn ?? '?'}: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+      }
+    } catch (error) {
+      result.errors.push(
+        `batch ${i / 50 + 1}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+
+  return result
+}
+
+function findOrderSnsPendingDate(): string[] {
+  const rows = db
+    .prepare('SELECT DISTINCT id FROM orders WHERE workbook_id = ? AND sheet_date IN (?, ?)')
+    .all(SHOPEE_WORKBOOK_ID, SHOPEE_PENDING_DATE_LABEL, '') as Array<{ id: string }>
+  return rows.map((r) => r.id)
+}
+
+/**
+ * Reconsulta pedidos presos na aba "Sem data de envio" (ship_by_date ainda não calculado
+ * pela Shopee na 1ª importação) — roda junto do poll de 8h, sem depender da janela de tempo,
+ * já que um pedido pode ficar dias parado antes do prazo de envio aparecer. Também cobre
+ * `sheet_date=''` (pedidos que caíram antes do fix, sem o rótulo novo) — autocorrige sozinho.
+ */
+export async function resyncPendingDateOrders(): Promise<ShopeeSyncResult> {
+  ensureShopeeWorkbook()
+  const orderSns = findOrderSnsPendingDate()
+  const result: ShopeeSyncResult = { listed: orderSns.length, created: 0, updated: 0, errors: [] }
 
   for (let i = 0; i < orderSns.length; i += 50) {
     const batch = orderSns.slice(i, i + 50)
