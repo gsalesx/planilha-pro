@@ -1,4 +1,5 @@
 import { maybeGreetOnReadyToShip } from './shopee-auto-greet.js'
+import { linkBuyerChatFromWebchatMessage } from './shopee-link-conversations.js'
 import {
   importShopeeOrderBySn,
   shopeeOrderExists,
@@ -63,13 +64,50 @@ async function handlePlaceOrderPush(data: unknown): Promise<void> {
   console.log('[shopee-push] pedido importado (code 8 place_order)', { orderSn, action })
 }
 
+interface WebchatMessageContent {
+  from_id?: number | string
+  from_user_name?: string
+  conversation_id?: string
+}
+
+interface WebchatPushEnvelope {
+  type?: string
+  content?: WebchatMessageContent
+}
+
+/**
+ * Code 10 — webchat_push, data.type "message": mensagem nova no chat. from_id/from_user_name
+ * é sempre quem mandou a mensagem (comprador, nas amostras reais vistas em produção);
+ * conversation_id já vem pronto, sem precisar varrer get_conversation_list. Roda sempre
+ * (não depende de PUSH_PROCESSING_ENABLED, que só trata do fluxo de pedidos).
+ */
+function handleWebchatMessagePush(data: unknown): void {
+  if (!data || typeof data !== 'object') return
+  const envelope = data as WebchatPushEnvelope
+  if (envelope.type !== 'message' || !envelope.content) return
+
+  const buyerUserId = Number(envelope.content.from_id) || 0
+  const buyerUsername = String(envelope.content.from_user_name ?? '').trim()
+  const conversationId = String(envelope.content.conversation_id ?? '').trim()
+  if (!buyerUserId || !buyerUsername || !conversationId) return
+
+  try {
+    const result = linkBuyerChatFromWebchatMessage({ buyerUserId, buyerUsername, conversationId })
+    if (result === 'linked') {
+      console.log('[shopee-push] vínculo automático via webchat_push', { buyerUsername, conversationId })
+    }
+  } catch (error) {
+    console.warn('[shopee-push] falha ao vincular via webchat_push', error)
+  }
+}
+
 /**
  * Desativado em 2026-07-03: importação/atualização de pedidos e a saudação automática passam a
  * vir só do poll de 8h (ver syncRecentShopeeOrders/resyncPendingDateOrders em index.ts) — o push
  * estava chegando com o pedido ainda sem ship_by_date calculado. O endpoint /api/shopee/push
  * continua respondendo 200 normalmente (handleShopeePushPost) pra não invalidar a assinatura na
- * Shopee; só o processamento fica parado aqui. Reativar: virar `true` de novo (ex.: quando entrar
- * o gancho de "comprador mandou mensagem primeiro" no code de chat).
+ * Shopee; só o processamento fica parado aqui. Reativar: virar `true` de novo. O vínculo
+ * automático de chat (code 10) NÃO depende desta flag — roda sempre, ver handleWebchatMessagePush.
  */
 const PUSH_PROCESSING_ENABLED = false
 
@@ -90,6 +128,10 @@ export async function processShopeePush(parsed: unknown): Promise<void> {
     } catch (error) {
       console.warn('[shopee-push] falha ao capturar push desconhecido', error)
     }
+  }
+
+  if (code === 10) {
+    handleWebchatMessagePush(data)
   }
 
   if (!PUSH_PROCESSING_ENABLED) return

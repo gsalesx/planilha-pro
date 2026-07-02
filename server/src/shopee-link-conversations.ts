@@ -236,6 +236,38 @@ function upsertBuyerChat(row: ShopeeBuyerChatRow): void {
   ).run(row.toId, row.buyerUsername, row.conversationId, row.updatedAt)
 }
 
+/**
+ * Vínculo automático a partir de mensagem recebida no chat (webchat_push code 10, data.type
+ * "message"). from_id/from_user_name = comprador que mandou a mensagem, conversation_id já
+ * vem pronto — não precisa mais varrer get_conversation_list pra achar isso. No-op se o
+ * vínculo já existe idêntico.
+ */
+export function linkBuyerChatFromWebchatMessage(row: {
+  buyerUserId: number
+  buyerUsername: string
+  conversationId: string
+}): 'linked' | 'unchanged' | 'skipped' {
+  const username = row.buyerUsername.trim()
+  if (!row.buyerUserId || row.buyerUserId <= 0 || !username || !row.conversationId.trim()) {
+    return 'skipped'
+  }
+  const existing = getBuyerChatByUsername(username)
+  if (
+    existing &&
+    existing.toId === row.buyerUserId &&
+    existing.conversationId === row.conversationId.trim()
+  ) {
+    return 'unchanged'
+  }
+  upsertBuyerChat({
+    toId: row.buyerUserId,
+    buyerUsername: username,
+    conversationId: row.conversationId.trim(),
+    updatedAt: nowMs(),
+  })
+  return 'linked'
+}
+
 /** Lookup por to_id gravado na vinculação (coluna legada buyer_user_id). */
 export function getBuyerChatByToId(toId: number): ShopeeBuyerChatRow | undefined {
   if (toId <= 0) return undefined
