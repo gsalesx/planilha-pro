@@ -33,6 +33,12 @@ export const env = {
    */
   shopeePushPartnerKey: envTrim('SHOPEE_PUSH_PARTNER_KEY'),
   /**
+   * "Test Push Partner Key" — chave separada que o console Shopee usa só pra disparar o
+   * push de teste (botão "Get Test Push"). Some/soma junto de shopeePushPartnerKey na
+   * verificação de assinatura, sem substituir a chave de produção.
+   */
+  shopeePushTestPartnerKey: envTrim('SHOPEE_PUSH_TEST_PARTNER_KEY'),
+  /**
    * URL exata cadastrada no console Shopee (Live Call Back URL).
    * Se vazio, monta a partir do request (protocol + host + path).
    */

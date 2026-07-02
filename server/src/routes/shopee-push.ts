@@ -47,7 +47,11 @@ export function handleShopeePushPost(req: Request, res: Response): void {
   const parsedEarly = parseJsonSafe(rawBody)
   const isVerifyPing = isShopeeUrlVerificationPush(parsedEarly, rawBody)
 
-  const partnerKeys = [...new Set([env.shopeePushPartnerKey, env.shopeePartnerKey].filter(Boolean))]
+  const partnerKeys = [
+    ...new Set(
+      [env.shopeePushPartnerKey, env.shopeePartnerKey, env.shopeePushTestPartnerKey].filter(Boolean),
+    ),
+  ]
   const urlCandidates = callbackUrlCandidates(
     env.shopeePushCallbackUrl || undefined,
     req.protocol,
