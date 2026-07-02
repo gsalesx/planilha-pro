@@ -272,6 +272,7 @@ export async function syncShopeeNow(): Promise<{
   updated: number
   errors: string[]
   pendingRechecked: number
+  readyToShipRechecked: number
 }> {
   return request('/shopee/sync-now', { method: 'POST' })
 }

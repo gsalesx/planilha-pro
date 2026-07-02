@@ -24,6 +24,7 @@ import {
   mapShopeeOrderToRow,
   parseShopeeOrderDetail,
   resyncPendingDateOrders,
+  resyncReadyToShipDates,
   syncRecentShopeeOrders,
   syncShopeeWorkbookOrders,
   SHOPEE_POLL_LOOKBACK_HOURS,
@@ -171,7 +172,8 @@ router.post('/shopee/sync-workbook', requireAuth, async (req, res) => {
 
 /**
  * POST /api/shopee/sync-now — mesma rotina do poll de 8h (janela de 20h + reconsulta dos
- * pedidos "Sem data de envio"), disparada na hora pelo botão da UI. Push está desativado.
+ * pedidos "Sem data de envio" + reconferência de data de todo READY_TO_SHIP), disparada na
+ * hora pelo botão da UI. Push está desativado.
  */
 router.post('/shopee/sync-now', requireAuth, async (_req, res) => {
   if (!shopeeConfigured()) {
@@ -181,13 +183,15 @@ router.post('/shopee/sync-now', requireAuth, async (_req, res) => {
   try {
     const recent = await syncRecentShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS })
     const pending = await resyncPendingDateOrders()
+    const readyToShip = await resyncReadyToShipDates()
     res.json({
       ok: true,
       listed: recent.listed,
       created: recent.created,
-      updated: recent.updated + pending.updated,
-      errors: [...recent.errors, ...pending.errors],
+      updated: recent.updated + pending.updated + readyToShip.updated,
+      errors: [...recent.errors, ...pending.errors, ...readyToShip.errors],
       pendingRechecked: pending.listed,
+      readyToShipRechecked: readyToShip.listed,
     })
   } catch (error) {
     res.status(502).json({

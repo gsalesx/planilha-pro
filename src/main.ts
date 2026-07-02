@@ -1692,9 +1692,10 @@ function bindShopeeSyncNow() {
     try {
       const result = await syncShopeeNow()
       await refreshFromServer({ force: true })
+      const rechecked = result.pendingRechecked + result.readyToShipRechecked
       setStatusText(
         `Sincronização concluída — ${result.created} novos, ${result.updated} atualizados` +
-          (result.pendingRechecked > 0 ? ` (${result.pendingRechecked} sem data reconsultados)` : ''),
+          (rechecked > 0 ? ` (${rechecked} reconferidos: data pendente/READY_TO_SHIP)` : ''),
       )
       if (result.errors.length) {
         alert(`${result.errors.length} erro(s) na sincronização — veja o console`)

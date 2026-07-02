@@ -10,6 +10,7 @@ import { cleanupExpiredSessions } from './auth.js'
 import { env, isProd } from './env.js'
 import {
   resyncPendingDateOrders,
+  resyncReadyToShipDates,
   syncRecentShopeeOrders,
   SHOPEE_POLL_LOOKBACK_HOURS,
 } from './shopee-order-sync.js'
@@ -78,8 +79,9 @@ ensureShopeeWorkbook()
 /**
  * Poll pedidos recentes — única via de importação enquanto o push está desativado
  * (ver PUSH_PROCESSING_ENABLED em shopee-push-process.ts). Além da janela de 20h, reconsulta
- * também os pedidos presos na aba "Sem data de envio" (resyncPendingDateOrders), que podem
- * ficar dias esperando a Shopee calcular o ship_by_date.
+ * os pedidos presos na aba "Sem data de envio" (resyncPendingDateOrders) e reconfere a data de
+ * todo pedido em READY_TO_SHIP (resyncReadyToShipDates) — cobre data errada antiga e o caso da
+ * Shopee empurrar o ship_by_date +1 dia depois da 1ª importação.
  */
 const SHOPEE_POLL_MS = 8 * 60 * 60 * 1000
 let shopeePollBusy = false
@@ -90,20 +92,18 @@ async function runShopeeRecentPoll(): Promise<void> {
   try {
     const result = await syncRecentShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS })
     const pending = await resyncPendingDateOrders()
-    if (
-      result.created > 0 ||
-      result.errors.length > 0 ||
-      pending.updated > 0 ||
-      pending.errors.length > 0
-    ) {
+    const readyToShip = await resyncReadyToShipDates()
+    const errors = result.errors.length + pending.errors.length + readyToShip.errors.length
+    if (result.created > 0 || pending.updated > 0 || errors > 0) {
       console.log('[shopee-poll] concluído', {
         listed: result.listed,
         created: result.created,
         updated: result.updated,
-        errors: result.errors.length,
         pendingRechecked: pending.listed,
         pendingResolved: pending.updated,
-        pendingErrors: pending.errors.length,
+        readyToShipRechecked: readyToShip.listed,
+        readyToShipFixed: readyToShip.updated,
+        errors,
       })
     }
   } catch (error) {

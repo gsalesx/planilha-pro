@@ -124,16 +124,24 @@ function shopeeOrderKey(sheetDate: string, orderSn: string, occurrence: number):
   return `${sheetDate || 'sem-data'}__${orderSn}__${occurrence}`
 }
 
-function findOrderByKey(orderKey: string): { order_key: string; row_json: string } | undefined {
-  return db
-    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
-    .get(SHOPEE_WORKBOOK_ID, orderKey) as { order_key: string; row_json: string } | undefined
+interface ExistingOrderRow {
+  order_key: string
+  row_json: string
+  sheet_date: string
 }
 
-function findOrdersBySn(orderSn: string): Array<{ order_key: string; row_json: string }> {
+function findOrderByKey(orderKey: string): ExistingOrderRow | undefined {
   return db
-    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ? AND id = ? ORDER BY order_key ASC')
-    .all(SHOPEE_WORKBOOK_ID, orderSn) as Array<{ order_key: string; row_json: string }>
+    .prepare('SELECT order_key, row_json, sheet_date FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(SHOPEE_WORKBOOK_ID, orderKey) as ExistingOrderRow | undefined
+}
+
+function findOrdersBySn(orderSn: string): ExistingOrderRow[] {
+  return db
+    .prepare(
+      'SELECT order_key, row_json, sheet_date FROM orders WHERE workbook_id = ? AND id = ? ORDER BY order_key ASC',
+    )
+    .all(SHOPEE_WORKBOOK_ID, orderSn) as ExistingOrderRow[]
 }
 
 export function shopeeOrderExists(orderSn: string): boolean {
@@ -148,7 +156,7 @@ function sleep(ms: number): Promise<void> {
 export async function importShopeeOrderBySn(
   orderSn: string,
   fallbackStatus?: string,
-): Promise<'created' | 'updated' | 'failed'> {
+): Promise<'created' | 'updated' | 'unchanged' | 'failed'> {
   const sn = orderSn.trim()
   if (!sn) return 'failed'
 
@@ -176,8 +184,13 @@ export async function importShopeeOrderBySn(
   return 'failed'
 }
 
-/** 1 linha por item; reimport atualiza só G+H (preserva F e demais colunas). */
-export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'updated' {
+/**
+ * 1 linha por item; reimport atualiza só G+H (preserva F e demais colunas). Não escreve nada
+ * (nem toca updated_at) quando a linha já está idêntica — evita "atualizado" fantasma nas
+ * rotinas de reconferência (resyncPendingDateOrders/resyncReadyToShipDates) que rodam de novo
+ * sobre pedidos que já estavam certos.
+ */
+export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'updated' | 'unchanged' {
   const orderSn = order.order_sn?.trim()
   if (!orderSn) throw new Error('order_sn ausente')
 
@@ -187,6 +200,7 @@ export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'update
   const recipient = order.recipient_address?.name ?? ''
   const now = nowMs()
   let anyCreated = false
+  let anyChanged = false
 
   let nextPos =
     (db
@@ -223,9 +237,14 @@ export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'update
       row[SHOPEE_COL_MODEL] = prev[SHOPEE_COL_MODEL]
       row[SHOPEE_COL_QTY] = prev[SHOPEE_COL_QTY]
       row[SHOPEE_COL_USERNAME] = prev[SHOPEE_COL_USERNAME]
-      updateStmt.run(JSON.stringify(row), sheetDate, now, SHOPEE_WORKBOOK_ID, existing.order_key)
+      const rowJson = JSON.stringify(row)
+      if (rowJson !== existing.row_json || sheetDate !== existing.sheet_date) {
+        updateStmt.run(rowJson, sheetDate, now, SHOPEE_WORKBOOK_ID, existing.order_key)
+        anyChanged = true
+      }
     } else {
       anyCreated = true
+      anyChanged = true
       insertStmt.run(
         SHOPEE_WORKBOOK_ID,
         orderKey,
@@ -240,8 +259,10 @@ export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'update
     }
   }
 
-  db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, SHOPEE_WORKBOOK_ID)
-  return anyCreated ? 'created' : 'updated'
+  if (anyChanged) {
+    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, SHOPEE_WORKBOOK_ID)
+  }
+  return anyCreated ? 'created' : anyChanged ? 'updated' : 'unchanged'
 }
 
 /** Atualiza Status Shopee (col H) em todas as linhas do pedido — push code 3. */
@@ -306,18 +327,9 @@ async function collectOrderSns(
 /** Janela de busca — 20h com poll a cada 8h garante sobreposição se uma execução falhar. */
 export const SHOPEE_POLL_LOOKBACK_HOURS = 20
 
-/** Importa pedidos recentes via API — todos os status (push desativado; poll é a única via). */
-export async function syncRecentShopeeOrders(options: {
-  hours?: number
-} = {}): Promise<ShopeeSyncResult> {
-  ensureShopeeWorkbook()
-  const hours = Math.min(Math.max(options.hours ?? SHOPEE_POLL_LOOKBACK_HOURS, 1), 168)
-  const timeTo = Math.floor(Date.now() / 1000)
-  const timeFrom = timeTo - hours * 3600
-
-  const result: ShopeeSyncResult = { listed: 0, created: 0, updated: 0, errors: [] }
-  const orderSns = await collectOrderSns(timeFrom, timeTo, result.errors)
-  result.listed = orderSns.length
+/** Busca detalhe em lotes de 50 e faz upsert — usado por todas as rotinas de sync abaixo. */
+async function upsertOrderSnsBatched(orderSns: string[], preErrors: string[] = []): Promise<ShopeeSyncResult> {
+  const result: ShopeeSyncResult = { listed: orderSns.length, created: 0, updated: 0, errors: [...preErrors] }
 
   for (let i = 0; i < orderSns.length; i += 50) {
     const batch = orderSns.slice(i, i + 50)
@@ -328,7 +340,7 @@ export async function syncRecentShopeeOrders(options: {
         try {
           const action = upsertShopeeOrder(order)
           if (action === 'created') result.created++
-          else result.updated++
+          else if (action === 'updated') result.updated++
         } catch (error) {
           result.errors.push(
             `${order.order_sn ?? '?'}: ${error instanceof Error ? error.message : String(error)}`,
@@ -337,12 +349,26 @@ export async function syncRecentShopeeOrders(options: {
       }
     } catch (error) {
       result.errors.push(
-        `batch ${i / 50 + 1}: ${error instanceof Error ? error.message : String(error)}`,
+        `batch ${Math.floor(i / 50) + 1}: ${error instanceof Error ? error.message : String(error)}`,
       )
     }
   }
 
   return result
+}
+
+/** Importa pedidos recentes via API — todos os status (push desativado; poll é a única via). */
+export async function syncRecentShopeeOrders(options: {
+  hours?: number
+} = {}): Promise<ShopeeSyncResult> {
+  ensureShopeeWorkbook()
+  const hours = Math.min(Math.max(options.hours ?? SHOPEE_POLL_LOOKBACK_HOURS, 1), 168)
+  const timeTo = Math.floor(Date.now() / 1000)
+  const timeFrom = timeTo - hours * 3600
+
+  const errors: string[] = []
+  const orderSns = await collectOrderSns(timeFrom, timeTo, errors)
+  return upsertOrderSnsBatched(orderSns, errors)
 }
 
 function findOrderSnsPendingDate(): string[] {
@@ -360,33 +386,34 @@ function findOrderSnsPendingDate(): string[] {
  */
 export async function resyncPendingDateOrders(): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
-  const orderSns = findOrderSnsPendingDate()
-  const result: ShopeeSyncResult = { listed: orderSns.length, created: 0, updated: 0, errors: [] }
+  return upsertOrderSnsBatched(findOrderSnsPendingDate())
+}
 
-  for (let i = 0; i < orderSns.length; i += 50) {
-    const batch = orderSns.slice(i, i + 50)
+function findOrderSnsReadyToShip(): string[] {
+  const rows = db
+    .prepare('SELECT id, row_json FROM orders WHERE workbook_id = ?')
+    .all(SHOPEE_WORKBOOK_ID) as Array<{ id: string; row_json: string }>
+  const orderSns = new Set<string>()
+  for (const row of rows) {
+    let cells: string[]
     try {
-      const data = await getOrderDetail(batch)
-      const orders = parseOrderList(data)
-      for (const order of orders) {
-        try {
-          const action = upsertShopeeOrder(order)
-          if (action === 'created') result.created++
-          else result.updated++
-        } catch (error) {
-          result.errors.push(
-            `${order.order_sn ?? '?'}: ${error instanceof Error ? error.message : String(error)}`,
-          )
-        }
-      }
-    } catch (error) {
-      result.errors.push(
-        `batch ${i / 50 + 1}: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      cells = JSON.parse(row.row_json) as string[]
+    } catch {
+      continue
     }
+    if (cells[SHOPEE_COL_SHOPEE_STATUS] === 'READY_TO_SHIP') orderSns.add(row.id)
   }
+  return [...orderSns]
+}
 
-  return result
+/**
+ * Reconfere a data de TODO pedido hoje em READY_TO_SHIP, mesmo os que já têm data — corrige
+ * pedidos que vieram com data errada antes do fix do `resolveSheetDate`, e cobre o caso da
+ * Shopee às vezes empurrar o ship_by_date +1 dia depois (bug do lado deles) já visto na prática.
+ */
+export async function resyncReadyToShipDates(): Promise<ShopeeSyncResult> {
+  ensureShopeeWorkbook()
+  return upsertOrderSnsBatched(findOrderSnsReadyToShip())
 }
 
 async function collectAllOrderSns(timeFrom: number, timeTo: number, errors?: string[]): Promise<string[]> {
@@ -404,32 +431,7 @@ export async function syncShopeeWorkbookOrders(options: {
   const timeTo = Math.floor(Date.now() / 1000) - offsetDays * 86400
   const timeFrom = timeTo - days * 86400
 
-  const result: ShopeeSyncResult = { listed: 0, created: 0, updated: 0, errors: [] }
-  const orderSns = await collectAllOrderSns(timeFrom, timeTo, result.errors)
-  result.listed = orderSns.length
-
-  for (let i = 0; i < orderSns.length; i += 50) {
-    const batch = orderSns.slice(i, i + 50)
-    try {
-      const data = await getOrderDetail(batch)
-      const orders = parseOrderList(data)
-      for (const order of orders) {
-        try {
-          const action = upsertShopeeOrder(order)
-          if (action === 'created') result.created++
-          else result.updated++
-        } catch (error) {
-          result.errors.push(
-            `${order.order_sn ?? '?'}: ${error instanceof Error ? error.message : String(error)}`,
-          )
-        }
-      }
-    } catch (error) {
-      result.errors.push(
-        `batch ${i / 50 + 1}: ${error instanceof Error ? error.message : String(error)}`,
-      )
-    }
-  }
-
-  return result
+  const errors: string[] = []
+  const orderSns = await collectAllOrderSns(timeFrom, timeTo, errors)
+  return upsertOrderSnsBatched(orderSns, errors)
 }
