@@ -23,7 +23,10 @@ import {
   mapShopeeOrderToItemRows,
   mapShopeeOrderToRow,
   parseShopeeOrderDetail,
+  resyncPendingDateOrders,
+  syncRecentShopeeOrders,
   syncShopeeWorkbookOrders,
+  SHOPEE_POLL_LOOKBACK_HOURS,
 } from '../shopee-order-sync.js'
 import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames, getWorkbookLinkStatus, clearBuyerChatsForWorkbook, getLinkScanBootstrap, saveLinkStartCursor, loadLinkStartCursor, warmLinkStartCursorChunk } from '../shopee-link-conversations.js'
 import {
@@ -162,6 +165,34 @@ router.post('/shopee/sync-workbook', requireAuth, async (req, res) => {
     res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'Erro ao sincronizar planilha Shopee',
+    })
+  }
+})
+
+/**
+ * POST /api/shopee/sync-now — mesma rotina do poll de 8h (janela de 20h + reconsulta dos
+ * pedidos "Sem data de envio"), disparada na hora pelo botão da UI. Push está desativado.
+ */
+router.post('/shopee/sync-now', requireAuth, async (_req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  try {
+    const recent = await syncRecentShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS })
+    const pending = await resyncPendingDateOrders()
+    res.json({
+      ok: true,
+      listed: recent.listed,
+      created: recent.created,
+      updated: recent.updated + pending.updated,
+      errors: [...recent.errors, ...pending.errors],
+      pendingRechecked: pending.listed,
+    })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao sincronizar pedidos Shopee',
     })
   }
 })

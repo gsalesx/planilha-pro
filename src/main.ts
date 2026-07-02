@@ -12,6 +12,7 @@ import {
   replaceWorkbook,
   serverWorkbookToLocal,
   syncShopeeWorkbookInitial,
+  syncShopeeNow,
   linkShopeeConversationsScanChunk,
   fetchLinkedBuyerUsernames,
   fetchShopeeLinkStatus,
@@ -98,6 +99,9 @@ function buildShell() {
           </button>
           <button type="button" class="btn btn-primary" id="shopee-import-btn" hidden title="Importa pedidos dos últimos 5 dias da Shopee">
             ↓ Importar pedidos Shopee (5 dias)
+          </button>
+          <button type="button" class="btn" id="shopee-sync-now-btn" hidden title="Roda agora a mesma sincronização que acontece sozinha a cada 8h (sem esperar)">
+            🔄 Sincronizar agora
           </button>
           <button class="btn" id="logout-btn" title="Sair">Sair</button>
         </div>
@@ -1676,9 +1680,39 @@ function bindShopeeImport() {
   })
 }
 
+function bindShopeeSyncNow() {
+  const btn = document.querySelector<HTMLButtonElement>('#shopee-sync-now-btn')
+  if (!btn) return
+  btn.addEventListener('click', async () => {
+    if (!currentWorkbookId || !isShopeeWorkbookId(currentWorkbookId)) return
+    btn.disabled = true
+    const prevLabel = btn.textContent
+    btn.textContent = '🔄 Sincronizando…'
+    setStatusText('Sincronizando pedidos Shopee…')
+    try {
+      const result = await syncShopeeNow()
+      await refreshFromServer({ force: true })
+      setStatusText(
+        `Sincronização concluída — ${result.created} novos, ${result.updated} atualizados` +
+          (result.pendingRechecked > 0 ? ` (${result.pendingRechecked} sem data reconsultados)` : ''),
+      )
+      if (result.errors.length) {
+        alert(`${result.errors.length} erro(s) na sincronização — veja o console`)
+        console.warn('[shopee-sync-now]', result.errors)
+      }
+    } catch (error) {
+      setStatusText(`Erro na sincronização: ${(error as Error).message}`)
+    } finally {
+      btn.disabled = false
+      btn.textContent = prevLabel
+    }
+  })
+}
+
 function applyShopeeWorkbookToolbar(workbookId: string) {
   const isShopee = isShopeeWorkbookId(workbookId)
   setToolbarBtnVisible(document.querySelector('#shopee-import-btn'), isShopee)
+  setToolbarBtnVisible(document.querySelector('#shopee-sync-now-btn'), isShopee)
   setToolbarBtnVisible(document.querySelector('#shopee-link-conversations-btn'), !isShopee)
   setToolbarBtnVisible(document.querySelector('#xlsx-update-label'), !isShopee)
   setToolbarBtnVisible(document.querySelector('#xlsx-photos-label'), !isShopee)
@@ -1726,6 +1760,7 @@ async function enterWorkbook(workbookId: string) {
   bindPendingMutationsButton()
   applyShopeeWorkbookToolbar(workbookId)
   bindShopeeImport()
+  bindShopeeSyncNow()
   bindShopeeLinkConversations()
   try {
     await refreshFromServer({ force: true })

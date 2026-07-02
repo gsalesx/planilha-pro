@@ -264,6 +264,18 @@ export async function syncShopeeWorkbook(
   })
 }
 
+/** Sincronização manual — mesma rotina do poll de 8h, sob demanda. */
+export async function syncShopeeNow(): Promise<{
+  ok: boolean
+  listed: number
+  created: number
+  updated: number
+  errors: string[]
+  pendingRechecked: number
+}> {
+  return request('/shopee/sync-now', { method: 'POST' })
+}
+
 /** Importação inicial parcelada — 1 request por dia para evitar timeout. */
 export async function syncShopeeWorkbookInitial(
   totalDays = 5,
