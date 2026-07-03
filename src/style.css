@@ -1227,6 +1227,36 @@ table.sheet tbody tr.row-disappeared td.cell-image .image-cell-wrap {
   background: #cbd5e1;
   margin: 0 4px;
 }
+.shopee-status-filter-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.shopee-status-filter-wrap[hidden] {
+  display: none;
+}
+.shopee-status-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 3px 9px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #1f2937;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.shopee-status-filter-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+.shopee-status-filter-btn.is-active {
+  background: #217346;
+  border-color: #217346;
+  color: #fff;
+}
 /* Zoom controls (etiqueta-bar, leftmost) */
 .zoom-controls {
   display: inline-flex;

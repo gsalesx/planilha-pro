@@ -216,6 +216,26 @@ export class GridView {
     return this.dateFilter
   }
 
+  /**
+   * Filtro por coluna independente do mecanismo de header-click (FILTERABLE_COLS/setViewState) —
+   * usado por botões dedicados (ex.: status Shopee) que não precisam de dropdown no cabeçalho
+   * nem persistência na URL. Combina em AND com dateFilter e os demais filtros via recomputeOrder.
+   */
+  setColumnFilter(col: number, values: string[] | null): void {
+    if (!this.activeSheetId) return
+    const filters = this.getSheetFilters(this.activeSheetId)
+    if (!values || values.length === 0) filters.delete(col)
+    else filters.set(col, new Set(values))
+    this.recomputeOrder()
+    this.render()
+  }
+
+  getColumnFilter(col: number): string[] | null {
+    const filters = this.activeSheetId ? this.filters.get(this.activeSheetId) : undefined
+    const set = filters?.get(col)
+    return set ? [...set] : null
+  }
+
   getAvailableDates(): string[] {
     const sheet = this.getActiveSheet()
     if (!sheet) return []

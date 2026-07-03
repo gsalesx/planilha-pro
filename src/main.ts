@@ -32,7 +32,11 @@ import { formatHitRef, highlightMatch, searchWorkbook, type SearchHit } from './
 import { STATUS_COLUMN_INDEX, PREVIEW_SENT_STATUS } from './status'
 import type { CellValue, SheetData, WorkbookData } from './types'
 import { showWorkbooksList } from './workbooks-list'
-import { isShopeeWorkbookId } from './shopee-workbook'
+import {
+  isShopeeWorkbookId,
+  SHOPEE_STATUS_COLUMN_INDEX,
+  SHOPEE_STATUS_FILTER_OPTIONS,
+} from './shopee-workbook'
 import { openShopeeChatPanel } from './shopee-chat-panel'
 import { FIXED_HEADERS, parseXlsx } from './xlsx-parser'
 
@@ -117,6 +121,12 @@ function buildShell() {
           <label class="date-select-label" for="date-select">Data:</label>
           <select class="date-select" id="date-select"></select>
           <button type="button" class="date-delete-btn" id="date-delete-btn" title="Apagar todos os pedidos desta data" aria-label="Apagar data">🗑</button>
+        </div>
+        <div class="shopee-status-filter-wrap" id="shopee-status-filter-wrap" hidden role="group" aria-label="Filtrar por status Shopee">
+          ${SHOPEE_STATUS_FILTER_OPTIONS.map(
+            (opt) =>
+              `<button type="button" class="shopee-status-filter-btn${opt.value === '' ? ' is-active' : ''}" data-status="${opt.value}">${opt.label}</button>`,
+          ).join('')}
         </div>
         <span class="etiqueta-bar-divider" aria-hidden="true"></span>
         <span class="etiqueta-bar-label">Etiqueta:</span>
@@ -1681,9 +1691,24 @@ function bindShopeeSyncNow() {
   })
 }
 
+function bindShopeeStatusFilter() {
+  const wrap = document.querySelector<HTMLElement>('#shopee-status-filter-wrap')
+  if (!wrap) return
+  const buttons = [...wrap.querySelectorAll<HTMLButtonElement>('.shopee-status-filter-btn')]
+  for (const btn of buttons) {
+    btn.addEventListener('click', () => {
+      const status = btn.dataset.status ?? ''
+      grid.setColumnFilter(SHOPEE_STATUS_COLUMN_INDEX, status ? [status] : null)
+      for (const b of buttons) b.classList.toggle('is-active', b === btn)
+      updateStatusCounts()
+    })
+  }
+}
+
 function applyShopeeWorkbookToolbar(workbookId: string) {
   const isShopee = isShopeeWorkbookId(workbookId)
   setToolbarBtnVisible(document.querySelector('#shopee-sync-now-btn'), isShopee)
+  setToolbarBtnVisible(document.querySelector('#shopee-status-filter-wrap'), isShopee)
   setToolbarBtnVisible(document.querySelector('#shopee-link-conversations-btn'), true)
   setToolbarBtnVisible(document.querySelector('#xlsx-update-label'), !isShopee)
   setToolbarBtnVisible(document.querySelector('#xlsx-photos-label'), !isShopee)
@@ -1731,6 +1756,7 @@ async function enterWorkbook(workbookId: string) {
   bindPendingMutationsButton()
   applyShopeeWorkbookToolbar(workbookId)
   bindShopeeSyncNow()
+  bindShopeeStatusFilter()
   bindShopeeLinkConversations()
   try {
     await refreshFromServer({ force: true })

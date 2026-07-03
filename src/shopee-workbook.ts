@@ -10,6 +10,27 @@ export const SHOPEE_PHOTO_COLUMN_START = 8
 export const SHOPEE_PHOTO_COLUMN_INDICES = Array.from({ length: 10 }, (_, i) => SHOPEE_PHOTO_COLUMN_START + i)
 export const SHOPEE_MIN_COLUMN_COUNT = 18
 
+/** Coluna H — Status Shopee (READY_TO_SHIP, CANCELLED, ...). Espelha SHOPEE_COL_SHOPEE_STATUS no server. */
+export const SHOPEE_STATUS_COLUMN_INDEX = 7
+
+export interface ShopeeStatusFilterOption {
+  /** '' = Todos (limpa o filtro) */
+  value: string
+  label: string
+}
+
+/** Botões de filtro rápido por status Shopee — combinam em AND com a data selecionada. */
+export const SHOPEE_STATUS_FILTER_OPTIONS: ShopeeStatusFilterOption[] = [
+  { value: '', label: 'Todos' },
+  { value: 'UNPAID', label: 'Não pagos' },
+  { value: 'READY_TO_SHIP', label: 'A enviar' },
+  { value: 'PROCESSED', label: 'Enviado' },
+  { value: 'TO_CONFIRM_RECEIVE', label: 'Aguardando confirmação' },
+  { value: 'TO_RETURN', label: 'Retornando' },
+  { value: 'CANCELLED', label: 'Cancelados' },
+  { value: 'COMPLETED', label: 'Completos' },
+]
+
 export const SHOPEE_HEADERS = [
   'ID do pedido',
   'SKU',
