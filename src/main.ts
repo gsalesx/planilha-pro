@@ -20,7 +20,13 @@ import {
   sendShopeePreview,
   type OrderStyleDelta,
 } from './api'
-import { openAlertDialog, openConfirmDialog, openPreviewPickerDialog, openTextareaDialog } from './dialog'
+import {
+  openAlertDialog,
+  openCalendarPickerDialog,
+  openConfirmDialog,
+  openPreviewPickerDialog,
+  openTextareaDialog,
+} from './dialog'
 import {
   GridView,
   MODEL_COLUMN_INDEX,
@@ -34,6 +40,7 @@ import type { CellValue, SheetData, WorkbookData } from './types'
 import { showWorkbooksList } from './workbooks-list'
 import {
   isShopeeWorkbookId,
+  SHOPEE_DEFAULT_STATUS_FILTER,
   SHOPEE_STATUS_COLUMN_INDEX,
   SHOPEE_STATUS_FILTER_OPTIONS,
 } from './shopee-workbook'
@@ -117,16 +124,14 @@ function buildShell() {
           <button type="button" class="zoom-btn" id="zoom-in" title="Aumentar zoom" aria-label="Aumentar zoom">+</button>
         </div>
         <span class="etiqueta-bar-divider" aria-hidden="true"></span>
+        <div class="date-select-wrap" id="shopee-status-filter-wrap" hidden>
+          <label class="date-select-label" for="shopee-status-select">Status:</label>
+          <select class="date-select" id="shopee-status-select"></select>
+        </div>
         <div class="date-select-wrap" id="date-select-wrap" hidden>
           <label class="date-select-label" for="date-select">Data:</label>
           <select class="date-select" id="date-select"></select>
           <button type="button" class="date-delete-btn" id="date-delete-btn" title="Apagar todos os pedidos desta data" aria-label="Apagar data">🗑</button>
-        </div>
-        <div class="shopee-status-filter-wrap" id="shopee-status-filter-wrap" hidden role="group" aria-label="Filtrar por status Shopee">
-          ${SHOPEE_STATUS_FILTER_OPTIONS.map(
-            (opt) =>
-              `<button type="button" class="shopee-status-filter-btn${opt.value === '' ? ' is-active' : ''}" data-status="${opt.value}">${opt.label}</button>`,
-          ).join('')}
         </div>
         <span class="etiqueta-bar-divider" aria-hidden="true"></span>
         <span class="etiqueta-bar-label">Etiqueta:</span>
@@ -409,6 +414,14 @@ function parseSheetDate(raw: string): Date | null {
   return null
 }
 
+function sortDates(dates: string[]): string[] {
+  return [...dates].sort((a, b) => {
+    const da = parseSheetDate(a)?.getTime() ?? 0
+    const db = parseSheetDate(b)?.getTime() ?? 0
+    return da - db
+  })
+}
+
 /** Sempre exibe DD-MM-YYYY Dia mesmo pra dados antigos salvos com underscores. */
 function formatDateForDisplay(raw: string): string {
   const date = parseSheetDate(raw)
@@ -515,36 +528,67 @@ function applyUrlGridViewState() {
   setUrlGridViewState(grid.getViewState())
 }
 
+const CUSTOM_DATE_VALUE = '__custom__'
+
 function renderDateSelect() {
   const wrap = el<HTMLDivElement>('#date-select-wrap')
   const select = el<HTMLSelectElement>('#date-select')
   const deleteBtn = el<HTMLButtonElement>('#date-delete-btn')
-  const dates = grid.getAvailableDates()
-  if (dates.length === 0) {
+  const allDates = grid.getAvailableDates()
+  if (allDates.length === 0) {
     wrap.hidden = true
     select.innerHTML = ''
     setUrlDate(null)
     return
   }
   wrap.hidden = false
-  const sorted = [...dates].sort((a, b) => {
-    const da = parseSheetDate(a)?.getTime() ?? 0
-    const db = parseSheetDate(b)?.getTime() ?? 0
-    return da - db
-  })
   const active = grid.getDateFilter()
-  select.innerHTML = sorted
-    .map((d) => {
-      const label = formatDateForDisplay(d)
-      const selected = d === active ? ' selected' : ''
-      return `<option value="${d}"${selected}>${label}</option>`
-    })
-    .join('')
-  select.onchange = () => {
-    grid.setDateFilter(select.value)
-    setUrlDate(select.value)
-    updateStatusCounts()
+  const isShopee = isShopeeWorkbookId(currentWorkbookId ?? '')
+
+  if (!isShopee) {
+    const sorted = sortDates(allDates)
+    select.innerHTML = sorted
+      .map((d) => `<option value="${d}"${d === active ? ' selected' : ''}>${formatDateForDisplay(d)}</option>`)
+      .join('')
+    select.onchange = () => {
+      grid.setDateFilter(select.value)
+      setUrlDate(select.value)
+      updateStatusCounts()
+    }
+  } else {
+    // Quick-list: só datas com pedido "a enviar" (READY_TO_SHIP) + a data ativa (se for outra,
+    // ex.: chegou via busca/pendência) + "Personalizado" abrindo o calendário com TODAS as datas.
+    const readyDates = sortDates(
+      grid.getAvailableDatesForColumnValue(SHOPEE_STATUS_COLUMN_INDEX, SHOPEE_DEFAULT_STATUS_FILTER),
+    )
+    const quickDates = active && !readyDates.includes(active) ? sortDates([...readyDates, active]) : readyDates
+    select.innerHTML =
+      quickDates
+        .map((d) => `<option value="${d}"${d === active ? ' selected' : ''}>${formatDateForDisplay(d)}</option>`)
+        .join('') + `<option value="${CUSTOM_DATE_VALUE}">Personalizado…</option>`
+
+    select.onchange = () => {
+      if (select.value === CUSTOM_DATE_VALUE) {
+        select.value = active ?? ''
+        openCalendarPickerDialog({
+          title: 'Escolher data',
+          availableDates: sortDates(allDates),
+          initialDate: active,
+          onSelect: (date) => {
+            grid.setDateFilter(date)
+            setUrlDate(date)
+            updateStatusCounts()
+            renderDateSelect()
+          },
+        })
+        return
+      }
+      grid.setDateFilter(select.value)
+      setUrlDate(select.value)
+      updateStatusCounts()
+    }
   }
+
   deleteBtn.onclick = () => {
     const date = grid.getDateFilter()
     if (!date || !currentWorkbookId) return
@@ -566,6 +610,30 @@ function renderDateSelect() {
         }
       },
     })
+  }
+}
+
+/** Vale só na planilha Shopee — sobrevive ao grid.setWorkbook() (limpa filtros a cada poll). */
+let currentShopeeStatusFilter: string = SHOPEE_DEFAULT_STATUS_FILTER
+/** true depois que a data padrão (1º dia "a enviar") já foi aplicada nesta sessão de enterWorkbook. */
+let shopeeDateDefaultApplied = false
+
+function renderShopeeStatusSelect() {
+  const wrap = el<HTMLDivElement>('#shopee-status-filter-wrap')
+  const select = el<HTMLSelectElement>('#shopee-status-select')
+  if (!isShopeeWorkbookId(currentWorkbookId ?? '')) {
+    wrap.hidden = true
+    return
+  }
+  wrap.hidden = false
+  select.innerHTML = SHOPEE_STATUS_FILTER_OPTIONS.map(
+    (opt) =>
+      `<option value="${opt.value}"${opt.value === currentShopeeStatusFilter ? ' selected' : ''}>${opt.label}</option>`,
+  ).join('')
+  select.onchange = () => {
+    currentShopeeStatusFilter = select.value
+    grid.setColumnFilter(SHOPEE_STATUS_COLUMN_INDEX, currentShopeeStatusFilter ? [currentShopeeStatusFilter] : null)
+    updateStatusCounts()
   }
 }
 
@@ -1371,12 +1439,27 @@ async function refreshFromServer(options: { force?: boolean } = {}): Promise<boo
     }
     workbook = serverWorkbookToLocal(currentWorkbookId, response)
     grid.setWorkbook(workbook)
+    if (isShopeeWorkbookId(currentWorkbookId)) {
+      // grid.setWorkbook() limpa this.filters a cada poll — reaplica o status ativo.
+      grid.setColumnFilter(SHOPEE_STATUS_COLUMN_INDEX, currentShopeeStatusFilter ? [currentShopeeStatusFilter] : null)
+      if (!shopeeDateDefaultApplied) {
+        shopeeDateDefaultApplied = true
+        const readyDates = sortDates(
+          grid.getAvailableDatesForColumnValue(SHOPEE_STATUS_COLUMN_INDEX, SHOPEE_DEFAULT_STATUS_FILTER),
+        )
+        if (readyDates.length > 0) {
+          grid.setDateFilter(readyDates[0])
+          setUrlDate(readyDates[0])
+        }
+      }
+    }
     applyUrlDateFilter()
     applyUrlGridViewState()
     if (previousSelection && previousSelection.sheetId === workbook.sheetOrder[0]) {
       grid.restoreSelection(previousSelection.row, previousSelection.col)
     }
     renderDateSelect()
+    renderShopeeStatusSelect()
     updateStatusCounts()
     setFilename(workbook.name)
     serverUpdatedAt = response.updatedAt
@@ -1691,24 +1774,9 @@ function bindShopeeSyncNow() {
   })
 }
 
-function bindShopeeStatusFilter() {
-  const wrap = document.querySelector<HTMLElement>('#shopee-status-filter-wrap')
-  if (!wrap) return
-  const buttons = [...wrap.querySelectorAll<HTMLButtonElement>('.shopee-status-filter-btn')]
-  for (const btn of buttons) {
-    btn.addEventListener('click', () => {
-      const status = btn.dataset.status ?? ''
-      grid.setColumnFilter(SHOPEE_STATUS_COLUMN_INDEX, status ? [status] : null)
-      for (const b of buttons) b.classList.toggle('is-active', b === btn)
-      updateStatusCounts()
-    })
-  }
-}
-
 function applyShopeeWorkbookToolbar(workbookId: string) {
   const isShopee = isShopeeWorkbookId(workbookId)
   setToolbarBtnVisible(document.querySelector('#shopee-sync-now-btn'), isShopee)
-  setToolbarBtnVisible(document.querySelector('#shopee-status-filter-wrap'), isShopee)
   setToolbarBtnVisible(document.querySelector('#shopee-link-conversations-btn'), true)
   setToolbarBtnVisible(document.querySelector('#xlsx-update-label'), !isShopee)
   setToolbarBtnVisible(document.querySelector('#xlsx-photos-label'), !isShopee)
@@ -1720,6 +1788,8 @@ async function enterWorkbook(workbookId: string) {
   setUrlWorkbookId(workbookId)
   serverUpdatedAt = 0
   workbook = null
+  currentShopeeStatusFilter = SHOPEE_DEFAULT_STATUS_FILTER
+  shopeeDateDefaultApplied = false
   buildShell()
   grid = new GridView(el<HTMLDivElement>('#sheet-root'), {
     onSelectCell: handleSelect,
@@ -1756,7 +1826,6 @@ async function enterWorkbook(workbookId: string) {
   bindPendingMutationsButton()
   applyShopeeWorkbookToolbar(workbookId)
   bindShopeeSyncNow()
-  bindShopeeStatusFilter()
   bindShopeeLinkConversations()
   try {
     await refreshFromServer({ force: true })

@@ -19,7 +19,7 @@ export interface ShopeeStatusFilterOption {
   label: string
 }
 
-/** Botões de filtro rápido por status Shopee — combinam em AND com a data selecionada. */
+/** Seletor rápido de status Shopee (dropdown, igual ao de data) — combina em AND com a data selecionada. */
 export const SHOPEE_STATUS_FILTER_OPTIONS: ShopeeStatusFilterOption[] = [
   { value: '', label: 'Todos' },
   { value: 'UNPAID', label: 'Não pagos' },
@@ -30,6 +30,9 @@ export const SHOPEE_STATUS_FILTER_OPTIONS: ShopeeStatusFilterOption[] = [
   { value: 'CANCELLED', label: 'Cancelados' },
   { value: 'COMPLETED', label: 'Completos' },
 ]
+
+/** Status padrão ao entrar na planilha Shopee — também define quais datas aparecem no quick-select. */
+export const SHOPEE_DEFAULT_STATUS_FILTER = 'READY_TO_SHIP'
 
 export const SHOPEE_HEADERS = [
   'ID do pedido',

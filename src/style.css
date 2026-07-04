@@ -601,6 +601,89 @@ button {
 .modal-preview-picker {
   max-width: min(920px, calc(100% - 32px));
 }
+.modal-calendar {
+  max-width: 320px;
+}
+.calendar-body {
+  margin-bottom: 12px;
+}
+.calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.calendar-month-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2937;
+}
+.calendar-nav-btn {
+  background: #f1f5f9;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  color: #1f2937;
+}
+.calendar-nav-btn:hover {
+  background: #e2e8f0;
+}
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.calendar-weekday {
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  text-transform: uppercase;
+  padding-bottom: 4px;
+}
+.calendar-day {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: none;
+  color: #cbd5e1;
+}
+.calendar-day-empty {
+  visibility: hidden;
+}
+.calendar-day.is-disabled {
+  color: #d1d5db;
+  cursor: not-allowed;
+}
+.calendar-day.is-available {
+  color: #1f2937;
+  border-color: #d1d5db;
+  cursor: pointer;
+  font-weight: 500;
+}
+.calendar-day.is-available:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+.calendar-day.is-selected {
+  background: #217346;
+  border-color: #217346;
+  color: #fff;
+}
+.calendar-empty-msg {
+  text-align: center;
+  font-size: 13px;
+  color: #64748b;
+  padding: 12px 0 4px;
+}
 .preview-picker-grid {
   display: flex;
   flex-wrap: wrap;
@@ -1226,36 +1309,6 @@ table.sheet tbody tr.row-disappeared td.cell-image .image-cell-wrap {
   height: 20px;
   background: #cbd5e1;
   margin: 0 4px;
-}
-.shopee-status-filter-wrap {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.shopee-status-filter-wrap[hidden] {
-  display: none;
-}
-.shopee-status-filter-btn {
-  display: inline-flex;
-  align-items: center;
-  background: #fff;
-  border: 1px solid #d1d5db;
-  border-radius: 4px;
-  padding: 3px 9px;
-  font-size: 12px;
-  font-weight: 500;
-  color: #1f2937;
-  cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
-}
-.shopee-status-filter-btn:hover {
-  background: #f1f5f9;
-  border-color: #94a3b8;
-}
-.shopee-status-filter-btn.is-active {
-  background: #217346;
-  border-color: #217346;
-  color: #fff;
 }
 /* Zoom controls (etiqueta-bar, leftmost) */
 .zoom-controls {

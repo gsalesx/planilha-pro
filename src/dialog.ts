@@ -200,6 +200,178 @@ export function openAlertDialog(opts: {
   confirmBtn.focus()
 }
 
+function parseDDMMYYYY(raw: string): Date | null {
+  const m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(raw)
+  if (!m) return null
+  return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+}
+
+function formatDDMMYYYY(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const yyyy = d.getFullYear()
+  return `${dd}-${mm}-${yyyy}`
+}
+
+const CALENDAR_WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+const CALENDAR_MONTH_FMT = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' })
+
+/**
+ * Calendário mensal — só dias com pelo menos 1 pedido (availableDates) são clicáveis;
+ * os demais aparecem esmaecidos. Usado pelo seletor "Personalizado" da planilha Shopee.
+ */
+export function openCalendarPickerDialog(opts: {
+  title: string
+  /** Datas no formato DD-MM-YYYY que podem ser selecionadas. */
+  availableDates: string[]
+  /** Mês inicial e dia destacado, se houver. */
+  initialDate?: string | null
+  onSelect: (date: string) => void
+}): void {
+  const available = new Set(opts.availableDates)
+  const parsedAvailable = opts.availableDates
+    .map(parseDDMMYYYY)
+    .filter((d): d is Date => d !== null)
+    .sort((a, b) => a.getTime() - b.getTime())
+
+  const initial =
+    (opts.initialDate ? parseDDMMYYYY(opts.initialDate) : null) ??
+    parsedAvailable[parsedAvailable.length - 1] ??
+    new Date()
+
+  let viewYear = initial.getFullYear()
+  let viewMonth = initial.getMonth()
+
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  const modal = document.createElement('div')
+  modal.className = 'modal modal-calendar'
+  modal.setAttribute('role', 'dialog')
+  modal.setAttribute('aria-modal', 'true')
+
+  const title = document.createElement('div')
+  title.className = 'modal-title'
+  title.textContent = opts.title
+  modal.appendChild(title)
+
+  const body = document.createElement('div')
+  body.className = 'modal-body calendar-body'
+  modal.appendChild(body)
+
+  const actions = document.createElement('div')
+  actions.className = 'modal-actions'
+  const closeBtn = document.createElement('button')
+  closeBtn.type = 'button'
+  closeBtn.className = 'btn modal-cancel'
+  closeBtn.textContent = 'Fechar'
+  actions.appendChild(closeBtn)
+  modal.appendChild(actions)
+
+  overlay.appendChild(modal)
+  document.body.appendChild(overlay)
+
+  const close = () => overlay.remove()
+  closeBtn.addEventListener('click', close)
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) close()
+  })
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      close()
+      document.removeEventListener('keydown', onKey)
+    }
+  }
+  document.addEventListener('keydown', onKey)
+
+  function renderMonth() {
+    body.innerHTML = ''
+
+    const header = document.createElement('div')
+    header.className = 'calendar-header'
+    const prevBtn = document.createElement('button')
+    prevBtn.type = 'button'
+    prevBtn.className = 'calendar-nav-btn'
+    prevBtn.textContent = '‹'
+    prevBtn.setAttribute('aria-label', 'Mês anterior')
+    const label = document.createElement('span')
+    label.className = 'calendar-month-label'
+    const labelText = CALENDAR_MONTH_FMT.format(new Date(viewYear, viewMonth, 1))
+    label.textContent = labelText.charAt(0).toUpperCase() + labelText.slice(1)
+    const nextBtn = document.createElement('button')
+    nextBtn.type = 'button'
+    nextBtn.className = 'calendar-nav-btn'
+    nextBtn.textContent = '›'
+    nextBtn.setAttribute('aria-label', 'Próximo mês')
+    header.append(prevBtn, label, nextBtn)
+    body.appendChild(header)
+
+    const grid = document.createElement('div')
+    grid.className = 'calendar-grid'
+    for (const wd of CALENDAR_WEEKDAYS) {
+      const cell = document.createElement('div')
+      cell.className = 'calendar-weekday'
+      cell.textContent = wd
+      grid.appendChild(cell)
+    }
+
+    const firstOfMonth = new Date(viewYear, viewMonth, 1)
+    const startWeekday = firstOfMonth.getDay()
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate()
+
+    for (let i = 0; i < startWeekday; i++) {
+      const blank = document.createElement('div')
+      blank.className = 'calendar-day calendar-day-empty'
+      grid.appendChild(blank)
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = formatDDMMYYYY(new Date(viewYear, viewMonth, day))
+      const cell = document.createElement('button')
+      cell.type = 'button'
+      cell.textContent = String(day)
+      if (available.has(dateStr)) {
+        cell.className = 'calendar-day is-available' + (dateStr === opts.initialDate ? ' is-selected' : '')
+        cell.addEventListener('click', () => {
+          opts.onSelect(dateStr)
+          close()
+        })
+      } else {
+        cell.className = 'calendar-day is-disabled'
+        cell.disabled = true
+      }
+      grid.appendChild(cell)
+    }
+    body.appendChild(grid)
+
+    if (available.size === 0) {
+      const empty = document.createElement('div')
+      empty.className = 'calendar-empty-msg'
+      empty.textContent = 'Nenhuma data com pedidos disponível.'
+      body.appendChild(empty)
+    }
+
+    prevBtn.addEventListener('click', () => {
+      viewMonth -= 1
+      if (viewMonth < 0) {
+        viewMonth = 11
+        viewYear -= 1
+      }
+      renderMonth()
+    })
+    nextBtn.addEventListener('click', () => {
+      viewMonth += 1
+      if (viewMonth > 11) {
+        viewMonth = 0
+        viewYear += 1
+      }
+      renderMonth()
+    })
+  }
+
+  renderMonth()
+  closeBtn.focus()
+}
+
 export function openPreviewPickerDialog(opts: {
   title: string
   items: Array<{ col: number; label: string; imageUrl: string }>
