@@ -57,9 +57,11 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
-function formatPrice(value: number | null): string {
+/** hasModel=true => value é o menor preço entre as variantes (agregado no backend). */
+function formatPrice(value: number | null, hasModel: boolean): string {
   if (value == null) return '—'
-  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  const formatted = value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+  return hasModel ? `A partir de ${formatted}` : formatted
 }
 
 function formatStock(value: number | null): string {
@@ -223,7 +225,7 @@ async function boot(): Promise<void> {
         <div class="shopee-product-body">
           <h3 class="shopee-product-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</h3>
           <div class="shopee-product-meta">
-            <span class="shopee-product-price">${formatPrice(p.price)}</span>
+            <span class="shopee-product-price">${formatPrice(p.price, p.hasModel)}</span>
             <span class="shopee-product-stock">${formatStock(p.stock)}</span>
           </div>
           <div class="shopee-product-sku">SKU: <code>${escapeHtml(p.sku || '—')}</code></div>

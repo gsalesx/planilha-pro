@@ -11,6 +11,8 @@ import {
 export interface CatalogModel {
   modelId: number
   modelSku: string
+  price: number | null
+  stock: number | null
 }
 
 export interface CatalogProduct {
@@ -77,9 +79,26 @@ async function fetchModels(itemId: number): Promise<CatalogModel[]> {
   const models: CatalogModel[] = []
   for (const m of body.model ?? []) {
     if (typeof m.model_id !== 'number') continue
-    models.push({ modelId: m.model_id, modelSku: m.model_sku ?? '' })
+    models.push({
+      modelId: m.model_id,
+      modelSku: m.model_sku ?? '',
+      price: readPrice(m.price_info),
+      stock: formatStock(m.stock_info_v2?.summary_info?.total_available_stock),
+    })
   }
   return models
+}
+
+/** Roda `fn` sobre `items` com no máximo `limit` chamadas em paralelo. */
+async function mapWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let cursor = 0
+  async function worker(): Promise<void> {
+    while (cursor < items.length) {
+      const item = items[cursor++]
+      await fn(item)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
 }
 
 function parseItemList(data: ShopeeApiResponse): ItemBaseRow[] {
@@ -88,6 +107,9 @@ function parseItemList(data: ShopeeApiResponse): ItemBaseRow[] {
   }
   return body.item_list ?? []
 }
+
+/** Quantas chamadas get_model_list em paralelo — produtos com variação não têm preço no get_item_base_info. */
+const MODEL_FETCH_CONCURRENCY = 10
 
 export async function fetchProductCatalog(): Promise<CatalogProduct[]> {
   const itemIds = await fetchAllItemIds()
@@ -101,6 +123,21 @@ export async function fetchProductCatalog(): Promise<CatalogProduct[]> {
       products.push(mapItemBaseFromRow(row))
     }
   }
+
+  // Produto com variação não traz price_info/stock_info_v2 no get_item_base_info — só por
+  // variante, via get_model_list. Preço exibido = menor entre as variantes; estoque = soma.
+  const withModels = products.filter((p) => p.hasModel)
+  await mapWithConcurrency(withModels, MODEL_FETCH_CONCURRENCY, async (product) => {
+    try {
+      const models = await fetchModels(product.itemId)
+      const prices = models.map((m) => m.price).filter((v): v is number => v != null)
+      const stocks = models.map((m) => m.stock).filter((v): v is number => v != null)
+      product.price = prices.length ? Math.min(...prices) : null
+      product.stock = stocks.length ? stocks.reduce((sum, s) => sum + s, 0) : null
+    } catch {
+      // mantém price/stock null pra este produto — não derruba o catálogo inteiro
+    }
+  })
 
   products.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
   return products
