@@ -2358,6 +2358,36 @@ table.sheet tbody th.row-num.is-active {
   cursor: pointer;
 }
 
+.shopee-products-search {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #1f2937;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 0.85rem;
+  min-width: 220px;
+}
+.shopee-products-search:focus {
+  outline: none;
+  border-color: #217346;
+  box-shadow: 0 0 0 2px rgba(33, 115, 70, 0.15);
+}
+
+.shopee-products-sort {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #1f2937;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.shopee-products-sort:focus {
+  outline: none;
+  border-color: #217346;
+  box-shadow: 0 0 0 2px rgba(33, 115, 70, 0.15);
+}
+
 .shopee-products-main {
   flex: 1;
   padding: 16px 20px 32px;

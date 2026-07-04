@@ -133,6 +133,12 @@ async function boot(): Promise<void> {
         <a href="/" class="shopee-test-back">← Planilhas</a>
         <h1>Produtos Shopee</h1>
         <div class="shopee-products-toolbar">
+          <input type="search" class="shopee-products-search" id="product-search" placeholder="Buscar por nome…" />
+          <select class="shopee-products-sort" id="product-sort">
+            <option value="default">Ordem padrão</option>
+            <option value="price-asc">Preço: menor → maior</option>
+            <option value="price-desc">Preço: maior → menor</option>
+          </select>
           <label class="shopee-products-select-all">
             <input type="checkbox" id="select-all" /> Selecionar todos
           </label>
@@ -167,6 +173,8 @@ async function boot(): Promise<void> {
 
   const statusEl = root.querySelector('#status') as HTMLParagraphElement
   const gridEl = root.querySelector('#grid') as HTMLDivElement
+  const searchInput = root.querySelector('#product-search') as HTMLInputElement
+  const sortSelect = root.querySelector('#product-sort') as HTMLSelectElement
   const selectAllEl = root.querySelector('#select-all') as HTMLInputElement
   const bulkBar = root.querySelector('#bulk-bar') as HTMLElement
   const bulkCountEl = root.querySelector('#bulk-count') as HTMLElement
@@ -177,6 +185,8 @@ async function boot(): Promise<void> {
   const progressText = root.querySelector('#bulk-progress-text') as HTMLParagraphElement
   const selected = new Set<number>()
   let products: CatalogProduct[] = []
+  /** Produtos visíveis após busca/ordenação — "Selecionar todos" e as checagens usam esta lista. */
+  let visibleProducts: CatalogProduct[] = []
   let bulkBusy = false
 
   function setBulkProgress(done: number, total: number, label?: string): void {
@@ -232,7 +242,7 @@ async function boot(): Promise<void> {
         if (cb.checked) selected.add(id)
         else selected.delete(id)
         updateBulkBar()
-        selectAllEl.checked = selected.size === products.length && products.length > 0
+        selectAllEl.checked = visibleProducts.length > 0 && visibleProducts.every((p) => selected.has(p.itemId))
       })
     })
     gridEl.querySelectorAll<HTMLButtonElement>('.shopee-product-edit').forEach((btn) => {
@@ -254,6 +264,36 @@ async function boot(): Promise<void> {
     })
   }
 
+  function renderGrid(): void {
+    gridEl.innerHTML = visibleProducts.map(renderCard).join('')
+    bindGrid()
+  }
+
+  /** Filtra por nome (busca) e ordena por preço — roda sobre `products` sem tocar na seleção. */
+  function applyFilters(): void {
+    const query = searchInput.value.trim().toLowerCase()
+    let list = query ? products.filter((p) => p.name.toLowerCase().includes(query)) : [...products]
+
+    const sortMode = sortSelect.value
+    if (sortMode === 'price-asc' || sortMode === 'price-desc') {
+      const dir = sortMode === 'price-asc' ? 1 : -1
+      list = [...list].sort((a, b) => {
+        if (a.price == null && b.price == null) return 0
+        if (a.price == null) return 1 // sem preço sempre por último
+        if (b.price == null) return -1
+        return (a.price - b.price) * dir
+      })
+    }
+
+    visibleProducts = list
+    statusEl.textContent =
+      list.length === products.length
+        ? `${products.length} produto(s) · NORMAL e UNLIST`
+        : `${list.length} de ${products.length} produto(s)`
+    renderGrid()
+    selectAllEl.checked = visibleProducts.length > 0 && visibleProducts.every((p) => selected.has(p.itemId))
+  }
+
   async function loadCatalog(): Promise<void> {
     statusEl.textContent = 'Carregando produtos da Shopee…'
     gridEl.innerHTML = ''
@@ -263,25 +303,27 @@ async function boot(): Promise<void> {
     try {
       const data = await api<{ products: CatalogProduct[]; count: number }>('/shopee/products/catalog')
       products = data.products
-      statusEl.textContent = `${products.length} produto(s) · NORMAL e UNLIST`
-      gridEl.innerHTML = products.map(renderCard).join('')
-      bindGrid()
+      applyFilters()
     } catch (error) {
       statusEl.textContent = `Erro: ${(error as Error).message}`
     }
   }
 
   selectAllEl.addEventListener('change', () => {
+    // Afeta só os produtos visíveis (após busca/ordenação) — não mexe na seleção de itens filtrados fora da lista.
     if (selectAllEl.checked) {
-      for (const p of products) selected.add(p.itemId)
+      for (const p of visibleProducts) selected.add(p.itemId)
     } else {
-      selected.clear()
+      for (const p of visibleProducts) selected.delete(p.itemId)
     }
     gridEl.querySelectorAll<HTMLInputElement>('.product-select').forEach((cb) => {
       cb.checked = selectAllEl.checked
     })
     updateBulkBar()
   })
+
+  searchInput.addEventListener('input', () => applyFilters())
+  sortSelect.addEventListener('change', () => applyFilters())
 
   bulkSkuInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !bulkSaveBtn.disabled) {
