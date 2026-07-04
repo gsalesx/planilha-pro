@@ -294,12 +294,14 @@ export async function getItemList(params: ItemListParams = {}): Promise<ShopeeAp
   return shopApiGet('/api/v2/product/get_item_list', query)
 }
 
+/** price_info/stock_info_v2 não vêm por padrão — a Shopee só devolve o que response_optional_fields pedir. */
 export async function getItemBaseInfo(itemIds: number[]): Promise<ShopeeApiResponse> {
   if (!itemIds.length) throw new Error('itemIds obrigatório')
   return shopApiGet('/api/v2/product/get_item_base_info', {
     item_id_list: itemIds.join(','),
     need_tax_info: 'false',
     need_complaint_policy: 'false',
+    response_optional_fields: 'price_info,stock_info_v2',
   })
 }
 
