@@ -33,13 +33,13 @@ interface ItemBaseRow {
   has_model?: boolean
   image?: { image_url_list?: string[]; image_url?: string }
   price_info?: Array<{ current_price?: number; original_price?: number }> | { current_price?: number }
-  stock_info_v2?: { total_available_stock?: number }
+  stock_info_v2?: { summary_info?: { total_available_stock?: number } }
 }
 
 interface ModelRow {
   model_id?: number
   model_sku?: string
-  stock_info_v2?: { total_available_stock?: number }
+  stock_info_v2?: { summary_info?: { total_available_stock?: number } }
   price_info?: Array<{ current_price?: number }>
 }
 
@@ -61,7 +61,7 @@ function mapItemBaseFromRow(row: ItemBaseRow): CatalogProduct {
     name: row.item_name ?? '',
     imageUrl,
     price: readPrice(row.price_info),
-    stock: formatStock(row.stock_info_v2?.total_available_stock),
+    stock: formatStock(row.stock_info_v2?.summary_info?.total_available_stock),
     sku: row.item_sku ?? '',
     hasModel: Boolean(row.has_model),
     models: [],

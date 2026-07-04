@@ -9,6 +9,7 @@ import {
   summarizeConversationPage,
   getItemBaseInfo,
   getItemList,
+  getModelList,
   getMessageList,
   sendChatMessage,
   uploadChatImage,
@@ -345,6 +346,28 @@ router.get('/shopee/products/detail', requireAuth, async (req, res) => {
   try {
     const data = await getItemBaseInfo(itemIds.slice(0, 50))
     res.json({ ok: true, query: { itemIds: itemIds.slice(0, 50) }, shopee: data })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** GET /api/shopee/products/models?itemId= — proxy get_model_list (debug preço/estoque por variante) */
+router.get('/shopee/products/models', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const itemId = Number(req.query.itemId)
+  if (!Number.isFinite(itemId) || itemId <= 0) {
+    res.status(400).json({ error: 'itemId obrigatório' })
+    return
+  }
+  try {
+    const data = await getModelList(itemId)
+    res.json({ ok: true, itemId, shopee: data })
   } catch (error) {
     res.status(502).json({
       ok: false,

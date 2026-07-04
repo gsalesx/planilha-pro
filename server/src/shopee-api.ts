@@ -306,7 +306,10 @@ export async function getItemBaseInfo(itemIds: number[]): Promise<ShopeeApiRespo
 }
 
 export async function getModelList(itemId: number): Promise<ShopeeApiResponse> {
-  return shopApiGet('/api/v2/product/get_model_list', { item_id: itemId })
+  return shopApiGet('/api/v2/product/get_model_list', {
+    item_id: itemId,
+    response_optional_fields: 'price_info,stock_info_v2,tier_index',
+  })
 }
 
 export async function updateItemSku(itemId: number, itemSku: string): Promise<ShopeeApiResponse> {
