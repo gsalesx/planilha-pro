@@ -105,24 +105,16 @@ function showLogin(onSuccess: () => void): void {
 async function runBulkSkuSave(
   itemIds: number[],
   sku: string,
-  ui: {
-    setBusy: (busy: boolean) => void
-    setProgress: (done: number, total: number, label?: string) => void
-    onSaveBtnLabel: (text: string) => void
-  },
+  setProgress: (done: number, total: number, label?: string) => void,
 ): Promise<{ ok: boolean; failed: Array<{ itemId: number; error?: string }> }> {
   const updates = itemIds.map((itemId) => ({ itemId, sku }))
-  ui.setBusy(true)
-  ui.setProgress(0, updates.length, `Iniciando… 0 de ${updates.length}`)
-  ui.onSaveBtnLabel(`0/${updates.length}`)
+  setProgress(0, updates.length, `Iniciando… 0 de ${updates.length}`)
 
   const results = await saveProductSkusSequential(updates, (done, total) => {
-    ui.setProgress(done, total, `Salvando ${done} de ${total}…`)
-    ui.onSaveBtnLabel(`${done}/${total}`)
+    setProgress(done, total, `Salvando ${done} de ${total}…`)
   })
 
   const failed = results.filter((r) => !r.ok)
-  ui.setBusy(false)
   return { ok: failed.length === 0, failed }
 }
 
@@ -189,7 +181,14 @@ async function boot(): Promise<void> {
   let products: CatalogProduct[] = []
   /** Produtos visíveis após busca/ordenação — "Selecionar todos" e as checagens usam esta lista. */
   let visibleProducts: CatalogProduct[] = []
-  let bulkBusy = false
+
+  /** Fila de lotes — dá pra ir selecionando e mandando mais enquanto um lote anterior ainda roda. */
+  interface BulkJob {
+    itemIds: number[]
+    sku: string
+  }
+  const jobQueue: BulkJob[] = []
+  let queueRunning = false
 
   function setBulkProgress(done: number, total: number, label?: string): void {
     progressWrap.hidden = false
@@ -200,15 +199,59 @@ async function boot(): Promise<void> {
 
   function updateBulkBar(): void {
     const n = selected.size
-    bulkBar.hidden = n === 0
+    const busy = queueRunning || jobQueue.length > 0
+    bulkBar.hidden = n === 0 && !busy
     bulkCountEl.textContent = String(n)
     bulkSaveBtn.textContent = n ? `Salvar SKU em ${n} produto(s)` : 'Salvar na Shopee'
-    bulkSaveBtn.disabled = bulkBusy || n === 0
-    if (n === 0) {
+    bulkSaveBtn.disabled = n === 0
+    if (n === 0 && !busy) {
       progressWrap.hidden = true
       progressBar.style.width = '0%'
       progressText.textContent = ''
     }
+  }
+
+  function deselectItems(itemIds: number[]): void {
+    for (const id of itemIds) selected.delete(id)
+    const idSet = new Set(itemIds)
+    gridEl.querySelectorAll<HTMLInputElement>('.product-select').forEach((cb) => {
+      if (idSet.has(Number(cb.dataset.id))) cb.checked = false
+    })
+    selectAllEl.checked = visibleProducts.length > 0 && visibleProducts.every((p) => selected.has(p.itemId))
+  }
+
+  /** Roda a fila em sequência (1 lote por vez, pra não estourar a API da Shopee). */
+  async function processQueue(): Promise<void> {
+    if (queueRunning) return
+    queueRunning = true
+    while (jobQueue.length > 0) {
+      const job = jobQueue[0]
+      const queueSuffix = jobQueue.length > 1 ? ` — ${jobQueue.length - 1} lote(s) na fila` : ''
+      const { ok, failed } = await runBulkSkuSave(job.itemIds, job.sku, (done, total, label) => {
+        setBulkProgress(done, total, `${label ?? ''}${queueSuffix}`)
+      })
+
+      const failedIds = new Set(failed.map((f) => f.itemId))
+      for (const itemId of job.itemIds) {
+        if (failedIds.has(itemId)) continue
+        const product = products.find((p) => p.itemId === itemId)
+        if (product) product.sku = job.sku
+      }
+      applyFilters()
+
+      if (ok) {
+        progressText.textContent = `Concluído — ${job.itemIds.length} produto(s) atualizado(s).`
+      } else {
+        progressText.textContent = `${job.itemIds.length - failed.length} ok, ${failed.length} falha(s).`
+        const errs = failed.map((r) => `#${r.itemId}: ${r.error}`).join('\n')
+        alert(`Falhas:\n\n${errs}`)
+      }
+
+      jobQueue.shift()
+      updateBulkBar()
+    }
+    queueRunning = false
+    updateBulkBar()
   }
 
   function renderCard(p: CatalogProduct): string {
@@ -337,7 +380,7 @@ async function boot(): Promise<void> {
     }
   })
 
-  bulkSaveBtn.addEventListener('click', async () => {
+  bulkSaveBtn.addEventListener('click', () => {
     const sku = bulkSkuInput.value.trim()
     if (!sku) {
       alert('Digite o SKU no campo acima.')
@@ -347,42 +390,13 @@ async function boot(): Promise<void> {
     if (selected.size === 0) return
 
     const itemIds = [...selected]
-    const { ok, failed } = await runBulkSkuSave(itemIds, sku, {
-      setBusy: (busy) => {
-        bulkBusy = busy
-        bulkSaveBtn.disabled = busy
-        bulkSkuInput.disabled = busy
-        selectAllEl.disabled = busy
-        gridEl.querySelectorAll<HTMLInputElement>('.product-select').forEach((cb) => {
-          cb.disabled = busy
-        })
-      },
-      setProgress: setBulkProgress,
-      onSaveBtnLabel: (text) => {
-        bulkSaveBtn.textContent = text
-      },
-    })
-
-    bulkSaveBtn.textContent = `Salvar SKU em ${itemIds.length} produto(s)`
-
-    // Atualiza só quem salvou com sucesso — sem recarregar o catálogo inteiro da Shopee.
-    const failedIds = new Set(failed.map((f) => f.itemId))
-    for (const itemId of itemIds) {
-      if (failedIds.has(itemId)) continue
-      const product = products.find((p) => p.itemId === itemId)
-      if (product) product.sku = sku
-    }
-    applyFilters()
-
-    if (ok) {
-      progressText.textContent = `Concluído — ${itemIds.length} produto(s) atualizado(s).`
-      bulkSkuInput.value = ''
-      return
-    }
-
-    progressText.textContent = `${itemIds.length - failed.length} ok, ${failed.length} falha(s).`
-    const errs = failed.map((r) => `#${r.itemId}: ${r.error}`).join('\n')
-    alert(`Falhas:\n\n${errs}`)
+    jobQueue.push({ itemIds, sku })
+    // Libera a seleção e o campo na hora — dá pra montar o próximo lote já enquanto este roda.
+    deselectItems(itemIds)
+    bulkSkuInput.value = ''
+    bulkSkuInput.focus()
+    updateBulkBar()
+    void processQueue()
   })
 
   root.querySelector('#btn-refresh')!.addEventListener('click', () => void loadCatalog())
