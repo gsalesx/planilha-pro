@@ -259,7 +259,10 @@ async function boot(): Promise<void> {
           confirmLabel: 'Salvar',
           onConfirm: async (sku) => {
             await saveProductSku(id, sku)
-            await loadCatalog()
+            // Só atualiza o card salvo — sem recarregar o catálogo inteiro da Shopee.
+            // "Atualizar" continua disponível pra buscar tudo de novo quando o usuário quiser.
+            product.sku = sku
+            applyFilters()
           },
         })
       })
@@ -362,10 +365,18 @@ async function boot(): Promise<void> {
 
     bulkSaveBtn.textContent = `Salvar SKU em ${itemIds.length} produto(s)`
 
+    // Atualiza só quem salvou com sucesso — sem recarregar o catálogo inteiro da Shopee.
+    const failedIds = new Set(failed.map((f) => f.itemId))
+    for (const itemId of itemIds) {
+      if (failedIds.has(itemId)) continue
+      const product = products.find((p) => p.itemId === itemId)
+      if (product) product.sku = sku
+    }
+    applyFilters()
+
     if (ok) {
       progressText.textContent = `Concluído — ${itemIds.length} produto(s) atualizado(s).`
       bulkSkuInput.value = ''
-      await loadCatalog()
       return
     }
 
