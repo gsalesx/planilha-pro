@@ -1589,7 +1589,7 @@ function bindShopeeLinkConversations() {
   const btn = document.querySelector<HTMLButtonElement>('#shopee-link-conversations-btn')
   if (!btn) return
   btn.addEventListener('click', async () => {
-    if (!currentWorkbookId || isShopeeWorkbookId(currentWorkbookId)) return
+    if (!currentWorkbookId) return
     const workbookId = currentWorkbookId
     const prevLabel = btn.textContent ?? ''
     btn.disabled = true
