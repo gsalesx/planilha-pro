@@ -325,7 +325,13 @@ export class GridView {
   setViewState(state: GridViewState): void {
     if (!this.activeSheetId) return
     const filters = this.getSheetFilters(this.activeSheetId)
+    // Preserva filtros programáticos (ex.: status Shopee col H) — não vêm da URL.
+    const preserved = new Map<number, Set<string>>()
+    for (const [col, values] of filters) {
+      if (!FILTERABLE_COLS.has(col)) preserved.set(col, values)
+    }
     filters.clear()
+    for (const [col, values] of preserved) filters.set(col, values)
     for (const filter of state.filters) {
       if (!FILTERABLE_COLS.has(filter.col)) continue
       const values = filter.values

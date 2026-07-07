@@ -16,6 +16,7 @@ export const STATUS_OPTIONS: StatusOption[] = [
   { label: 'Aprovado', color: '#86efac' },
   { label: 'Sem fotos', color: '#d1d5db' },
   { label: 'Prévia', color: '#c4b5fd' },
+  { label: 'Concluído', color: '#4b5563', textColor: '#f9fafb' },
 ]
 
 const STATUS_BY_LABEL = new Map<string, StatusOption>(

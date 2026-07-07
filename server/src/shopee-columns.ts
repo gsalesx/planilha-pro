@@ -24,6 +24,9 @@ export const SHOPEE_HEADERS = [
   ...Array.from({ length: SHOPEE_PHOTO_COUNT }, (_, i) => `Foto ${i + 1}`),
 ]
 
+export const SHOPEE_INTERNAL_STATUS_PROCESSED = 'Concluído'
+export const SHOPEE_INTERNAL_STATUS_CANCELLED = 'Cancelado'
+
 export function emptyShopeeRow(): string[] {
   return Array.from({ length: SHOPEE_ROW_COLS }, () => '')
 }

@@ -9,6 +9,7 @@ export type StatusValue =
   | 'Aprovado'
   | 'Sem fotos'
   | 'Prévia'
+  | 'Concluído'
 
 export interface StatusOption {
   label: StatusValue

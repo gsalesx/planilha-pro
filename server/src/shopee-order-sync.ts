@@ -16,6 +16,8 @@ import {
   SHOPEE_COL_SHOPEE_STATUS,
   SHOPEE_COL_USERNAME,
   SHOPEE_ROW_COLS,
+  SHOPEE_INTERNAL_STATUS_PROCESSED,
+  SHOPEE_INTERNAL_STATUS_CANCELLED,
 } from './shopee-columns.js'
 import { ensureShopeeWorkbook, SHOPEE_WORKBOOK_ID } from './shopee-workbook.js'
 
@@ -84,6 +86,16 @@ function joinField(values: string[]): string {
 
 function itemSku(item: ShopeeItemRow): string {
   return (item.model_sku ?? item.item_sku ?? '').trim()
+}
+
+/** Col F — espelha status terminal da Shopee no fluxo interno. */
+function applyInternalStatusFromShopee(row: string[], shopeeStatus: string): void {
+  const status = shopeeStatus.trim().toUpperCase()
+  if (status === 'PROCESSED') {
+    row[SHOPEE_COL_INTERNAL_STATUS] = SHOPEE_INTERNAL_STATUS_PROCESSED
+  } else if (status === 'CANCELLED') {
+    row[SHOPEE_COL_INTERNAL_STATUS] = SHOPEE_INTERNAL_STATUS_CANCELLED
+  }
 }
 
 export function mapShopeeOrderToRow(order: ShopeeOrderDetail): string[] {
@@ -248,12 +260,14 @@ export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'update
       row[SHOPEE_COL_MODEL] = prev[SHOPEE_COL_MODEL]
       row[SHOPEE_COL_QTY] = prev[SHOPEE_COL_QTY]
       row[SHOPEE_COL_USERNAME] = prev[SHOPEE_COL_USERNAME]
+      applyInternalStatusFromShopee(row, shopeeStatus)
       const rowJson = JSON.stringify(row)
       if (rowJson !== existing.row_json || sheetDate !== existing.sheet_date) {
         updateStmt.run(rowJson, sheetDate, now, SHOPEE_WORKBOOK_ID, existing.order_key)
         anyChanged = true
       }
     } else {
+      applyInternalStatusFromShopee(row, shopeeStatus)
       anyCreated = true
       anyChanged = true
       insertStmt.run(
@@ -288,6 +302,7 @@ export function updateShopeeOrderStatus(orderSn: string, shopeeStatus: string): 
     const row = JSON.parse(existing.row_json) as string[]
     while (row.length < SHOPEE_ROW_COLS) row.push('')
     row[SHOPEE_COL_SHOPEE_STATUS] = shopeeStatus
+    applyInternalStatusFromShopee(row, shopeeStatus)
     updateStmt.run(JSON.stringify(row), now, SHOPEE_WORKBOOK_ID, existing.order_key)
   }
   db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, SHOPEE_WORKBOOK_ID)
