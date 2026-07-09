@@ -6,6 +6,7 @@ import {
   fetchShopeeChatHistory,
   getEmojiCatalog,
   getOrderPieces,
+  patchOrderDelta,
   removePiecePhoto,
   sendShopeeChatMessage,
   updateEmojiAliases,
@@ -17,6 +18,8 @@ import {
   type PecaTipo,
   type ShopeeChatMessage,
 } from './api'
+import { openConfirmDialog } from './dialog'
+import { STATUS_COLUMN_INDEX } from './status'
 
 export interface ShopeeChatOrderInfo {
   workbookId: string
@@ -33,6 +36,10 @@ export interface ShopeeChatOrderInfo {
 
 /** Mesma paleta usada em Criador de artes/scripts/picker_manual.py — mantém as duas ferramentas consistentes. */
 const SHORT_COLORS = ['#000000', '#ffffff', '#0000ff', '#ff00ff', '#ff0000']
+
+/** Status (coluna F) que o "Confirmar pedido" grava — é o que o Criador de artes lê pra
+ * puxar o pedido pro processamento (mesmo status usado pelo fluxo antigo Separado→Pronto). */
+const CONFIRMED_STATUS = 'Pronto'
 const TIPO_OPTIONS: Array<{ value: PecaTipo; label: string }> = [
   { value: 'CAMISOLA', label: 'Camisola' },
   { value: 'SHORT', label: 'Short' },
@@ -642,6 +649,43 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     }
   }
 
+  function confirmBarHtml(pieces: OrderPiece[]): string {
+    if (order.status === CONFIRMED_STATUS) {
+      return `<div class="shopee-chat-pieces-confirmed">✓ Pedido confirmado — status "Pronto"</div>`
+    }
+    const missing = pieces.filter((p) => !p.photos[1]).length
+    const label = missing > 0 ? `✅ Confirmar pedido (${missing} peça(s) sem foto)` : '✅ Confirmar pedido'
+    return `
+      <button type="button" class="btn btn-primary shopee-chat-confirm-order" id="shopee-chat-confirm-order"
+              ${pieces.length === 0 ? 'disabled' : ''}>${label}</button>
+    `
+  }
+
+  function bindConfirmBar(pieces: OrderPiece[]): void {
+    const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-confirm-order')
+    if (!btn) return
+    btn.addEventListener('click', () => {
+      const missing = pieces.filter((p) => !p.photos[1]).length
+      const doConfirm = async () => {
+        await patchOrderDelta(order.workbookId, order.orderKey, {
+          cells: [{ col: STATUS_COLUMN_INDEX, value: CONFIRMED_STATUS }],
+        })
+        order.status = CONFIRMED_STATUS
+        void loadPieces()
+      }
+      openConfirmDialog({
+        title: 'Confirmar pedido',
+        body:
+          missing > 0
+            ? `${missing} peça(s) ainda sem Foto 1. Confirmar mesmo assim? O pedido vai pro Criador de artes com o que já tem.`
+            : 'Marca o pedido como "Pronto" — o Criador de artes vai processar a partir daqui. As fotos/emojis/cor já escolhidos ficam salvos como estão.',
+        confirmLabel: 'Confirmar pedido',
+        danger: missing > 0,
+        onConfirm: doConfirm,
+      })
+    })
+  }
+
   async function loadPieces(): Promise<void> {
     try {
       const data = await getOrderPieces(order.workbookId, order.orderKey)
@@ -655,12 +699,14 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         </div>
         ${failedHint}
         <div class="shopee-chat-pieces-list">${cards}</div>
+        <div class="shopee-chat-pieces-confirm-bar">${confirmBarHtml(data.pieces)}</div>
       `
       overlay.querySelector('#shopee-chat-piece-add')!.addEventListener('click', async () => {
         await addOrderPiece(order.workbookId, order.orderKey)
         void loadPieces()
       })
       bindPieceCards()
+      bindConfirmBar(data.pieces)
       renderPieceButtons()
       updatePiecesToggleLabel(data)
     } catch (error) {

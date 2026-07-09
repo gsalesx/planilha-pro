@@ -43,6 +43,7 @@ export function showWorkbooksList(opts: {
         <div class="workbooks-header-spacer"></div>
         <div class="toolbar-actions">
           <a class="btn" href="/shopee-products.html" title="Gerenciar produtos da loja Shopee">Produtos Shopee</a>
+          <a class="btn" href="/emoji-catalog.html" title="Ver e editar o catálogo de emojis (mapeamentos)">Emojis</a>
           <label class="btn btn-primary" id="wb-new-btn" title="Crie uma planilha nova a partir de um XLSX">
             <input type="file" id="wb-new-file" accept=".xlsx,.xls" hidden />
             + Nova planilha (XLSX)
