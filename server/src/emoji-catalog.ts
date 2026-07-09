@@ -50,8 +50,15 @@ function rowToItem(row: EmojiCatalogRow): EmojiCatalogItem {
  * edição manual.
  */
 const SEED_ALIASES: Record<string, string> = {
+  // Os 6 da extensão Chrome antiga (❤️ 🥰 😍 🤍 💋 😘) — eram os mais usados,
+  // por isso entram primeiro na lista de favoritos (ver PRIORITY_NAMES no
+  // frontend, src/shopee-chat-panel.ts).
   'CORAÇÃO': '❤️',
+  'CARA APAIXONADA': '🥰',
+  'OLHOS CORAÇÃO': '😍',
+  'CORAÇÃO BRANCO': '🤍',
   'BEIJO': '💋',
+  'MANDANDO BEIJO': '😘',
   'FOGO': '🔥',
   'ESTRELA': '⭐',
   'COROA': '👑',

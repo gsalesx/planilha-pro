@@ -2100,7 +2100,8 @@ body.shopee-chat-open {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 60;
+  /* acima do .shopee-chat-backdrop (z-index 1200) — a galeria abre POR CIMA do chat offcanvas */
+  z-index: 1300;
 }
 
 .emoji-gallery-modal {
