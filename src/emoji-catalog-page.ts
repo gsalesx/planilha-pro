@@ -27,6 +27,16 @@ function normalizeName(text: string): string {
     .trim()
 }
 
+const LOOKS_LIKE_EMOJI_RE =
+  /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{2300}-\u{23FF}]/u
+
+/** Recusa texto que não parece emoji unicode de verdade (mesma checagem do backend,
+ * ver server/src/emoji-catalog.ts) — evita salvar lixo tipo "ð" (mojibake de copiar
+ * emoji renderizado como sprite/imagem em algum chat, em vez do caractere real). */
+function looksLikeEmoji(text: string): boolean {
+  return LOOKS_LIKE_EMOJI_RE.test(text)
+}
+
 function showLogin(onSuccess: () => void): void {
   const overlay = document.createElement('div')
   overlay.className = 'login-overlay'
@@ -167,8 +177,13 @@ async function boot(): Promise<void> {
           label: 'Cole o emoji que o cliente costuma mandar no chat',
           confirmLabel: 'Salvar',
           onConfirm: async (value) => {
+            const trimmed = value.trim()
+            if (!looksLikeEmoji(trimmed)) {
+              alert(`"${trimmed}" não parece um emoji válido — cole o emoji de verdade, não um texto/nome.`)
+              return
+            }
             try {
-              const aliases = [...item.aliases, value.trim()]
+              const aliases = [...item.aliases, trimmed]
               const { item: updated } = await updateEmojiAliases(id, aliases)
               catalog = catalog.map((i) => (i.id === id ? updated : i))
               applyFilter()
@@ -187,6 +202,10 @@ async function boot(): Promise<void> {
         const input = form.querySelector<HTMLInputElement>('.emoji-catalog-inline-input')!
         const value = input.value.trim()
         if (!item || !value) return
+        if (!looksLikeEmoji(value)) {
+          alert(`"${value}" não parece um emoji válido — cole o emoji de verdade, não um texto/nome.`)
+          return
+        }
         const btn = form.querySelector<HTMLButtonElement>('button[type=submit]')!
         input.disabled = true
         btn.disabled = true

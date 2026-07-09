@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { createReadStream, existsSync, unlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, createReadStream, existsSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { Router } from 'express'
@@ -102,6 +102,68 @@ router.delete('/pieces/:id', requireAuth, (req, res) => {
     res.status(404).json({ error: 'Peça não encontrada' })
     return
   }
+  res.json({ ok: true })
+})
+
+/**
+ * POST /api/pieces/:id/copy-from/:sourceId — copia fotos (slots 1/2) + emoji1/emoji2 da
+ * peça de origem pra peça de destino. Usado quando o pedido tem N peças (ex.: camisola +
+ * short) com as MESMAS fotos/emojis — copiar da 1ª peça em vez de escolher tudo de novo.
+ * Não mexe em tipo/gênero/tamanho/cor (cada peça mantém o seu, igual ao "copiar imagens
+ * do 1º" do picker_manual.py no Criador de artes).
+ */
+router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
+  const targetId = Number(req.params.id)
+  const sourceId = Number(req.params.sourceId)
+  if (!Number.isFinite(targetId) || !Number.isFinite(sourceId) || targetId === sourceId) {
+    res.status(400).json({ error: 'ids inválidos' })
+    return
+  }
+  const source = db
+    .prepare('SELECT emoji1, emoji2 FROM order_pieces WHERE id = ?')
+    .get(sourceId) as { emoji1: string; emoji2: string } | undefined
+  if (!source || !pieceExists(targetId)) {
+    res.status(404).json({ error: 'Peça não encontrada' })
+    return
+  }
+
+  const now = nowMs()
+  const txn = db.transaction(() => {
+    db.prepare(
+      `UPDATE order_pieces SET emoji1 = ?, emoji2 = ?, source = 'manual', updated_at = ? WHERE id = ?`,
+    ).run(source.emoji1, source.emoji2, now, targetId)
+
+    const sourceImages = db
+      .prepare('SELECT slot, mime, storage_path FROM piece_images WHERE piece_id = ?')
+      .all(sourceId) as Array<{ slot: number; mime: string; storage_path: string }>
+    for (const img of sourceImages) {
+      if (!existsSync(img.storage_path)) continue
+      const ext = path.extname(img.storage_path) || '.jpg'
+      const fileName = `piece_${targetId}_s${img.slot}_${crypto.randomBytes(4).toString('hex')}${ext}`
+      const newPath = path.join(imagesDir, fileName)
+      copyFileSync(img.storage_path, newPath)
+
+      const existingTarget = db
+        .prepare('SELECT storage_path FROM piece_images WHERE piece_id = ? AND slot = ?')
+        .get(targetId, img.slot) as { storage_path: string } | undefined
+      if (existingTarget) {
+        try {
+          unlinkSync(existingTarget.storage_path)
+        } catch {
+          // ignore
+        }
+      }
+      db.prepare(
+        `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(piece_id, slot) DO UPDATE SET
+           file_name = excluded.file_name, mime = excluded.mime,
+           storage_path = excluded.storage_path, updated_at = excluded.updated_at`,
+      ).run(targetId, img.slot, fileName, img.mime, newPath, now)
+    }
+  })
+  txn()
+
   res.json({ ok: true })
 })
 

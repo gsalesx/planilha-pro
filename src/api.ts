@@ -553,6 +553,12 @@ export async function removePiecePhoto(pieceId: number, slot: 1 | 2): Promise<{ 
   return request(`/pieces/${pieceId}/photo/${slot}`, { method: 'DELETE' })
 }
 
+/** Copia fotos (slots 1/2) + emoji1/emoji2 de `sourceId` pra `pieceId` — não mexe em
+ * tipo/gênero/tamanho/cor (cada peça mantém o seu). */
+export async function copyPieceFrom(pieceId: number, sourceId: number): Promise<{ ok: boolean }> {
+  return request(`/pieces/${pieceId}/copy-from/${sourceId}`, { method: 'POST' })
+}
+
 /* ===========================================================
    Catálogo de emojis (picker de peças — Emoji 1/2)
    =========================================================== */

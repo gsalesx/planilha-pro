@@ -1,6 +1,7 @@
 import {
   addOrderPiece,
   assignPiecePhoto,
+  copyPieceFrom,
   createCustomEmoji,
   deleteOrderPiece,
   fetchShopeeChatHistory,
@@ -366,7 +367,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     })
   }
 
-  function pieceCardHtml(piece: OrderPiece): string {
+  function pieceCardHtml(piece: OrderPiece, firstPieceId: number | null): string {
     const showGenero = piece.tipo !== 'CAMISOLA'
     const generoOpts = (['MASCULINO', 'FEMININO'] as PecaGenero[])
       .map((g) => `<option value="${g}"${piece.genero === g ? ' selected' : ''}>${g === 'MASCULINO' ? 'Masculino' : 'Feminino'}</option>`)
@@ -400,6 +401,11 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         <header class="shopee-chat-piece-head">
           <span class="shopee-chat-piece-seq">Peça ${piece.seq}</span>
           <span class="shopee-chat-piece-molde">${escapeHtml(piece.molde)}</span>
+          ${
+            firstPieceId != null
+              ? `<button type="button" class="shopee-chat-piece-copy-first" data-piece-id="${piece.id}" data-source-id="${firstPieceId}" title="Copiar fotos e emojis da 1ª peça">📋 copiar da 1ª</button>`
+              : ''
+          }
           <button type="button" class="shopee-chat-piece-delete" data-piece-id="${piece.id}" title="Remover peça">🗑</button>
         </header>
         <div class="shopee-chat-piece-row">
@@ -482,6 +488,20 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       btn.addEventListener('click', async () => {
         await removePiecePhoto(Number(btn.dataset.pieceId), Number(btn.dataset.slot) as 1 | 2)
         void loadPieces()
+      })
+    })
+    piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-copy-first').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const pieceId = Number(btn.dataset.pieceId)
+        const sourceId = Number(btn.dataset.sourceId)
+        btn.disabled = true
+        try {
+          await copyPieceFrom(pieceId, sourceId)
+          void loadPieces()
+        } catch (error) {
+          alert((error as Error).message)
+          btn.disabled = false
+        }
       })
     })
     piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-delete').forEach((btn) => {
@@ -690,7 +710,8 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   async function loadPieces(): Promise<void> {
     try {
       const data = await getOrderPieces(order.workbookId, order.orderKey)
-      const cards = data.pieces.map(pieceCardHtml).join('')
+      const firstId = data.pieces[0]?.id ?? null
+      const cards = data.pieces.map((p, i) => pieceCardHtml(p, i === 0 ? null : firstId)).join('')
       const failedHint = data.autoFailed
         ? `<p class="shopee-chat-pieces-hint">Não deu pra montar a peça sozinho pelo SKU (${escapeHtml(data.autoFailed)}). Adicione na mão:</p>`
         : ''

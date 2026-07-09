@@ -31,6 +31,16 @@ export interface EmojiCatalogItem {
   source: 'builtin' | 'custom'
 }
 
+const LOOKS_LIKE_EMOJI_RE =
+  /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{2300}-\u{23FF}]/u
+
+/** Recusa texto que não parece emoji unicode de verdade — protege contra colar/digitar
+ * lixo (ex.: mojibake tipo "ð" de copiar emoji renderizado como sprite/imagem em algum
+ * chat, em vez do caractere real) que vira alias "fantasma" sem nunca resolver nada. */
+export function looksLikeEmoji(text: string): boolean {
+  return LOOKS_LIKE_EMOJI_RE.test(text)
+}
+
 function rowToItem(row: EmojiCatalogRow): EmojiCatalogItem {
   let aliases: string[] = []
   try {

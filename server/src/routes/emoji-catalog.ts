@@ -8,7 +8,11 @@ import multer from 'multer'
 import { requireAuth } from '../auth.js'
 import { db, nowMs } from '../db.js'
 import { env } from '../env.js'
-import { findAliasConflict, listCatalog, searchByName, type EmojiCatalogRow } from '../emoji-catalog.js'
+import { findAliasConflict, listCatalog, looksLikeEmoji, searchByName, type EmojiCatalogRow } from '../emoji-catalog.js'
+
+function firstInvalidAlias(aliases: string[]): string | null {
+  return aliases.find((a) => !looksLikeEmoji(a)) ?? null
+}
 
 const router = Router()
 const customDir = path.join(env.dataDir, 'emoji-custom')
@@ -57,6 +61,11 @@ router.post('/emoji-catalog', requireAuth, upload.single('image'), (req, res) =>
     }
   }
   aliases = [...new Set(aliases.map((a) => a.trim()).filter(Boolean))]
+  const invalid = firstInvalidAlias(aliases)
+  if (invalid) {
+    res.status(400).json({ error: `"${invalid}" não parece um emoji válido` })
+    return
+  }
   const conflict = aliases.length ? findAliasConflict(aliases, null) : null
   if (conflict) {
     res.status(409).json({ error: `Atalho "${conflict.alias}" já está mapeado pra "${conflict.name}"` })
@@ -119,6 +128,11 @@ router.patch('/emoji-catalog/:id', requireAuth, (req, res) => {
           .filter(Boolean),
       ),
     ]
+    const invalid = firstInvalidAlias(aliases)
+    if (invalid) {
+      res.status(400).json({ error: `"${invalid}" não parece um emoji válido` })
+      return
+    }
     const conflict = findAliasConflict(aliases, id)
     if (conflict) {
       res.status(409).json({ error: `Atalho "${conflict.alias}" já está mapeado pra "${conflict.name}"` })
