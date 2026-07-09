@@ -1,12 +1,16 @@
 import {
   addOrderPiece,
   assignPiecePhoto,
+  createCustomEmoji,
   deleteOrderPiece,
   fetchShopeeChatHistory,
+  getEmojiCatalog,
   getOrderPieces,
   removePiecePhoto,
   sendShopeeChatMessage,
+  updateEmojiAliases,
   updateOrderPiece,
+  type EmojiCatalogItem,
   type OrderPiece,
   type PecaGenero,
   type PecaTamanho,
@@ -27,8 +31,8 @@ export interface ShopeeChatOrderInfo {
   sheetDate?: string
 }
 
-/** Mesmas opções da extensão Chrome que este picker substitui (Emoji 1/Emoji 2). */
-const EMOJI_OPTIONS = ['-', '❤️', '🥰', '😍', '🤍', '💋', '😘']
+/** Mesma paleta usada em Criador de artes/scripts/picker_manual.py — mantém as duas ferramentas consistentes. */
+const SHORT_COLORS = ['#000000', '#ffffff', '#0000ff', '#ff00ff', '#ff0000']
 const TIPO_OPTIONS: Array<{ value: PecaTipo; label: string }> = [
   { value: 'CAMISOLA', label: 'Camisola' },
   { value: 'SHORT', label: 'Short' },
@@ -78,6 +82,121 @@ function escapeHtml(text: string): string {
     .replace(/"/g, '&quot;')
 }
 
+/* ===========================================================
+   Catálogo de emojis — favoritos espalhados + colar/nome + galeria
+   (substitui o <select> de 6 opções fixas que veio da extensão Chrome)
+   =========================================================== */
+
+let emojiCatalog: EmojiCatalogItem[] = []
+
+const LOOKS_LIKE_EMOJI_RE =
+  /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{2300}-\u{23FF}]/u
+
+function normalizeName(text: string): string {
+  return text
+    .normalize('NFKD')
+    .replace(new RegExp('[\\u0300-\\u036f]', 'g'), '')
+    .toLowerCase()
+    .trim()
+}
+
+function looksLikeEmoji(text: string): boolean {
+  return LOOKS_LIKE_EMOJI_RE.test(text)
+}
+
+/** Char/trecho colado -> item do catálogo, ou null. Substring match (não char-a-char) pra
+ * aguentar sequências multi-codepoint (seletor de variação, ZWJ, tom de pele). */
+function resolveEmojiText(text: string): EmojiCatalogItem | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  for (const item of emojiCatalog) {
+    for (const alias of item.aliases) {
+      if (alias && trimmed.includes(alias)) return item
+    }
+  }
+  return null
+}
+
+function searchEmojiByName(query: string): EmojiCatalogItem[] {
+  const q = normalizeName(query)
+  if (!q) return []
+  return emojiCatalog.filter((item) => normalizeName(item.name).includes(q))
+}
+
+/** Nome já salvo na peça -> item do catálogo pra exibir a miniatura. Aceita tanto o nome
+ * canônico quanto (fallback de exibição) um emoji unicode legado salvo antes dessa mudança. */
+function catalogItemForCurrent(current: string): EmojiCatalogItem | null {
+  if (!current) return null
+  const exact = emojiCatalog.find((item) => item.name === current)
+  if (exact) return exact
+  return resolveEmojiText(current)
+}
+
+async function loadEmojiCatalog(): Promise<void> {
+  try {
+    const data = await getEmojiCatalog()
+    emojiCatalog = data.items
+  } catch (error) {
+    console.warn('[emoji-catalog] falha ao carregar', error)
+  }
+}
+
+function emojiPickerHtml(pieceId: number, slot: 1 | 2, current: string): string {
+  const favorites = emojiCatalog.filter((item) => item.aliases.length > 0).slice(0, 10)
+  const resolved = catalogItemForCurrent(current)
+  const currentThumb = resolved
+    ? `<img class="emoji-picker-current-img" src="${escapeHtml(resolved.imageUrl)}" alt="${escapeHtml(resolved.name)}" title="${escapeHtml(resolved.name)}" />`
+    : current
+      ? `<span class="emoji-picker-current-raw" title="valor salvo não reconhecido: ${escapeHtml(current)}">${escapeHtml(current)}</span>`
+      : `<span class="emoji-picker-current-empty">—</span>`
+  const favHtml = favorites
+    .map(
+      (item) => `
+      <button type="button" class="emoji-picker-fav${item.name === current ? ' is-selected' : ''}"
+              data-piece-id="${pieceId}" data-slot="${slot}" data-name="${escapeHtml(item.name)}"
+              title="${escapeHtml(item.name)}">
+        <img src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}" />
+      </button>`,
+    )
+    .join('')
+  return `
+    <div class="emoji-picker" data-piece-id="${pieceId}" data-slot="${slot}">
+      <div class="emoji-picker-head">
+        <span class="emoji-picker-label">Emoji ${slot}</span>
+        <span class="emoji-picker-current">${currentThumb}</span>
+      </div>
+      <div class="emoji-picker-favorites">
+        ${favHtml}
+        <button type="button" class="emoji-picker-fav emoji-picker-fav--none${current ? '' : ' is-selected'}"
+                data-piece-id="${pieceId}" data-slot="${slot}" data-name="" title="Sem emoji">–</button>
+        <button type="button" class="emoji-picker-gallery-btn" data-piece-id="${pieceId}" data-slot="${slot}"
+                title="Ver todos os emojis">🖼</button>
+      </div>
+      <input type="text" class="emoji-picker-input" data-piece-id="${pieceId}" data-slot="${slot}"
+             placeholder="colar emoji do chat ou nome ↵" />
+    </div>
+  `
+}
+
+function colorPickerHtml(pieceId: number, current: string): string {
+  const cur = (current || '#000000').toLowerCase()
+  const swatches = SHORT_COLORS.map(
+    (c) => `<button type="button" class="color-swatch${c === cur ? ' is-selected' : ''}"
+                    style="background:${c}" data-piece-id="${pieceId}" data-color="${c}" title="${c}"></button>`,
+  ).join('')
+  const isCustom = !SHORT_COLORS.includes(cur)
+  return `
+    <div class="color-picker" data-piece-id="${pieceId}">
+      <span class="color-picker-label">Cor</span>
+      <div class="color-picker-swatches">${swatches}</div>
+      <label class="color-custom${isCustom ? ' is-selected' : ''}" style="${isCustom ? `background:${cur}` : ''}"
+             title="Cor personalizada">
+        🎨<input type="color" class="color-custom-input" data-piece-id="${pieceId}" value="${cur}" />
+      </label>
+    </div>
+  `
+}
+
 function renderMessageBody(msg: ShopeeChatMessage): string {
   if (msg.imageUrl) {
     const url = escapeHtml(msg.imageUrl)
@@ -116,6 +235,7 @@ export function closeShopeeChatPanel(): void {
   activePanel?.remove()
   activePanel = null
   document.body.classList.remove('shopee-chat-open')
+  document.getElementById('emoji-gallery-modal')?.remove()
 }
 
 export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<void> {
@@ -226,18 +346,6 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     })
   }
 
-  function emojiSelectHtml(name: string, current: string): string {
-    const opts = EMOJI_OPTIONS.map(
-      (em) => `<option value="${escapeHtml(em)}"${em === current ? ' selected' : ''}>${escapeHtml(em)}</option>`,
-    ).join('')
-    // valor manual (fora da lista padrão) — mostra como opção extra selecionada
-    const extra =
-      current && !EMOJI_OPTIONS.includes(current)
-        ? `<option value="${escapeHtml(current)}" selected>${escapeHtml(current)}</option>`
-        : ''
-    return `<select class="shopee-chat-piece-emoji" data-name="${name}">${opts}${extra}</select>`
-  }
-
   function pieceCardHtml(piece: OrderPiece): string {
     const showGenero = piece.tipo !== 'CAMISOLA'
     const generoOpts = (['MASCULINO', 'FEMININO'] as PecaGenero[])
@@ -283,11 +391,11 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           ${slotHtml(1)}
           ${slotHtml(2)}
         </div>
-        <div class="shopee-chat-piece-row">
-          <label>Emoji 1 ${emojiSelectHtml('emoji1', piece.emoji1)}</label>
-          <label>Emoji 2 ${emojiSelectHtml('emoji2', piece.emoji2)}</label>
-          <label>Cor <input type="color" class="shopee-chat-piece-field" data-field="cor" value="${piece.cor || '#000000'}" /></label>
+        <div class="shopee-chat-piece-emojis">
+          ${emojiPickerHtml(piece.id, 1, piece.emoji1)}
+          ${emojiPickerHtml(piece.id, 2, piece.emoji2)}
         </div>
+        ${colorPickerHtml(piece.id, piece.cor || '#000000')}
       </article>
     `
   }
@@ -304,19 +412,45 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
             ? { tipo: value as PecaTipo }
             : field === 'genero'
               ? { genero: value as PecaGenero }
-              : field === 'tamanho'
-                ? { tamanho: value as PecaTamanho }
-                : { cor: value }
+              : { tamanho: value as PecaTamanho }
         void updateOrderPiece(pieceId, patch).then(() => loadPieces())
       })
     })
-    piecesEl.querySelectorAll<HTMLSelectElement>('.shopee-chat-piece-emoji').forEach((el) => {
-      el.addEventListener('change', () => {
-        const card = el.closest<HTMLElement>('.shopee-chat-piece-card')!
-        const pieceId = Number(card.dataset.pieceId)
-        const name = el.dataset.name as 'emoji1' | 'emoji2'
-        const patch = name === 'emoji1' ? { emoji1: el.value } : { emoji2: el.value }
-        void updateOrderPiece(pieceId, patch).then(() => loadPieces())
+    piecesEl.querySelectorAll<HTMLButtonElement>('.emoji-picker-fav').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const pieceId = Number(btn.dataset.pieceId)
+        const slot = btn.dataset.slot === '1' ? 'emoji1' : 'emoji2'
+        const name = btn.dataset.name || ''
+        void updateOrderPiece(pieceId, { [slot]: name }).then(() => loadPieces())
+      })
+    })
+    piecesEl.querySelectorAll<HTMLButtonElement>('.emoji-picker-gallery-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        openEmojiGallery(Number(btn.dataset.pieceId), (btn.dataset.slot === '1' ? 1 : 2) as 1 | 2)
+      })
+    })
+    piecesEl.querySelectorAll<HTMLInputElement>('.emoji-picker-input').forEach((inp) => {
+      inp.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return
+        e.preventDefault()
+        const pieceId = Number(inp.dataset.pieceId)
+        const slot = (inp.dataset.slot === '1' ? 1 : 2) as 1 | 2
+        const text = inp.value
+        inp.value = ''
+        void resolveAndApplyEmoji(pieceId, slot, text)
+      })
+    })
+    piecesEl.querySelectorAll<HTMLButtonElement>('.color-swatch').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const pieceId = Number(btn.dataset.pieceId)
+        const color = btn.dataset.color!
+        void updateOrderPiece(pieceId, { cor: color }).then(() => loadPieces())
+      })
+    })
+    piecesEl.querySelectorAll<HTMLInputElement>('.color-custom-input').forEach((inp) => {
+      inp.addEventListener('change', () => {
+        const pieceId = Number(inp.dataset.pieceId)
+        void updateOrderPiece(pieceId, { cor: inp.value }).then(() => loadPieces())
       })
     })
     piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-photo-pick').forEach((btn) => {
@@ -340,6 +474,144 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         }
         void loadPieces()
       })
+    })
+  }
+
+  /** Enter no campo "colar emoji/nome": resolve por alias, por nome único, ou abre a galeria. */
+  async function resolveAndApplyEmoji(pieceId: number, slot: 1 | 2, text: string): Promise<void> {
+    const trimmed = text.trim()
+    if (!trimmed) return
+    const field = slot === 1 ? 'emoji1' : 'emoji2'
+    const resolved = resolveEmojiText(trimmed)
+    if (resolved) {
+      await updateOrderPiece(pieceId, { [field]: resolved.name })
+      void loadPieces()
+      return
+    }
+    if (looksLikeEmoji(trimmed)) {
+      openEmojiGallery(pieceId, slot, { pendingChar: trimmed })
+      return
+    }
+    const matches = searchEmojiByName(trimmed)
+    if (matches.length === 1) {
+      await updateOrderPiece(pieceId, { [field]: matches[0].name })
+      void loadPieces()
+      return
+    }
+    openEmojiGallery(pieceId, slot, { query: trimmed })
+  }
+
+  function closeEmojiGallery(): void {
+    document.getElementById('emoji-gallery-modal')?.remove()
+  }
+
+  function openEmojiGallery(
+    pieceId: number,
+    slot: 1 | 2,
+    opts: { pendingChar?: string; query?: string } = {},
+  ): void {
+    closeEmojiGallery()
+    const field = slot === 1 ? 'emoji1' : 'emoji2'
+    const modal = document.createElement('div')
+    modal.id = 'emoji-gallery-modal'
+    modal.className = 'emoji-gallery-backdrop'
+    modal.innerHTML = `
+      <div class="emoji-gallery-modal" role="dialog" aria-label="Galeria de emojis">
+        <header class="emoji-gallery-header">
+          <span>Galeria de emojis</span>
+          <button type="button" class="emoji-gallery-close" aria-label="Fechar">×</button>
+        </header>
+        ${
+          opts.pendingChar
+            ? `<p class="emoji-gallery-hint">escolha a imagem pra "${escapeHtml(opts.pendingChar)}" (salva o atalho pra próxima vez)</p>`
+            : ''
+        }
+        <div class="emoji-gallery-search-row">
+          <input type="text" class="emoji-gallery-search" placeholder="buscar por nome…" value="${escapeHtml(opts.query ?? '')}" />
+        </div>
+        <div class="emoji-gallery-grid"></div>
+        <footer class="emoji-gallery-footer">
+          <input type="text" class="emoji-gallery-upload-name" placeholder="nome do emoji customizado" />
+          <label class="emoji-gallery-upload">
+            + subir imagem
+            <input type="file" accept="image/*" class="emoji-gallery-upload-input" hidden />
+          </label>
+        </footer>
+      </div>
+    `
+    document.body.appendChild(modal)
+
+    const gridEl = modal.querySelector<HTMLElement>('.emoji-gallery-grid')!
+    const searchEl = modal.querySelector<HTMLInputElement>('.emoji-gallery-search')!
+    const closeBtn = modal.querySelector<HTMLButtonElement>('.emoji-gallery-close')!
+    const uploadInput = modal.querySelector<HTMLInputElement>('.emoji-gallery-upload-input')!
+    const uploadNameInput = modal.querySelector<HTMLInputElement>('.emoji-gallery-upload-name')!
+
+    async function escolher(item: EmojiCatalogItem): Promise<void> {
+      if (opts.pendingChar && !item.aliases.includes(opts.pendingChar)) {
+        try {
+          const { item: updated } = await updateEmojiAliases(item.id, [...item.aliases, opts.pendingChar])
+          emojiCatalog = emojiCatalog.map((i) => (i.id === updated.id ? updated : i))
+        } catch (error) {
+          console.warn('[emoji-catalog] falha ao salvar atalho', error)
+        }
+      }
+      await updateOrderPiece(pieceId, { [field]: item.name })
+      closeEmojiGallery()
+      void loadPieces()
+    }
+
+    function render(items: EmojiCatalogItem[]): void {
+      gridEl.innerHTML = items.length
+        ? items
+            .map(
+              (item) => `
+              <button type="button" class="emoji-gallery-item" data-id="${item.id}" title="${escapeHtml(item.name)}">
+                <img src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}" />
+                <span>${escapeHtml(item.name)}</span>
+              </button>`,
+            )
+            .join('')
+        : `<div class="emoji-gallery-empty">nenhum emoji encontrado</div>`
+      gridEl.querySelectorAll<HTMLButtonElement>('.emoji-gallery-item').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const item = items.find((i) => i.id === Number(btn.dataset.id))
+          if (item) void escolher(item)
+        })
+      })
+    }
+
+    function applyFilter(): void {
+      const q = searchEl.value.trim()
+      render(q ? searchEmojiByName(q) : emojiCatalog)
+    }
+    searchEl.addEventListener('input', applyFilter)
+    applyFilter()
+    searchEl.focus()
+
+    closeBtn.addEventListener('click', closeEmojiGallery)
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeEmojiGallery()
+    })
+
+    uploadInput.addEventListener('change', () => {
+      void (async () => {
+        const file = uploadInput.files?.[0]
+        if (!file) return
+        const name = uploadNameInput.value.trim().toUpperCase()
+        if (!name) {
+          alert('Digite o nome do emoji customizado antes de escolher o arquivo.')
+          uploadInput.value = ''
+          return
+        }
+        try {
+          const { item } = await createCustomEmoji(file, name, opts.pendingChar ? [opts.pendingChar] : undefined)
+          emojiCatalog = [...emojiCatalog, item]
+          await escolher(item)
+        } catch (error) {
+          alert(`Falha ao subir emoji: ${(error as Error).message}`)
+        }
+      })()
     })
   }
 
@@ -402,7 +674,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       })
   })
 
-  void loadPieces()
+  void loadEmojiCatalog().then(() => loadPieces())
 
   const close = () => closeShopeeChatPanel()
   overlay.addEventListener('click', (e) => {

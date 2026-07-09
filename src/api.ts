@@ -553,6 +553,57 @@ export async function removePiecePhoto(pieceId: number, slot: 1 | 2): Promise<{ 
   return request(`/pieces/${pieceId}/photo/${slot}`, { method: 'DELETE' })
 }
 
+/* ===========================================================
+   Catálogo de emojis (picker de peças — Emoji 1/2)
+   =========================================================== */
+
+export interface EmojiCatalogItem {
+  id: number
+  name: string
+  aliases: string[]
+  imageUrl: string
+  source: 'builtin' | 'custom'
+}
+
+export async function getEmojiCatalog(query?: string): Promise<{ items: EmojiCatalogItem[] }> {
+  const qs = query && query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ''
+  return request(`/emoji-catalog${qs}`)
+}
+
+export async function createCustomEmoji(
+  file: File | Blob,
+  name: string,
+  aliases?: string[],
+): Promise<{ item: EmojiCatalogItem }> {
+  const body = new FormData()
+  body.append('image', file, name)
+  body.append('name', name)
+  if (aliases && aliases.length) body.append('aliases', JSON.stringify(aliases))
+  const response = await fetch(`${API_BASE}/emoji-catalog`, {
+    method: 'POST',
+    credentials: 'include',
+    body,
+  })
+  if (response.status === 401) throw new AuthRequiredError()
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({ error: response.statusText }))
+    throw new Error(detail.error ?? `HTTP ${response.status}`)
+  }
+  return (await response.json()) as { item: EmojiCatalogItem }
+}
+
+export async function updateEmojiAliases(id: number, aliases: string[]): Promise<{ item: EmojiCatalogItem }> {
+  return request(`/emoji-catalog/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ aliases }),
+  })
+}
+
+export async function deleteCustomEmoji(id: number): Promise<{ ok: boolean }> {
+  return request(`/emoji-catalog/${id}`, { method: 'DELETE' })
+}
+
 /** Converte payload do servidor pra WorkbookData (formato que a grid usa) */
 export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook): WorkbookData {
   const rows: CellValue[][] = []

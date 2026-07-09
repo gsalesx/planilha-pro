@@ -6,8 +6,9 @@ import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import express from 'express'
 
-import { cleanupExpiredSessions } from './auth.js'
+import { cleanupExpiredSessions, requireAuth } from './auth.js'
 import { env, isProd } from './env.js'
+import { ASSETS_DIR, ensureEmojiCatalogSeeded } from './emoji-catalog.js'
 import {
   resyncPendingDateOrders,
   resyncReadyToShipDates,
@@ -17,6 +18,7 @@ import {
 import { loadShopeeAuth } from './shopee-store.js'
 import { ensureShopeeWorkbook } from './shopee-workbook.js'
 import backupRouter from './routes/backup.js'
+import emojiCatalogRouter from './routes/emoji-catalog.js'
 import imagesRouter from './routes/images.js'
 import loginRouter from './routes/login.js'
 import parseIssuesRouter from './routes/parse-issues.js'
@@ -61,6 +63,10 @@ app.use('/api', shopeeTestRouter)
 app.use('/api', shopeeProductsRouter)
 app.use('/api', parseIssuesRouter)
 app.use('/api', piecesRouter)
+app.use('/api', emojiCatalogRouter)
+
+// imagens builtin do catálogo de emoji (server/assets/emojis, servido em build-time)
+app.use('/emoji-assets', requireAuth, express.static(ASSETS_DIR))
 
 // healthcheck público
 app.get('/healthz', (_req, res) => res.json({ ok: true }))
@@ -79,6 +85,7 @@ if (existsSync(publicDir)) {
 setInterval(cleanupExpiredSessions, 60 * 60 * 1000)
 cleanupExpiredSessions()
 ensureShopeeWorkbook()
+ensureEmojiCatalogSeeded()
 
 /**
  * Poll pedidos recentes — única via de importação enquanto o push está desativado

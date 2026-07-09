@@ -341,6 +341,26 @@ db.exec(`
   );
 `)
 
+/**
+ * Catálogo de emojis disponíveis pro picker de peças (Emoji 1/2 — ver
+ * server/src/emoji-catalog.ts e src/shopee-chat-panel.ts). `name` é o nome
+ * canônico, mesma convenção do repo irmão Criador de artes
+ * (`Moldes/EMOJIS/{name}.png`) — é o que fica salvo em order_pieces.emoji1/2.
+ * `aliases` = emojis unicode colados do chat que resolvem pra esse `name`
+ * (JSON array). `source` builtin = veio de server/assets/emojis/ (seed no
+ * boot, protegido contra DELETE/rename); custom = upload do usuário.
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS emoji_catalog (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    aliases TEXT NOT NULL DEFAULT '[]',
+    image_path TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'builtin',
+    created_at INTEGER NOT NULL
+  );
+`)
+
 export function nowMs(): number {
   return Date.now()
 }

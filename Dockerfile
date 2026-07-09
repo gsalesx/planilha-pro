@@ -35,6 +35,9 @@ RUN apk add --no-cache --virtual .build-deps python3 make g++ \
 # Compiled server
 COPY --from=server-build /app/server/dist ./dist
 
+# Catálogo builtin do picker de emoji (server/assets/emojis) — estático, servido em /emoji-assets
+COPY server/assets ./assets
+
 # Vite client build → served as static
 COPY --from=client-build /app/client/dist ./public
 
