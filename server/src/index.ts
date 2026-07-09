@@ -19,6 +19,8 @@ import { ensureShopeeWorkbook } from './shopee-workbook.js'
 import backupRouter from './routes/backup.js'
 import imagesRouter from './routes/images.js'
 import loginRouter from './routes/login.js'
+import parseIssuesRouter from './routes/parse-issues.js'
+import piecesRouter from './routes/pieces.js'
 import shopeePushRouter, { handleShopeePushPost } from './routes/shopee-push.js'
 import shopeeProductsRouter from './routes/shopee-products.js'
 import shopeeTestRouter from './routes/shopee-test.js'
@@ -57,6 +59,8 @@ app.use('/api', backupRouter)
 app.use('/api', shopeePushRouter)
 app.use('/api', shopeeTestRouter)
 app.use('/api', shopeeProductsRouter)
+app.use('/api', parseIssuesRouter)
+app.use('/api', piecesRouter)
 
 // healthcheck público
 app.get('/healthz', (_req, res) => res.json({ ok: true }))

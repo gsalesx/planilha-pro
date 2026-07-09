@@ -899,7 +899,14 @@ function handleChatRequest(row: number, col: number) {
     })
     return
   }
+  const orderKey = getOrderKey(row)
+  if (!orderKey || !currentWorkbookId) {
+    openAlertDialog({ title: 'Chat Shopee', body: 'Não foi possível identificar o pedido desta linha.' })
+    return
+  }
   void openShopeeChatPanel({
+    workbookId: currentWorkbookId,
+    orderKey,
     orderId: cellText(cells, ID_COL) || '—',
     product: cellText(cells, PRODUCT_COL),
     model: cellText(cells, MODEL_COLUMN_INDEX),

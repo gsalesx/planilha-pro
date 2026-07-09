@@ -480,6 +480,79 @@ export async function sendShopeePreview(opts: {
   })
 }
 
+/* ===========================================================
+   Peças por pedido (Fase 2 migração SKU→peça — picker no chat)
+   =========================================================== */
+
+export type PecaTipo = 'CAMISOLA' | 'SHORT' | 'CONJ'
+export type PecaGenero = 'MASCULINO' | 'FEMININO'
+export type PecaTamanho = 'P' | 'M' | 'G' | 'GG'
+
+export interface OrderPiece {
+  id: number
+  seq: number
+  tipo: PecaTipo
+  genero: PecaGenero | null
+  tamanho: PecaTamanho
+  molde: string
+  emoji1: string
+  emoji2: string
+  cor: string
+  source: 'auto' | 'manual'
+  photos: { 1: boolean; 2: boolean }
+}
+
+export async function getOrderPieces(
+  workbookId: string,
+  orderKey: string,
+): Promise<{ pieces: OrderPiece[]; autoFailed?: string }> {
+  return request(`/workbooks/${encodeURIComponent(workbookId)}/pieces/${encodeURIComponent(orderKey)}`)
+}
+
+export async function addOrderPiece(workbookId: string, orderKey: string): Promise<{ piece: OrderPiece }> {
+  return request(`/workbooks/${encodeURIComponent(workbookId)}/pieces/${encodeURIComponent(orderKey)}`, {
+    method: 'POST',
+  })
+}
+
+export async function updateOrderPiece(
+  pieceId: number,
+  patch: Partial<{
+    tipo: PecaTipo
+    genero: PecaGenero | null
+    tamanho: PecaTamanho
+    emoji1: string
+    emoji2: string
+    cor: string
+  }>,
+): Promise<{ piece: OrderPiece }> {
+  return request(`/pieces/${pieceId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+}
+
+export async function deleteOrderPiece(pieceId: number): Promise<{ ok: boolean }> {
+  return request(`/pieces/${pieceId}`, { method: 'DELETE' })
+}
+
+export async function assignPiecePhoto(
+  pieceId: number,
+  slot: 1 | 2,
+  url: string,
+): Promise<{ url: string; updatedAt: number }> {
+  return request(`/pieces/${pieceId}/photo/${slot}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  })
+}
+
+export async function removePiecePhoto(pieceId: number, slot: 1 | 2): Promise<{ ok: boolean }> {
+  return request(`/pieces/${pieceId}/photo/${slot}`, { method: 'DELETE' })
+}
+
 /** Converte payload do servidor pra WorkbookData (formato que a grid usa) */
 export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook): WorkbookData {
   const rows: CellValue[][] = []

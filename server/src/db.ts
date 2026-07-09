@@ -280,6 +280,67 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_shopee_webchat_push_log_received ON shopee_webchat_push_log (received_at);
 `)
 
+/**
+ * Pendências do parser SKU→peça: pedidos cujo SKU/campo Modelo não bateu com
+ * nenhuma família conhecida (ver server/src/sku-rules.ts). Página de revisão
+ * em src/parse-issues.ts.
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS parse_issues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workbook_id TEXT NOT NULL,
+    order_key TEXT NOT NULL,
+    order_id TEXT NOT NULL,
+    sku TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    resolved INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    resolved_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_parse_issues_resolved ON parse_issues (resolved, created_at);
+  CREATE INDEX IF NOT EXISTS idx_parse_issues_order ON parse_issues (workbook_id, order_key);
+`)
+
+/**
+ * Peças resolvidas por pedido (Fase 2 da migração SKU→peça — ver
+ * server/src/sku-rules.ts e server/src/pieces.ts). Cada order_key pode gerar 1+ peças
+ * (ex.: CAMISOLA + SHORT = 2 peças). `source` = 'auto' (veio do parser) ou 'manual'
+ * (usuário criou/editou). Fotos de cada peça (baixadas do chat Shopee) em piece_images,
+ * reaproveitando o mesmo diretório de disco de `images` (env.dataDir/images).
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS order_pieces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workbook_id TEXT NOT NULL,
+    order_key TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    tipo TEXT NOT NULL,
+    genero TEXT,
+    tamanho TEXT NOT NULL,
+    molde TEXT NOT NULL,
+    emoji1 TEXT NOT NULL DEFAULT '',
+    emoji2 TEXT NOT NULL DEFAULT '',
+    cor TEXT NOT NULL DEFAULT '#000000',
+    source TEXT NOT NULL DEFAULT 'auto',
+    updated_at INTEGER NOT NULL,
+    UNIQUE (workbook_id, order_key, seq)
+  );
+  CREATE INDEX IF NOT EXISTS idx_order_pieces_order ON order_pieces (workbook_id, order_key);
+
+  CREATE TABLE IF NOT EXISTS piece_images (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    piece_id INTEGER NOT NULL,
+    slot INTEGER NOT NULL,
+    file_name TEXT NOT NULL,
+    mime TEXT NOT NULL DEFAULT 'image/jpeg',
+    storage_path TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    UNIQUE (piece_id, slot),
+    FOREIGN KEY (piece_id) REFERENCES order_pieces(id) ON DELETE CASCADE
+  );
+`)
+
 export function nowMs(): number {
   return Date.now()
 }

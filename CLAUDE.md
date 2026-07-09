@@ -63,6 +63,17 @@ docker compose up -d --build
 cd server && ./node_modules/.bin/tsc --noEmit
 ```
 
+## Migração SKU → peça (Fase 1, 2026-07-08)
+
+Iniciativa em andamento pra tirar o webchat nativo da Shopee + Google Drive do meio da criação das artes (repo `Criador de artes`), usando o chat e o storage de imagem que este app já tem. Ver plano completo/fases futuras na memória do repo Criador de artes (`planilha-pro-migracao-sku-pecas-2026-07-08`).
+
+**Fase 1 (implementada)** — motor de parsing SKU→peça, hardcoded (sem painel de admin, por pedido do usuário):
+- `server/src/sku-rules.ts` — `resolveFamily(sku)` casa texto do SKU contra 7 famílias conhecidas (CAMISOLA, CAMISOLA+SHORT, CAMISOLA+CONJUNTO, SHORT, CONJUNTO UNITARIO, CONJUNTO COMPLETO CASAL, SHORT CASAL); `parseOrderPieces(sku, modelName)` decompõe o campo "Modelo" (col C, variação Shopee) em 1-2 peças com `{tipo, genero?, tamanho, molde}` — `molde` já no formato de pasta usado em `Moldes/*.psd` do outro repo. `SHORT CASAL` ainda não tem formato padronizado (usuário vai definir depois) — sempre vira pendência.
+- Tabela `parse_issues` (`server/src/db.ts`) + rotas `server/src/routes/parse-issues.ts` (`POST /api/parse-issues/scan`, `GET /api/parse-issues`, `POST /api/parse-issues/:id/resolve`) + página `parse-issues.html`/`src/parse-issues.ts` — lista pedidos cujo SKU/Modelo não bateu com nenhuma família (SKU não reconhecido, formato errado, ou família `SHORT CASAL`), pra revisão manual.
+- Não mexe em nada do fluxo de Drive/extensão Chrome — aditivo, só dentro deste app.
+
+**Fases futuras (não implementadas ainda):** picker de fotos dentro de `shopee-chat-panel.ts` (checkboxes + peças pré-preenchidas, override manual) com storage de foto/instrução por peça; depois um endpoint servindo peças+fotos pro pipeline Python (`Criador de artes/scripts/planilha_pecas.py`), substituindo o download via rclone/Drive. **Quando isso acontecer, o sistema de Drive deve ser desativado, não excluído** (usuário pode precisar dele de novo).
+
 ## Convenções
 - Não criar `Data` como coluna (usuário rejeitou) — data fica no campo `sheet_date` da row, mostrada via `<select>` no header
 - Datas no banco salvas como `DD-MM-YYYY` (parser normaliza `YYYY_MM_DD` legado)
