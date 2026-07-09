@@ -1456,7 +1456,13 @@ async function refreshFromServer(options: { force?: boolean } = {}): Promise<boo
         const readyDates = sortDates(
           grid.getAvailableDatesForColumnValue(SHOPEE_STATUS_COLUMN_INDEX, SHOPEE_DEFAULT_STATUS_FILTER),
         )
-        if (readyDates.length > 0) {
+        const requestedUrlDate = getUrlDate()
+        const requestedHasReady =
+          requestedUrlDate != null && readyDates.some((d) => formatDateForUrl(d) === requestedUrlDate)
+        // Só pula pro 1º dia "a enviar" se a data da URL (se houver) não tiver
+        // nenhum pedido READY_TO_SHIP — senão isso sempre sobrescrevia a data
+        // pedida na URL a cada recarregamento, antes de applyUrlDateFilter() rodar.
+        if (!requestedHasReady && readyDates.length > 0) {
           grid.setDateFilter(readyDates[0])
           setUrlDate(readyDates[0])
         }

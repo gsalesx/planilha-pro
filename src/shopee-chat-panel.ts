@@ -149,13 +149,12 @@ async function loadEmojiCatalog(): Promise<void> {
   }
 }
 
-/** Os 6 da extensão Chrome antiga (❤️ 🥰 😍 🤍 💋 😘) — eram os mais usados,
- * por isso entram primeiro nos favoritos (mesma ordem do seed do backend,
- * server/src/emoji-catalog.ts). */
-const PRIORITY_EMOJI_NAMES = ['CORAÇÃO', 'BEIJO', 'CARA APAIXONADA', 'OLHOS CORAÇÃO', 'CORAÇÃO BRANCO', 'MANDANDO BEIJO']
+/** Os 6 favoritos fixos da seleção rápida — curados manualmente pelo user (ajustado
+ * 2026-07-15: MANDANDO BEIJO trocado por BOCA). */
+const PRIORITY_EMOJI_NAMES = ['CORAÇÃO', 'BOCA', 'BEIJO', 'CARA APAIXONADA', 'OLHOS CORAÇÃO', 'CORAÇÃO BRANCO']
 
-/** Lista FIXA — só esses 6 (mesmos da extensão Chrome antiga), não cresce com o que for
- * mapeado depois pela galeria. Emoji fora dessa lista só aparece via colar/nome ou 🖼 todos. */
+/** Lista FIXA — só esses 6, não cresce com o que for mapeado depois pela galeria.
+ * Emoji fora dessa lista só aparece via colar/nome ou 🖼 todos. */
 function pickFavorites(): EmojiCatalogItem[] {
   const byName = new Map(emojiCatalog.map((item) => [item.name, item]))
   return PRIORITY_EMOJI_NAMES.map((name) => byName.get(name)).filter((i): i is EmojiCatalogItem => !!i)
