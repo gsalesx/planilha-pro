@@ -422,6 +422,12 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           ${emojiPickerHtml(piece.id, 2, piece.emoji2)}
         </div>
         ${colorPickerHtml(piece.id, piece.cor || '#000000')}
+        <div class="shopee-chat-piece-nota">
+          <label for="nota-${piece.id}">📝 Observação da peça</label>
+          <textarea id="nota-${piece.id}" class="shopee-chat-piece-nota-input" data-piece-id="${piece.id}"
+                    rows="2" placeholder="ex.: usar só a parte de cima dessa foto, cliente pediu…"
+          >${escapeHtml(piece.nota || '')}</textarea>
+        </div>
       </article>
     `
   }
@@ -477,6 +483,13 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       inp.addEventListener('change', () => {
         const pieceId = Number(inp.dataset.pieceId)
         void updateOrderPiece(pieceId, { cor: inp.value }).then(() => loadPieces())
+      })
+    })
+    piecesEl.querySelectorAll<HTMLTextAreaElement>('.shopee-chat-piece-nota-input').forEach((ta) => {
+      // 'change' (não 'input') = só salva ao perder o foco/valor mudar, sem request a cada tecla
+      ta.addEventListener('change', () => {
+        const pieceId = Number(ta.dataset.pieceId)
+        void updateOrderPiece(pieceId, { nota: ta.value })
       })
     })
     piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-photo-pick').forEach((btn) => {

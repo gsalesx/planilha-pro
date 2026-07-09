@@ -322,6 +322,7 @@ db.exec(`
     emoji1 TEXT NOT NULL DEFAULT '',
     emoji2 TEXT NOT NULL DEFAULT '',
     cor TEXT NOT NULL DEFAULT '#000000',
+    nota TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'auto',
     updated_at INTEGER NOT NULL,
     UNIQUE (workbook_id, order_key, seq)
@@ -360,6 +361,14 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
 `)
+
+// Migration idempotente: garante order_pieces.nota em DBs criados antes dessa coluna existir.
+{
+  const cols = db.prepare("PRAGMA table_info(order_pieces)").all() as Array<{ name: string }>
+  if (!cols.some((c) => c.name === 'nota')) {
+    db.exec("ALTER TABLE order_pieces ADD COLUMN nota TEXT NOT NULL DEFAULT ''")
+  }
+}
 
 export function nowMs(): number {
   return Date.now()

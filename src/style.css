@@ -1835,6 +1835,34 @@ body.shopee-chat-open {
 .shopee-chat-piece-add {
   font-size: 12px;
   padding: 5px 10px;
+  background: #334155;
+  color: #fff;
+  border: 1px solid #334155;
+}
+.shopee-chat-piece-add:hover {
+  background: #1e293b;
+}
+
+.shopee-chat-piece-nota {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.shopee-chat-piece-nota label {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.shopee-chat-piece-nota-input {
+  width: 100%;
+  resize: vertical;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fffbeb;
 }
 
 .shopee-chat-pieces-confirm-bar {

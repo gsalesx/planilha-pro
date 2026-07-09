@@ -29,6 +29,7 @@ export interface OrderPieceRow {
   emoji1: string
   emoji2: string
   cor: string
+  nota: string
   source: 'auto' | 'manual'
   updated_at: number
 }
@@ -72,8 +73,8 @@ function insertPiece(
   const now = nowMs()
   const info = db
     .prepare(
-      `INSERT INTO order_pieces (workbook_id, order_key, seq, tipo, genero, tamanho, molde, emoji1, emoji2, cor, source, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, '', '', '#000000', ?, ?)`,
+      `INSERT INTO order_pieces (workbook_id, order_key, seq, tipo, genero, tamanho, molde, emoji1, emoji2, cor, nota, source, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, '', '', '#000000', '', ?, ?)`,
     )
     .run(workbookId, orderKey, seq, tipo, genero, tamanho, molde, source, now)
   return {
@@ -88,6 +89,7 @@ function insertPiece(
     emoji1: '',
     emoji2: '',
     cor: '#000000',
+    nota: '',
     source,
     updated_at: now,
   }
@@ -147,6 +149,7 @@ export interface PiecePatch {
   emoji1?: string
   emoji2?: string
   cor?: string
+  nota?: string
 }
 
 export function updatePiece(pieceId: number, patch: PiecePatch): PieceWithPhotos | null {
@@ -161,14 +164,15 @@ export function updatePiece(pieceId: number, patch: PiecePatch): PieceWithPhotos
   const emoji1 = patch.emoji1 ?? existing.emoji1
   const emoji2 = patch.emoji2 ?? existing.emoji2
   const cor = patch.cor ?? existing.cor
+  const nota = patch.nota ?? existing.nota
   const molde = buildMolde(tipo, genero, tamanho)
   const now = nowMs()
 
   db.prepare(
     `UPDATE order_pieces
-     SET tipo = ?, genero = ?, tamanho = ?, molde = ?, emoji1 = ?, emoji2 = ?, cor = ?, source = 'manual', updated_at = ?
+     SET tipo = ?, genero = ?, tamanho = ?, molde = ?, emoji1 = ?, emoji2 = ?, cor = ?, nota = ?, source = 'manual', updated_at = ?
      WHERE id = ?`,
-  ).run(tipo, genero, tamanho, molde, emoji1, emoji2, cor, now, pieceId)
+  ).run(tipo, genero, tamanho, molde, emoji1, emoji2, cor, nota, now, pieceId)
 
   return attachPhotos({
     ...existing,
@@ -179,6 +183,7 @@ export function updatePiece(pieceId: number, patch: PiecePatch): PieceWithPhotos
     emoji1,
     emoji2,
     cor,
+    nota,
     source: 'manual',
     updated_at: now,
   })

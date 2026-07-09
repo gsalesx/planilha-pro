@@ -54,6 +54,7 @@ function parsePiecePatch(body: unknown): PiecePatch {
   if (typeof b.emoji1 === 'string') patch.emoji1 = b.emoji1.trim()
   if (typeof b.emoji2 === 'string') patch.emoji2 = b.emoji2.trim()
   if (typeof b.cor === 'string' && /^#[0-9a-fA-F]{6}$/.test(b.cor.trim())) patch.cor = b.cor.trim().toLowerCase()
+  if (typeof b.nota === 'string') patch.nota = b.nota.trim().slice(0, 500)
   return patch
 }
 
