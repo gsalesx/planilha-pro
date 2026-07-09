@@ -121,6 +121,21 @@ export function listCatalog(): EmojiCatalogItem[] {
   return rows.map(rowToItem)
 }
 
+/** Um mesmo alias (emoji unicode) não pode apontar pra 2 nomes — resolução vira ambígua
+ * (o picker/galeria mostrariam o mesmo emoji "grudado" em itens diferentes). Chamar antes
+ * de gravar aliases novos; `excludeId` = null pra criação (ainda não existe linha própria). */
+export function findAliasConflict(
+  aliases: string[],
+  excludeId: number | null,
+): { alias: string; name: string } | null {
+  const others = listCatalog().filter((item) => item.id !== excludeId)
+  for (const alias of aliases) {
+    const owner = others.find((item) => item.aliases.includes(alias))
+    if (owner) return { alias, name: owner.name }
+  }
+  return null
+}
+
 function normalize(text: string): string {
   return text
     .normalize('NFKD')

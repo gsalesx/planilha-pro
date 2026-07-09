@@ -8,7 +8,7 @@ import multer from 'multer'
 import { requireAuth } from '../auth.js'
 import { db, nowMs } from '../db.js'
 import { env } from '../env.js'
-import { listCatalog, searchByName, type EmojiCatalogRow } from '../emoji-catalog.js'
+import { findAliasConflict, listCatalog, searchByName, type EmojiCatalogRow } from '../emoji-catalog.js'
 
 const router = Router()
 const customDir = path.join(env.dataDir, 'emoji-custom')
@@ -55,6 +55,12 @@ router.post('/emoji-catalog', requireAuth, upload.single('image'), (req, res) =>
     } catch {
       aliases = [rawAliases.trim()]
     }
+  }
+  aliases = [...new Set(aliases.map((a) => a.trim()).filter(Boolean))]
+  const conflict = aliases.length ? findAliasConflict(aliases, null) : null
+  if (conflict) {
+    res.status(409).json({ error: `Atalho "${conflict.alias}" já está mapeado pra "${conflict.name}"` })
+    return
   }
 
   const extension =
@@ -105,7 +111,19 @@ router.patch('/emoji-catalog/:id', requireAuth, (req, res) => {
   const updates: string[] = []
   const params: unknown[] = []
   if (Array.isArray(body.aliases)) {
-    const aliases = body.aliases.filter((a): a is string => typeof a === 'string')
+    const aliases = [
+      ...new Set(
+        body.aliases
+          .filter((a): a is string => typeof a === 'string')
+          .map((a) => a.trim())
+          .filter(Boolean),
+      ),
+    ]
+    const conflict = findAliasConflict(aliases, id)
+    if (conflict) {
+      res.status(409).json({ error: `Atalho "${conflict.alias}" já está mapeado pra "${conflict.name}"` })
+      return
+    }
     updates.push('aliases = ?')
     params.push(JSON.stringify(aliases))
   }

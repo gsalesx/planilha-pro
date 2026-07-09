@@ -573,7 +573,8 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           const { item: updated } = await updateEmojiAliases(item.id, [...item.aliases, opts.pendingChar])
           emojiCatalog = emojiCatalog.map((i) => (i.id === updated.id ? updated : i))
         } catch (error) {
-          console.warn('[emoji-catalog] falha ao salvar atalho', error)
+          // não bloqueia a escolha do emoji pra peça — só avisa que o atalho não foi salvo
+          alert(`Não salvei o atalho "${opts.pendingChar}": ${(error as Error).message}`)
         }
       }
       await updateOrderPiece(pieceId, { [field]: item.name })

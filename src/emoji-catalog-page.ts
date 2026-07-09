@@ -167,10 +167,14 @@ async function boot(): Promise<void> {
           label: 'Cole o emoji que o cliente costuma mandar no chat',
           confirmLabel: 'Salvar',
           onConfirm: async (value) => {
-            const aliases = [...item.aliases, value.trim()]
-            const { item: updated } = await updateEmojiAliases(id, aliases)
-            catalog = catalog.map((i) => (i.id === id ? updated : i))
-            applyFilter()
+            try {
+              const aliases = [...item.aliases, value.trim()]
+              const { item: updated } = await updateEmojiAliases(id, aliases)
+              catalog = catalog.map((i) => (i.id === id ? updated : i))
+              applyFilter()
+            } catch (error) {
+              alert((error as Error).message)
+            }
           },
         })
       })
