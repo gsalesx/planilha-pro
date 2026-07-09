@@ -447,6 +447,16 @@ export class GridView {
     this.emitSelection()
   }
 
+  /** Seleciona a linha E rola ela pra dentro da área visível — usado depois de fechar
+   * o chat/picker de peças, pra voltar o olho na linha do cliente que acabou de mexer. */
+  selectAndReveal(row: number, col: number) {
+    this.restoreSelection(row, col)
+    requestAnimationFrame(() => {
+      const cell = this.root.querySelector<HTMLElement>(`td[data-row="${row}"][data-col="${Math.max(0, col)}"]`)
+      cell?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+    })
+  }
+
   setCellImage(row: number, col: number, blob: Blob, fileName: string) {
     const sheet = this.getActiveSheet()
     if (!sheet) return

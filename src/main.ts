@@ -915,6 +915,7 @@ function handleChatRequest(row: number, col: number) {
     buyerUsername,
     recipient: cellText(cells, RECIPIENT_COLUMN_INDEX),
     sheetDate: sheet.rowDates?.[row] ?? '',
+    onConfirmed: () => grid?.selectAndReveal(row, col),
   })
 }
 

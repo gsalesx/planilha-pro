@@ -36,14 +36,18 @@ export interface ShopeeChatOrderInfo {
   buyerUsername: string
   recipient: string
   sheetDate?: string
+  /** Chamado depois que "Confirmar pedido" fecha o painel — main.ts usa pra selecionar
+   * e rolar até a linha do cliente que acabou de ser confirmado. */
+  onConfirmed?: () => void
 }
 
 /** Mesma paleta usada em Criador de artes/scripts/picker_manual.py — mantém as duas ferramentas consistentes. */
 const SHORT_COLORS = ['#000000', '#ffffff', '#0000ff', '#ff00ff', '#ff0000']
 
-/** Status (coluna F) que o "Confirmar pedido" grava — é o que o Criador de artes lê pra
- * puxar o pedido pro processamento (mesmo status usado pelo fluxo antigo Separado→Pronto). */
-const CONFIRMED_STATUS = 'Pronto'
+/** Status (coluna F) que o "Confirmar pedido" grava — é o que dispara o pipeline do
+ * Criador de artes (planilha_fila filtra por "Separado"); "Pronto" só é setado no FIM
+ * do pipeline (batch_finalize.py), depois que a arte já foi gerada — não aqui. */
+const CONFIRMED_STATUS = 'Separado'
 const TIPO_OPTIONS: Array<{ value: PecaTipo; label: string }> = [
   { value: 'CAMISOLA', label: 'Camisola' },
   { value: 'SHORT', label: 'Short' },
@@ -721,7 +725,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
 
   function confirmBarHtml(pieces: OrderPiece[]): string {
     if (order.status === CONFIRMED_STATUS) {
-      return `<div class="shopee-chat-pieces-confirmed">✓ Pedido confirmado — status "Pronto"</div>`
+      return `<div class="shopee-chat-pieces-confirmed">✓ Pedido confirmado — status "Separado"</div>`
     }
     const missing = pieces.filter((p) => !p.photos[1]).length
     const label = missing > 0 ? `✅ Confirmar pedido (${missing} peça(s) sem foto)` : '✅ Confirmar pedido'
@@ -741,13 +745,14 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         btn.textContent = 'Confirmando…'
         try {
           // baixa/salva de verdade as fotos pendentes (até aqui eram só hotlink do
-          // CDN da Shopee) ANTES de marcar "Pronto".
+          // CDN da Shopee) ANTES de marcar "Separado".
           await confirmPiecesForOrder(order.workbookId, order.orderKey)
           await patchOrderDelta(order.workbookId, order.orderKey, {
             cells: [{ col: STATUS_COLUMN_INDEX, value: CONFIRMED_STATUS }],
           })
           order.status = CONFIRMED_STATUS
           closeShopeeChatPanel()
+          order.onConfirmed?.()
         } catch (error) {
           alert(`Falha ao confirmar: ${(error as Error).message}`)
           btn.disabled = false
@@ -759,7 +764,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         body:
           missing > 0
             ? `${missing} peça(s) ainda sem Foto 1. Confirmar mesmo assim? O pedido vai pro Criador de artes com o que já tem.`
-            : 'Marca o pedido como "Pronto" — o Criador de artes vai processar a partir daqui. As fotos/emojis/cor já escolhidos ficam salvos como estão.',
+            : 'Marca o pedido como "Separado" — o Criador de artes vai puxar da fila e montar a arte a partir daqui. As fotos/emojis/cor já escolhidos ficam salvos como estão.',
         confirmLabel: 'Confirmar pedido',
         danger: missing > 0,
         onConfirm: doConfirm,

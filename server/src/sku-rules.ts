@@ -198,12 +198,30 @@ function parseConjuntoCompletoCasal(modelName: string): ParseResult {
   return { ok: true, pieces }
 }
 
-/** Ainda não padronizado pelo usuário — sempre vira pendência até ele mandar o formato. */
-function parseShortCasal(): ParseResult {
-  return {
-    ok: false,
-    reason: 'Família SHORT CASAL ainda não tem formato padronizado — aguardando definição do usuário',
+/** Mesmo formato de CONJUNTO_COMPLETO_CASAL ("tamanho genero,tamanho genero"), só que
+ * gera 2 peças SHORT em vez de CONJ. Ex. "M Fem,M Masc". */
+function parseShortCasal(modelName: string): ParseResult {
+  const tokens = splitTokens(modelName, 2)
+  if (!tokens) {
+    return {
+      ok: false,
+      reason: `SHORT CASAL: esperado 2 valores separados por vírgula (ex. "M Fem,M Masc"), veio "${modelName}"`,
+    }
   }
+  const pieces: Peca[] = []
+  for (const token of tokens) {
+    const parts = token.split(/\s+/).filter(Boolean)
+    const tamanho = parts.length === 2 ? normalizeTamanho(parts[0]) : null
+    const genero = parts.length === 2 ? normalizeGenero(parts[1]) : null
+    if (!tamanho || !genero) {
+      return {
+        ok: false,
+        reason: `SHORT CASAL: token "${token}" não é "tamanho genero" (ex. "M Fem"), veio "${modelName}"`,
+      }
+    }
+    pieces.push({ tipo: 'SHORT', genero, tamanho, molde: `${tamanho} ${genero}` })
+  }
+  return { ok: true, pieces }
 }
 
 export function parseOrderPieces(sku: string, modelName: string): ParseResult {
@@ -225,7 +243,7 @@ export function parseOrderPieces(sku: string, modelName: string): ParseResult {
     case 'CONJUNTO_COMPLETO_CASAL':
       return parseConjuntoCompletoCasal(modelName)
     case 'SHORT_CASAL':
-      return parseShortCasal()
+      return parseShortCasal(modelName)
   }
 }
 
