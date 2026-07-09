@@ -341,6 +341,21 @@ db.exec(`
     UNIQUE (piece_id, slot),
     FOREIGN KEY (piece_id) REFERENCES order_pieces(id) ON DELETE CASCADE
   );
+
+  -- Foto escolhida mas AINDA NÃO baixada/salva — só a URL do CDN da Shopee (hotlink
+  -- direto pro preview, sem custo de download). Só vira piece_images (arquivo salvo de
+  -- verdade) quando o pedido é confirmado (POST .../pieces/:orderKey/confirm) — antes
+  -- disso, escolher foto era lento (baixava na hora) e sujava o disco com fotos de
+  -- pedido que o operador pode nem confirmar.
+  CREATE TABLE IF NOT EXISTS piece_pending_photos (
+    piece_id INTEGER NOT NULL,
+    slot INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    crop TEXT NOT NULL DEFAULT 'rosto',
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (piece_id, slot),
+    FOREIGN KEY (piece_id) REFERENCES order_pieces(id) ON DELETE CASCADE
+  );
 `)
 
 /**

@@ -134,11 +134,26 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
       `UPDATE order_pieces SET emoji1 = ?, emoji2 = ?, source = 'manual', updated_at = ? WHERE id = ?`,
     ).run(source.emoji1, source.emoji2, now, targetId)
 
+    // pendentes (ainda não baixadas) — só copia a referência de URL, sem download.
+    const sourcePending = db
+      .prepare('SELECT slot, url, crop FROM piece_pending_photos WHERE piece_id = ?')
+      .all(sourceId) as Array<{ slot: number; url: string; crop: string }>
+    for (const p of sourcePending) {
+      db.prepare(
+        `INSERT INTO piece_pending_photos (piece_id, slot, url, crop, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(piece_id, slot) DO UPDATE SET
+           url = excluded.url, crop = excluded.crop, updated_at = excluded.updated_at`,
+      ).run(targetId, p.slot, p.url, p.crop, now)
+    }
+    const pendingSlots = new Set(sourcePending.map((p) => p.slot))
+
+    // confirmadas (já baixadas) — só pro slot que não ganhou uma pendente acima.
     const sourceImages = db
-      .prepare('SELECT slot, mime, storage_path FROM piece_images WHERE piece_id = ?')
-      .all(sourceId) as Array<{ slot: number; mime: string; storage_path: string }>
+      .prepare('SELECT slot, mime, storage_path, crop FROM piece_images WHERE piece_id = ?')
+      .all(sourceId) as Array<{ slot: number; mime: string; storage_path: string; crop: string }>
     for (const img of sourceImages) {
-      if (!existsSync(img.storage_path)) continue
+      if (pendingSlots.has(img.slot) || !existsSync(img.storage_path)) continue
       const ext = path.extname(img.storage_path) || '.jpg'
       const fileName = `piece_${targetId}_s${img.slot}_${crypto.randomBytes(4).toString('hex')}${ext}`
       const newPath = path.join(imagesDir, fileName)
@@ -155,12 +170,12 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
         }
       }
       db.prepare(
-        `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, crop, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(piece_id, slot) DO UPDATE SET
            file_name = excluded.file_name, mime = excluded.mime,
-           storage_path = excluded.storage_path, updated_at = excluded.updated_at`,
-      ).run(targetId, img.slot, fileName, img.mime, newPath, now)
+           storage_path = excluded.storage_path, crop = excluded.crop, updated_at = excluded.updated_at`,
+      ).run(targetId, img.slot, fileName, img.mime, newPath, img.crop, now)
     }
   })
   txn()
@@ -168,8 +183,11 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
   res.json({ ok: true })
 })
 
-/** POST /api/pieces/:id/photo/:slot — { url } de uma foto do chat Shopee; baixa e guarda no servidor. */
-router.post('/pieces/:id/photo/:slot', requireAuth, async (req, res) => {
+/** POST /api/pieces/:id/photo/:slot — { url } de uma foto do chat Shopee. NÃO baixa nada
+ * ainda — só guarda a referência (piece_pending_photos) e o preview usa o hotlink direto
+ * do CDN da Shopee. O download de verdade só acontece em POST .../confirm, pra não gastar
+ * tempo/disco em foto de pedido que o operador pode nem confirmar. */
+router.post('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
   const pieceId = Number(req.params.id)
   const slot = Number(req.params.slot)
   const url = typeof req.body?.url === 'string' ? req.body.url.trim() : ''
@@ -181,46 +199,77 @@ router.post('/pieces/:id/photo/:slot', requireAuth, async (req, res) => {
     res.status(404).json({ error: 'Peça não encontrada' })
     return
   }
-  try {
-    const fullUrl = shopeeCdnOriginalUrl(url)
-    const response = await fetch(fullUrl)
-    if (!response.ok) throw new Error(`Download da imagem: HTTP ${response.status}`)
-    const buffer = Buffer.from(await response.arrayBuffer())
-    const mime = response.headers.get('content-type') || 'image/jpeg'
-    const ext = mime.includes('png') ? '.png' : mime.includes('webp') ? '.webp' : '.jpg'
-    const fileName = `piece_${pieceId}_s${slot}_${crypto.randomBytes(4).toString('hex')}${ext}`
-    const storagePath = path.join(imagesDir, fileName)
-    writeFileSync(storagePath, buffer)
+  const fullUrl = shopeeCdnOriginalUrl(url)
+  const now = nowMs()
+  db.prepare(
+    `INSERT INTO piece_pending_photos (piece_id, slot, url, crop, updated_at)
+     VALUES (?, ?, ?, 'rosto', ?)
+     ON CONFLICT(piece_id, slot) DO UPDATE SET url = excluded.url, updated_at = excluded.updated_at`,
+  ).run(pieceId, slot, fullUrl, now)
+  res.json({ ok: true, url: fullUrl, pending: true, updatedAt: now })
+})
 
-    const now = nowMs()
-    const txn = db.transaction(() => {
-      const existing = db
-        .prepare('SELECT storage_path FROM piece_images WHERE piece_id = ? AND slot = ?')
-        .get(pieceId, slot) as { storage_path: string } | undefined
-      if (existing) {
-        try {
-          unlinkSync(existing.storage_path)
-        } catch {
-          // ignore
-        }
+/**
+ * POST /api/workbooks/:workbookId/pieces/:orderKey/confirm — baixa e salva de verdade
+ * TODAS as fotos pendentes das peças do pedido (piece_pending_photos → piece_images).
+ * Chamado pelo botão "Confirmar pedido" ANTES de marcar status "Pronto" — até esse
+ * clique, as fotos eram só hotlink do CDN da Shopee, nada gravado no nosso disco.
+ */
+router.post('/workbooks/:workbookId/pieces/:orderKey/confirm', requireAuth, async (req, res) => {
+  const { workbookId, orderKey } = req.params
+  const pieces = db
+    .prepare('SELECT id FROM order_pieces WHERE workbook_id = ? AND order_key = ?')
+    .all(workbookId, orderKey) as Array<{ id: number }>
+  const errors: string[] = []
+
+  for (const { id: pieceId } of pieces) {
+    const pending = db
+      .prepare('SELECT slot, url, crop FROM piece_pending_photos WHERE piece_id = ?')
+      .all(pieceId) as Array<{ slot: number; url: string; crop: string }>
+    for (const p of pending) {
+      try {
+        const response = await fetch(p.url)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const buffer = Buffer.from(await response.arrayBuffer())
+        const mime = response.headers.get('content-type') || 'image/jpeg'
+        const ext = mime.includes('png') ? '.png' : mime.includes('webp') ? '.webp' : '.jpg'
+        const fileName = `piece_${pieceId}_s${p.slot}_${crypto.randomBytes(4).toString('hex')}${ext}`
+        const storagePath = path.join(imagesDir, fileName)
+        writeFileSync(storagePath, buffer)
+
+        const now = nowMs()
+        const txn = db.transaction(() => {
+          const existing = db
+            .prepare('SELECT storage_path FROM piece_images WHERE piece_id = ? AND slot = ?')
+            .get(pieceId, p.slot) as { storage_path: string } | undefined
+          if (existing) {
+            try {
+              unlinkSync(existing.storage_path)
+            } catch {
+              // ignore
+            }
+          }
+          db.prepare(
+            `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, crop, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(piece_id, slot) DO UPDATE SET
+               file_name = excluded.file_name, mime = excluded.mime, storage_path = excluded.storage_path,
+               crop = excluded.crop, updated_at = excluded.updated_at`,
+          ).run(pieceId, p.slot, fileName, mime, storagePath, p.crop, now)
+          db.prepare('DELETE FROM piece_pending_photos WHERE piece_id = ? AND slot = ?').run(pieceId, p.slot)
+        })
+        txn()
+      } catch (error) {
+        errors.push(`peça ${pieceId} slot ${p.slot}: ${error instanceof Error ? error.message : 'erro'}`)
       }
-      db.prepare(
-        `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(piece_id, slot) DO UPDATE SET
-           file_name = excluded.file_name, mime = excluded.mime,
-           storage_path = excluded.storage_path, updated_at = excluded.updated_at`,
-      ).run(pieceId, slot, fileName, mime, storagePath, now)
-    })
-    txn()
-
-    res.json({ ok: true, url: `/api/pieces/${pieceId}/photo/${slot}?t=${now}`, updatedAt: now })
-  } catch (error) {
-    res.status(502).json({
-      ok: false,
-      error: error instanceof Error ? error.message : 'Erro ao baixar imagem do chat',
-    })
+    }
   }
+
+  if (errors.length) {
+    res.status(502).json({ ok: false, error: errors.join('; ') })
+    return
+  }
+  res.json({ ok: true })
 })
 
 /** PATCH /api/pieces/:id/photo/:slot — { crop: 'rosto'|'coracao' }. Troca só o TIPO de
@@ -238,33 +287,43 @@ router.patch('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
     res.status(400).json({ error: "crop precisa ser 'rosto' ou 'coracao'" })
     return
   }
-  const result = db
+  const now = nowMs()
+  const pendingResult = db
+    .prepare('UPDATE piece_pending_photos SET crop = ?, updated_at = ? WHERE piece_id = ? AND slot = ?')
+    .run(crop, now, pieceId, slot)
+  const confirmedResult = db
     .prepare('UPDATE piece_images SET crop = ?, updated_at = ? WHERE piece_id = ? AND slot = ?')
-    .run(crop, nowMs(), pieceId, slot)
-  if (result.changes === 0) {
+    .run(crop, now, pieceId, slot)
+  if (pendingResult.changes === 0 && confirmedResult.changes === 0) {
     res.status(404).json({ error: 'Foto não encontrada nesse slot' })
     return
   }
   res.json({ ok: true, crop })
 })
 
-/** DELETE /api/pieces/:id/photo/:slot */
+/** DELETE /api/pieces/:id/photo/:slot — limpa tanto a pendente quanto a confirmada. */
 router.delete('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
   const pieceId = Number(req.params.id)
   const slot = Number(req.params.slot)
   const existing = db
     .prepare('SELECT storage_path FROM piece_images WHERE piece_id = ? AND slot = ?')
     .get(pieceId, slot) as { storage_path: string } | undefined
-  if (!existing) {
+  const hadPending = db
+    .prepare('SELECT 1 FROM piece_pending_photos WHERE piece_id = ? AND slot = ?')
+    .get(pieceId, slot)
+  if (!existing && !hadPending) {
     res.status(404).json({ error: 'Foto não encontrada' })
     return
   }
-  try {
-    unlinkSync(existing.storage_path)
-  } catch {
-    // ignore
+  if (existing) {
+    try {
+      unlinkSync(existing.storage_path)
+    } catch {
+      // ignore
+    }
+    db.prepare('DELETE FROM piece_images WHERE piece_id = ? AND slot = ?').run(pieceId, slot)
   }
-  db.prepare('DELETE FROM piece_images WHERE piece_id = ? AND slot = ?').run(pieceId, slot)
+  db.prepare('DELETE FROM piece_pending_photos WHERE piece_id = ? AND slot = ?').run(pieceId, slot)
   res.json({ ok: true })
 })
 

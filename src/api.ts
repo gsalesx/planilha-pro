@@ -505,6 +505,9 @@ export interface OrderPiece {
   photos: { 1: boolean; 2: boolean }
   /** Tipo de composição por foto (recorte/silhueta vs coração) — null = sem foto. */
   crops: { 1: PhotoCrop | null; 2: PhotoCrop | null }
+  /** URL do CDN Shopee pra foto escolhida mas ainda não confirmada/baixada (hotlink
+   * direto pro preview) — null quando já foi confirmada ou quando não tem foto. */
+  pendingUrls: { 1: string | null; 2: string | null }
 }
 
 export async function getOrderPieces(
@@ -512,6 +515,15 @@ export async function getOrderPieces(
   orderKey: string,
 ): Promise<{ pieces: OrderPiece[]; autoFailed?: string }> {
   return request(`/workbooks/${encodeURIComponent(workbookId)}/pieces/${encodeURIComponent(orderKey)}`)
+}
+
+/** Baixa e salva de verdade todas as fotos pendentes das peças do pedido — chamar ANTES
+ * de marcar o status "Pronto" (botão "Confirmar pedido"). */
+export async function confirmPiecesForOrder(workbookId: string, orderKey: string): Promise<{ ok: boolean }> {
+  return request(
+    `/workbooks/${encodeURIComponent(workbookId)}/pieces/${encodeURIComponent(orderKey)}/confirm`,
+    { method: 'POST' },
+  )
 }
 
 export async function addOrderPiece(workbookId: string, orderKey: string): Promise<{ piece: OrderPiece }> {

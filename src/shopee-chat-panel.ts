@@ -1,6 +1,7 @@
 import {
   addOrderPiece,
   assignPiecePhoto,
+  confirmPiecesForOrder,
   copyPieceFrom,
   createCustomEmoji,
   deleteOrderPiece,
@@ -397,8 +398,10 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
 
     function slotHtml(slot: 1 | 2): string {
       const has = piece.photos[slot]
+      const pendingUrl = piece.pendingUrls[slot]
+      const src = pendingUrl ? escapeHtml(pendingUrl) : `/api/pieces/${piece.id}/photo/${slot}`
       const thumb = has
-        ? `<img class="shopee-chat-piece-thumb" src="/api/pieces/${piece.id}/photo/${slot}" alt="Foto ${slot}" />`
+        ? `<img class="shopee-chat-piece-thumb" src="${src}" alt="Foto ${slot}" referrerpolicy="no-referrer" />`
         : `<div class="shopee-chat-piece-thumb shopee-chat-piece-thumb--empty">Foto ${slot}</div>`
       const removeBtn = has
         ? `<button type="button" class="shopee-chat-piece-photo-remove" data-piece-id="${piece.id}" data-slot="${slot}" title="Remover">×</button>`
@@ -524,9 +527,13 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       radio.addEventListener('change', async () => {
         const pieceId = Number(radio.dataset.pieceId)
         const slot = Number(radio.dataset.slot) as 1 | 2
+        // só troca a classe visual localmente — loadPieces() reconstruiria o card
+        // inteiro (inclusive o <img>), fazendo a foto "recarregar"/piscar à toa.
+        const group = radio.closest('.shopee-chat-piece-crop')
+        group?.querySelectorAll('.shopee-chat-piece-crop-opt').forEach((el) => el.classList.remove('is-selected'))
+        radio.closest('.shopee-chat-piece-crop-opt')?.classList.add('is-selected')
         try {
           await setPiecePhotoCrop(pieceId, slot, radio.value as PhotoCrop)
-          void loadPieces()
         } catch (error) {
           alert((error as Error).message)
         }
@@ -730,11 +737,22 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     btn.addEventListener('click', () => {
       const missing = pieces.filter((p) => !p.photos[1]).length
       const doConfirm = async () => {
-        await patchOrderDelta(order.workbookId, order.orderKey, {
-          cells: [{ col: STATUS_COLUMN_INDEX, value: CONFIRMED_STATUS }],
-        })
-        order.status = CONFIRMED_STATUS
-        void loadPieces()
+        btn.disabled = true
+        btn.textContent = 'Confirmando…'
+        try {
+          // baixa/salva de verdade as fotos pendentes (até aqui eram só hotlink do
+          // CDN da Shopee) ANTES de marcar "Pronto".
+          await confirmPiecesForOrder(order.workbookId, order.orderKey)
+          await patchOrderDelta(order.workbookId, order.orderKey, {
+            cells: [{ col: STATUS_COLUMN_INDEX, value: CONFIRMED_STATUS }],
+          })
+          order.status = CONFIRMED_STATUS
+          closeShopeeChatPanel()
+        } catch (error) {
+          alert(`Falha ao confirmar: ${(error as Error).message}`)
+          btn.disabled = false
+          btn.textContent = '✅ Confirmar pedido'
+        }
       }
       openConfirmDialog({
         title: 'Confirmar pedido',

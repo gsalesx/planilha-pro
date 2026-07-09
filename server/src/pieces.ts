@@ -42,18 +42,32 @@ export interface PieceWithPhotos extends OrderPieceRow {
    * toggle por foto que a extensão Chrome antiga tinha (radiogroup "Recorte"/
    * "Coração"). null = sem foto nesse slot ainda. */
   crops: { 1: PhotoCrop | null; 2: PhotoCrop | null }
+  /** URL do CDN Shopee pra foto escolhida mas AINDA NÃO baixada (hotlink direto —
+   * ver piece_pending_photos). null = já confirmada/baixada, ou sem foto. */
+  pendingUrls: { 1: string | null; 2: string | null }
 }
 
 function attachPhotos(piece: OrderPieceRow): PieceWithPhotos {
-  const rows = db.prepare('SELECT slot, crop FROM piece_images WHERE piece_id = ?').all(piece.id) as Array<{
+  const confirmed = db.prepare('SELECT slot, crop FROM piece_images WHERE piece_id = ?').all(piece.id) as Array<{
     slot: number
     crop: string
   }>
-  const bySlot = new Map(rows.map((r) => [r.slot, r.crop as PhotoCrop]))
+  const pending = db
+    .prepare('SELECT slot, url, crop FROM piece_pending_photos WHERE piece_id = ?')
+    .all(piece.id) as Array<{ slot: number; url: string; crop: string }>
+  const confirmedBySlot = new Map(confirmed.map((r) => [r.slot, r.crop as PhotoCrop]))
+  const pendingBySlot = new Map(pending.map((r) => [r.slot, r]))
+
+  const slot1 = pendingBySlot.get(1)
+  const slot2 = pendingBySlot.get(2)
   return {
     ...piece,
-    photos: { 1: bySlot.has(1), 2: bySlot.has(2) },
-    crops: { 1: bySlot.get(1) ?? null, 2: bySlot.get(2) ?? null },
+    photos: { 1: confirmedBySlot.has(1) || pendingBySlot.has(1), 2: confirmedBySlot.has(2) || pendingBySlot.has(2) },
+    crops: {
+      1: (slot1?.crop as PhotoCrop | undefined) ?? confirmedBySlot.get(1) ?? null,
+      2: (slot2?.crop as PhotoCrop | undefined) ?? confirmedBySlot.get(2) ?? null,
+    },
+    pendingUrls: { 1: slot1?.url ?? null, 2: slot2?.url ?? null },
   }
 }
 
