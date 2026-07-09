@@ -3,6 +3,7 @@ import { copyFileSync, createReadStream, existsSync, unlinkSync, writeFileSync }
 import path from 'node:path'
 
 import { Router } from 'express'
+import multer from 'multer'
 
 import { requireAuth } from '../auth.js'
 import { db, nowMs } from '../db.js'
@@ -19,6 +20,7 @@ import { normalizeGenero, normalizeTamanho, type PecaTipo } from '../sku-rules.j
 
 const router = Router()
 const imagesDir = path.join(env.dataDir, 'images')
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } })
 
 /** Mesma regra do content.js da extensão: tira @resize/@crop/@quality pra pegar a foto original. */
 function shopeeCdnOriginalUrl(url: string): string {
@@ -207,6 +209,62 @@ router.post('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
      ON CONFLICT(piece_id, slot) DO UPDATE SET url = excluded.url, updated_at = excluded.updated_at`,
   ).run(pieceId, slot, fullUrl, now)
   res.json({ ok: true, url: fullUrl, pending: true, updatedAt: now })
+})
+
+/** POST /api/pieces/:id/photo/:slot/upload — multipart "image", pro caso do cliente
+ * mandar um link (Drive etc.) que o operador baixa na mão e sobe aqui, em vez de vir
+ * do chat Shopee. Diferente da rota de URL acima: aqui NÃO fica pendente — já grava
+ * direto em piece_images (o operador já baixou o arquivo de propósito, não faz sentido
+ * adiar). Substitui qualquer pendência/confirmada anterior do mesmo slot. */
+router.post('/pieces/:id/photo/:slot/upload', requireAuth, upload.single('image'), (req, res) => {
+  const pieceId = Number(req.params.id)
+  const slot = Number(req.params.slot)
+  if (!Number.isFinite(pieceId) || pieceId <= 0 || (slot !== 1 && slot !== 2)) {
+    res.status(400).json({ error: 'id/slot inválidos' })
+    return
+  }
+  if (!req.file) {
+    res.status(400).json({ error: 'Envie multipart "image"' })
+    return
+  }
+  if (!req.file.mimetype.startsWith('image/')) {
+    res.status(400).json({ error: 'Arquivo precisa ser imagem' })
+    return
+  }
+  if (!pieceExists(pieceId)) {
+    res.status(404).json({ error: 'Peça não encontrada' })
+    return
+  }
+  const extension =
+    req.file.mimetype === 'image/png' ? '.png' : req.file.mimetype === 'image/webp' ? '.webp' : '.jpg'
+  const fileName = `piece_${pieceId}_s${slot}_${crypto.randomBytes(4).toString('hex')}${extension}`
+  const storagePath = path.join(imagesDir, fileName)
+  writeFileSync(storagePath, req.file.buffer)
+
+  const now = nowMs()
+  const txn = db.transaction(() => {
+    const existing = db
+      .prepare('SELECT storage_path FROM piece_images WHERE piece_id = ? AND slot = ?')
+      .get(pieceId, slot) as { storage_path: string } | undefined
+    if (existing) {
+      try {
+        unlinkSync(existing.storage_path)
+      } catch {
+        // ignore
+      }
+    }
+    db.prepare(
+      `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, crop, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'rosto', ?)
+       ON CONFLICT(piece_id, slot) DO UPDATE SET
+         file_name = excluded.file_name, mime = excluded.mime,
+         storage_path = excluded.storage_path, updated_at = excluded.updated_at`,
+    ).run(pieceId, slot, fileName, req.file!.mimetype, storagePath, now)
+    db.prepare('DELETE FROM piece_pending_photos WHERE piece_id = ? AND slot = ?').run(pieceId, slot)
+  })
+  txn()
+
+  res.json({ ok: true, updatedAt: now })
 })
 
 /**

@@ -14,6 +14,7 @@ import {
   setPiecePhotoCrop,
   updateEmojiAliases,
   updateOrderPiece,
+  uploadPiecePhoto,
   type EmojiCatalogItem,
   type OrderPiece,
   type PecaGenero,
@@ -417,7 +418,13 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       return `
         <div class="shopee-chat-piece-slot">
           ${thumb}
-          <button type="button" class="shopee-chat-piece-photo-pick" data-piece-id="${piece.id}" data-slot="${slot}">Escolher da conversa</button>
+          <div class="shopee-chat-piece-photo-actions">
+            <button type="button" class="shopee-chat-piece-photo-pick" data-piece-id="${piece.id}" data-slot="${slot}">Escolher da conversa</button>
+            <label class="shopee-chat-piece-photo-upload" title="Subir foto de arquivo (ex.: cliente mandou link do Drive)">
+              📤
+              <input type="file" accept="image/*" class="shopee-chat-piece-photo-upload-input" data-piece-id="${piece.id}" data-slot="${slot}" hidden />
+            </label>
+          </div>
           ${has ? cropToggleHtml(slot) : ''}
           ${removeBtn}
         </div>
@@ -537,6 +544,23 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-photo-pick').forEach((btn) => {
       btn.addEventListener('click', () => {
         armSlot(Number(btn.dataset.pieceId), Number(btn.dataset.slot) as 1 | 2)
+      })
+    })
+    piecesEl.querySelectorAll<HTMLInputElement>('.shopee-chat-piece-photo-upload-input').forEach((input) => {
+      input.addEventListener('change', () => {
+        void (async () => {
+          const file = input.files?.[0]
+          if (!file) return
+          const pieceId = Number(input.dataset.pieceId)
+          const slot = Number(input.dataset.slot) as 1 | 2
+          try {
+            await uploadPiecePhoto(pieceId, slot, file)
+            void loadPieces()
+          } catch (error) {
+            alert(`Falha ao subir foto: ${(error as Error).message}`)
+            input.value = ''
+          }
+        })()
       })
     })
     piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-photo-remove').forEach((btn) => {

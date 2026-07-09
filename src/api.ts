@@ -567,6 +567,25 @@ export async function assignPiecePhoto(
   })
 }
 
+/** Sobe uma foto de arquivo local (ex.: cliente mandou link do Drive, operador baixou
+ * na mão e sobe aqui) — diferente de assignPiecePhoto (URL do chat), grava direto,
+ * sem passar pelo estado "pendente". */
+export async function uploadPiecePhoto(pieceId: number, slot: 1 | 2, file: File): Promise<{ ok: boolean }> {
+  const body = new FormData()
+  body.append('image', file, file.name)
+  const response = await fetch(`${API_BASE}/pieces/${pieceId}/photo/${slot}/upload`, {
+    method: 'POST',
+    credentials: 'include',
+    body,
+  })
+  if (response.status === 401) throw new AuthRequiredError()
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({ error: response.statusText }))
+    throw new Error(detail.error ?? `HTTP ${response.status}`)
+  }
+  return (await response.json()) as { ok: boolean }
+}
+
 export async function removePiecePhoto(pieceId: number, slot: 1 | 2): Promise<{ ok: boolean }> {
   return request(`/pieces/${pieceId}/photo/${slot}`, { method: 'DELETE' })
 }
