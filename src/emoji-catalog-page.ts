@@ -114,6 +114,15 @@ async function boot(): Promise<void> {
         </span>`,
       )
       .join('')
+    const hasAliases = item.aliases.length > 0
+    const inlineMap = hasAliases
+      ? ''
+      : `
+        <form class="emoji-catalog-inline-map" data-id="${item.id}">
+          <input type="text" class="emoji-catalog-inline-input" placeholder="colar emoji…" />
+          <button type="submit" class="btn btn-primary">mapear</button>
+        </form>
+      `
     return `
       <article class="emoji-catalog-card" data-id="${item.id}">
         <img class="emoji-catalog-card-img" src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}" />
@@ -122,8 +131,9 @@ async function boot(): Promise<void> {
         <div class="emoji-catalog-card-aliases">
           ${chips || '<span class="emoji-catalog-card-empty">sem atalho mapeado</span>'}
         </div>
+        ${inlineMap}
         <div class="emoji-catalog-card-actions">
-          <button type="button" class="btn emoji-catalog-add-alias" data-id="${item.id}">+ atalho</button>
+          ${hasAliases ? `<button type="button" class="btn emoji-catalog-add-alias" data-id="${item.id}">+ atalho</button>` : ''}
           ${item.source === 'custom' ? `<button type="button" class="btn btn-danger emoji-catalog-delete" data-id="${item.id}">Excluir</button>` : ''}
         </div>
       </article>
@@ -163,6 +173,29 @@ async function boot(): Promise<void> {
             applyFilter()
           },
         })
+      })
+    })
+    gridEl.querySelectorAll<HTMLFormElement>('.emoji-catalog-inline-map').forEach((form) => {
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault()
+        const id = Number(form.dataset.id)
+        const item = catalog.find((i) => i.id === id)
+        const input = form.querySelector<HTMLInputElement>('.emoji-catalog-inline-input')!
+        const value = input.value.trim()
+        if (!item || !value) return
+        const btn = form.querySelector<HTMLButtonElement>('button[type=submit]')!
+        input.disabled = true
+        btn.disabled = true
+        try {
+          const aliases = [...item.aliases, value]
+          const { item: updated } = await updateEmojiAliases(id, aliases)
+          catalog = catalog.map((i) => (i.id === id ? updated : i))
+          applyFilter()
+        } catch (error) {
+          alert((error as Error).message)
+          input.disabled = false
+          btn.disabled = false
+        }
       })
     })
     gridEl.querySelectorAll<HTMLButtonElement>('.emoji-catalog-chip-remove').forEach((btn) => {
