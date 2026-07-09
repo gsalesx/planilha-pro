@@ -2041,6 +2041,32 @@ body.shopee-chat-open {
   color: #fff;
 }
 
+.shopee-chat-piece-crop {
+  display: flex;
+  gap: 4px;
+}
+
+.shopee-chat-piece-crop-opt {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: #64748b;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+.shopee-chat-piece-crop-opt input {
+  margin: 0;
+}
+.shopee-chat-piece-crop-opt.is-selected {
+  border-color: #ee4d2d;
+  color: #ee4d2d;
+  font-weight: 700;
+  background: #fff7ed;
+}
+
 .shopee-chat-piece-photo-remove {
   position: absolute;
   top: 4px;

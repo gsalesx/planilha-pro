@@ -488,6 +488,8 @@ export type PecaTipo = 'CAMISOLA' | 'SHORT' | 'CONJ'
 export type PecaGenero = 'MASCULINO' | 'FEMININO'
 export type PecaTamanho = 'P' | 'M' | 'G' | 'GG'
 
+export type PhotoCrop = 'rosto' | 'coracao'
+
 export interface OrderPiece {
   id: number
   seq: number
@@ -501,6 +503,8 @@ export interface OrderPiece {
   nota: string
   source: 'auto' | 'manual'
   photos: { 1: boolean; 2: boolean }
+  /** Tipo de composição por foto (recorte/silhueta vs coração) — null = sem foto. */
+  crops: { 1: PhotoCrop | null; 2: PhotoCrop | null }
 }
 
 export async function getOrderPieces(
@@ -553,6 +557,19 @@ export async function assignPiecePhoto(
 
 export async function removePiecePhoto(pieceId: number, slot: 1 | 2): Promise<{ ok: boolean }> {
   return request(`/pieces/${pieceId}/photo/${slot}`, { method: 'DELETE' })
+}
+
+/** Troca só o tipo de composição (recorte/silhueta vs coração) de uma foto já escolhida. */
+export async function setPiecePhotoCrop(
+  pieceId: number,
+  slot: 1 | 2,
+  crop: PhotoCrop,
+): Promise<{ ok: boolean; crop: PhotoCrop }> {
+  return request(`/pieces/${pieceId}/photo/${slot}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ crop }),
+  })
 }
 
 /** Copia fotos (slots 1/2) + emoji1/emoji2 de `sourceId` pra `pieceId` — não mexe em

@@ -10,6 +10,7 @@ import {
   patchOrderDelta,
   removePiecePhoto,
   sendShopeeChatMessage,
+  setPiecePhotoCrop,
   updateEmojiAliases,
   updateOrderPiece,
   type EmojiCatalogItem,
@@ -17,6 +18,7 @@ import {
   type PecaGenero,
   type PecaTamanho,
   type PecaTipo,
+  type PhotoCrop,
   type ShopeeChatMessage,
 } from './api'
 import { openConfirmDialog } from './dialog'
@@ -377,6 +379,22 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       (t) => `<option value="${t}"${piece.tamanho === t ? ' selected' : ''}>${t}</option>`,
     ).join('')
 
+    function cropToggleHtml(slot: 1 | 2): string {
+      const crop = piece.crops[slot] ?? 'rosto'
+      const opt = (value: PhotoCrop, label: string) => `
+        <label class="shopee-chat-piece-crop-opt${crop === value ? ' is-selected' : ''}">
+          <input type="radio" name="crop-${piece.id}-${slot}" value="${value}"
+                 data-piece-id="${piece.id}" data-slot="${slot}" ${crop === value ? 'checked' : ''} />
+          ${label}
+        </label>`
+      return `
+        <div class="shopee-chat-piece-crop" role="radiogroup" aria-label="Recorte">
+          ${opt('rosto', 'Recorte')}
+          ${opt('coracao', 'Coração')}
+        </div>
+      `
+    }
+
     function slotHtml(slot: 1 | 2): string {
       const has = piece.photos[slot]
       const thumb = has
@@ -389,6 +407,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         <div class="shopee-chat-piece-slot">
           ${thumb}
           <button type="button" class="shopee-chat-piece-photo-pick" data-piece-id="${piece.id}" data-slot="${slot}">Escolher da conversa</button>
+          ${has ? cropToggleHtml(slot) : ''}
           ${removeBtn}
         </div>
       `
@@ -499,6 +518,18 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       btn.addEventListener('click', async () => {
         await removePiecePhoto(Number(btn.dataset.pieceId), Number(btn.dataset.slot) as 1 | 2)
         void loadPieces()
+      })
+    })
+    piecesEl.querySelectorAll<HTMLInputElement>('.shopee-chat-piece-crop input[type=radio]').forEach((radio) => {
+      radio.addEventListener('change', async () => {
+        const pieceId = Number(radio.dataset.pieceId)
+        const slot = Number(radio.dataset.slot) as 1 | 2
+        try {
+          await setPiecePhotoCrop(pieceId, slot, radio.value as PhotoCrop)
+          void loadPieces()
+        } catch (error) {
+          alert((error as Error).message)
+        }
       })
     })
     piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-copy-first').forEach((btn) => {

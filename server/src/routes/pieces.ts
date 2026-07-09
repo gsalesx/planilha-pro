@@ -223,6 +223,31 @@ router.post('/pieces/:id/photo/:slot', requireAuth, async (req, res) => {
   }
 })
 
+/** PATCH /api/pieces/:id/photo/:slot — { crop: 'rosto'|'coracao' }. Troca só o TIPO de
+ * composição da foto já escolhida (recorte/silhueta vs coração), sem reenviar a imagem —
+ * mesmo toggle por foto que a extensão Chrome antiga tinha. */
+router.patch('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
+  const pieceId = Number(req.params.id)
+  const slot = Number(req.params.slot)
+  const crop = req.body?.crop
+  if (!Number.isFinite(pieceId) || pieceId <= 0 || (slot !== 1 && slot !== 2)) {
+    res.status(400).json({ error: 'id/slot inválidos' })
+    return
+  }
+  if (crop !== 'rosto' && crop !== 'coracao') {
+    res.status(400).json({ error: "crop precisa ser 'rosto' ou 'coracao'" })
+    return
+  }
+  const result = db
+    .prepare('UPDATE piece_images SET crop = ?, updated_at = ? WHERE piece_id = ? AND slot = ?')
+    .run(crop, nowMs(), pieceId, slot)
+  if (result.changes === 0) {
+    res.status(404).json({ error: 'Foto não encontrada nesse slot' })
+    return
+  }
+  res.json({ ok: true, crop })
+})
+
 /** DELETE /api/pieces/:id/photo/:slot */
 router.delete('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
   const pieceId = Number(req.params.id)

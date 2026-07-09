@@ -336,6 +336,7 @@ db.exec(`
     file_name TEXT NOT NULL,
     mime TEXT NOT NULL DEFAULT 'image/jpeg',
     storage_path TEXT NOT NULL,
+    crop TEXT NOT NULL DEFAULT 'rosto',
     updated_at INTEGER NOT NULL,
     UNIQUE (piece_id, slot),
     FOREIGN KEY (piece_id) REFERENCES order_pieces(id) ON DELETE CASCADE
@@ -367,6 +368,16 @@ db.exec(`
   const cols = db.prepare("PRAGMA table_info(order_pieces)").all() as Array<{ name: string }>
   if (!cols.some((c) => c.name === 'nota')) {
     db.exec("ALTER TABLE order_pieces ADD COLUMN nota TEXT NOT NULL DEFAULT ''")
+  }
+}
+
+// Migration idempotente: garante piece_images.crop ('rosto'=recorte | 'coracao') em
+// DBs criados antes dessa coluna existir — mesmo toggle por foto que a extensão Chrome
+// antiga tinha (radiogroup "Recorte"/"Coração"), ausente no picker novo até aqui.
+{
+  const cols = db.prepare("PRAGMA table_info(piece_images)").all() as Array<{ name: string }>
+  if (!cols.some((c) => c.name === 'crop')) {
+    db.exec("ALTER TABLE piece_images ADD COLUMN crop TEXT NOT NULL DEFAULT 'rosto'")
   }
 }
 

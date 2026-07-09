@@ -34,16 +34,27 @@ export interface OrderPieceRow {
   updated_at: number
 }
 
+export type PhotoCrop = 'rosto' | 'coracao'
+
 export interface PieceWithPhotos extends OrderPieceRow {
   photos: { 1: boolean; 2: boolean }
+  /** Tipo de composição por foto — 'rosto' (recorte/silhueta) | 'coracao'. Mesmo
+   * toggle por foto que a extensão Chrome antiga tinha (radiogroup "Recorte"/
+   * "Coração"). null = sem foto nesse slot ainda. */
+  crops: { 1: PhotoCrop | null; 2: PhotoCrop | null }
 }
 
 function attachPhotos(piece: OrderPieceRow): PieceWithPhotos {
-  const rows = db.prepare('SELECT slot FROM piece_images WHERE piece_id = ?').all(piece.id) as Array<{
+  const rows = db.prepare('SELECT slot, crop FROM piece_images WHERE piece_id = ?').all(piece.id) as Array<{
     slot: number
+    crop: string
   }>
-  const slots = new Set(rows.map((r) => r.slot))
-  return { ...piece, photos: { 1: slots.has(1), 2: slots.has(2) } }
+  const bySlot = new Map(rows.map((r) => [r.slot, r.crop as PhotoCrop]))
+  return {
+    ...piece,
+    photos: { 1: bySlot.has(1), 2: bySlot.has(2) },
+    crops: { 1: bySlot.get(1) ?? null, 2: bySlot.get(2) ?? null },
+  }
 }
 
 export function listPieces(workbookId: string, orderKey: string): PieceWithPhotos[] {
