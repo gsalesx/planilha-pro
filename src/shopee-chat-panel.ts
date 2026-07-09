@@ -161,9 +161,11 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           </div>
         </div>
       </section>
-      <section class="shopee-chat-pieces" id="shopee-chat-pieces">
-        <div class="shopee-chat-pieces-loading">Carregando peças…</div>
-      </section>
+      <button type="button" class="shopee-chat-pieces-toggle" id="shopee-chat-pieces-toggle">
+        <span aria-hidden="true">🧩</span>
+        <span id="shopee-chat-pieces-toggle-label">Carregando peças…</span>
+        <span class="shopee-chat-pieces-toggle-chevron" aria-hidden="true">›</span>
+      </button>
       <div class="shopee-chat-messages" id="shopee-chat-messages">
         <div class="shopee-chat-loading">
           <div class="shopee-chat-spinner"></div>
@@ -174,6 +176,15 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         <textarea class="shopee-chat-input" rows="2" placeholder="Escreva uma mensagem…" maxlength="2000"></textarea>
         <button type="button" class="btn btn-primary shopee-chat-send" disabled>Enviar</button>
       </footer>
+      <div class="shopee-chat-pieces-overlay" id="shopee-chat-pieces-overlay">
+        <header class="shopee-chat-pieces-overlay-header">
+          <span>🧩 Peças da arte</span>
+          <button type="button" class="shopee-chat-pieces-close" id="shopee-chat-pieces-close" aria-label="Fechar">×</button>
+        </header>
+        <div class="shopee-chat-pieces-overlay-body" id="shopee-chat-pieces">
+          <div class="shopee-chat-pieces-loading">Carregando peças…</div>
+        </div>
+      </div>
     </aside>
   `
   document.body.appendChild(overlay)
@@ -183,12 +194,25 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   const inputEl = overlay.querySelector<HTMLTextAreaElement>('.shopee-chat-input')!
   const sendBtn = overlay.querySelector<HTMLButtonElement>('.shopee-chat-send')!
   const piecesEl = overlay.querySelector<HTMLElement>('#shopee-chat-pieces')!
+  const piecesOverlayEl = overlay.querySelector<HTMLElement>('#shopee-chat-pieces-overlay')!
+  const piecesToggleBtn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-pieces-toggle')!
+  const piecesToggleLabel = overlay.querySelector<HTMLElement>('#shopee-chat-pieces-toggle-label')!
+  const piecesCloseBtn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-pieces-close')!
+
+  piecesToggleBtn.addEventListener('click', () => piecesOverlayEl.classList.add('open'))
+  piecesCloseBtn.addEventListener('click', () => {
+    armed = null
+    messagesEl.classList.remove('shopee-chat-picking')
+    piecesOverlayEl.classList.remove('open')
+  })
 
   let armed: { pieceId: number; slot: 1 | 2 } | null = null
 
   function armSlot(pieceId: number, slot: 1 | 2): void {
     armed = armed && armed.pieceId === pieceId && armed.slot === slot ? null : { pieceId, slot }
     messagesEl.classList.toggle('shopee-chat-picking', armed != null)
+    // Fecha a gaveta de peças pra liberar o chat na hora de clicar na foto certa.
+    if (armed) piecesOverlayEl.classList.remove('open')
     renderPieceButtons()
   }
 
@@ -319,6 +343,20 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     })
   }
 
+  function updatePiecesToggleLabel(data: { pieces: OrderPiece[]; autoFailed?: string }): void {
+    const missingPhotos = data.pieces.filter((p) => !p.photos[1] && !p.photos[2]).length
+    if (data.autoFailed && data.pieces.length === 0) {
+      piecesToggleLabel.textContent = 'Peça pendente — ajustar na mão'
+      piecesToggleBtn.classList.add('shopee-chat-pieces-toggle--warn')
+    } else if (missingPhotos > 0) {
+      piecesToggleLabel.textContent = `${data.pieces.length} peça(s) — ${missingPhotos} sem foto`
+      piecesToggleBtn.classList.add('shopee-chat-pieces-toggle--warn')
+    } else {
+      piecesToggleLabel.textContent = `${data.pieces.length} peça(s) montada(s)`
+      piecesToggleBtn.classList.remove('shopee-chat-pieces-toggle--warn')
+    }
+  }
+
   async function loadPieces(): Promise<void> {
     try {
       const data = await getOrderPieces(order.workbookId, order.orderKey)
@@ -328,7 +366,6 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         : ''
       piecesEl.innerHTML = `
         <div class="shopee-chat-pieces-header">
-          <span>Peças da arte</span>
           <button type="button" class="btn shopee-chat-piece-add" id="shopee-chat-piece-add">+ Adicionar peça</button>
         </div>
         ${failedHint}
@@ -340,8 +377,10 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       })
       bindPieceCards()
       renderPieceButtons()
+      updatePiecesToggleLabel(data)
     } catch (error) {
       piecesEl.innerHTML = `<div class="shopee-chat-error-inline">Falha ao carregar peças: ${escapeHtml((error as Error).message)}</div>`
+      piecesToggleLabel.textContent = 'Peças da arte'
     }
   }
 
@@ -357,6 +396,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     messagesEl.classList.remove('shopee-chat-picking')
     void assignPiecePhoto(pieceId, slot, url)
       .then(() => loadPieces())
+      .then(() => piecesOverlayEl.classList.add('open'))
       .catch((error) => {
         alert(`Falha ao usar essa foto: ${(error as Error).message}`)
       })

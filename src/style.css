@@ -1447,6 +1447,7 @@ body.shopee-chat-open {
   animation: shopee-chat-fade-in 160ms ease;
 }
 .shopee-chat-panel {
+  position: relative;
   width: min(600px, 100vw);
   height: 100%;
   background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
@@ -1454,6 +1455,7 @@ body.shopee-chat-open {
   display: flex;
   flex-direction: column;
   animation: shopee-chat-slide-in 220ms ease;
+  overflow: hidden;
 }
 @keyframes shopee-chat-fade-in {
   from { opacity: 0; }
@@ -1736,12 +1738,83 @@ body.shopee-chat-open {
    Peças da arte (picker dentro do chat — Fase 2 migração SKU→peça)
    =========================================================== */
 
-.shopee-chat-pieces {
-  margin: 12px 16px 0;
-  padding: 12px 14px;
-  border-radius: 12px;
+/* Barra compacta — abre a gaveta de peças por cima do chat (não empurra o layout). */
+.shopee-chat-pieces-toggle {
+  margin: 10px 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: 10px;
   border: 1px solid #e2e8f0;
   background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  flex-shrink: 0;
+}
+.shopee-chat-pieces-toggle:hover {
+  background: #f8fafc;
+}
+.shopee-chat-pieces-toggle--warn {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #9a4f00;
+}
+.shopee-chat-pieces-toggle-chevron {
+  margin-left: auto;
+  color: #94a3b8;
+}
+
+/* Gaveta: cobre o painel inteiro (mensagens+composer) quando aberta, chat some por trás. */
+.shopee-chat-pieces-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 200ms ease;
+}
+.shopee-chat-pieces-overlay.open {
+  transform: translateX(0);
+}
+.shopee-chat-pieces-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px;
+  border-bottom: 1px solid #e2e8f0;
+  font-weight: 700;
+  font-size: 15px;
+  color: #0f172a;
+  flex-shrink: 0;
+}
+.shopee-chat-pieces-close {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.shopee-chat-pieces-close:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+.shopee-chat-pieces-overlay-body {
+  flex: 1;
+  overflow: auto;
+  padding: 14px 16px 20px;
 }
 
 .shopee-chat-pieces-loading {
@@ -1754,13 +1827,8 @@ body.shopee-chat-open {
 .shopee-chat-pieces-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #64748b;
   margin-bottom: 10px;
 }
 
