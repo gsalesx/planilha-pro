@@ -152,18 +152,17 @@ async function loadEmojiCatalog(): Promise<void> {
 /** Os 6 da extensão Chrome antiga (❤️ 🥰 😍 🤍 💋 😘) — eram os mais usados,
  * por isso entram primeiro nos favoritos (mesma ordem do seed do backend,
  * server/src/emoji-catalog.ts). */
-const PRIORITY_EMOJI_NAMES = ['CORAÇÃO', 'CARA APAIXONADA', 'OLHOS CORAÇÃO', 'CORAÇÃO BRANCO', 'BEIJO', 'MANDANDO BEIJO']
+const PRIORITY_EMOJI_NAMES = ['CORAÇÃO', 'BEIJO', 'CARA APAIXONADA', 'OLHOS CORAÇÃO', 'CORAÇÃO BRANCO', 'MANDANDO BEIJO']
 
-function pickFavorites(max: number): EmojiCatalogItem[] {
-  const aliased = emojiCatalog.filter((item) => item.aliases.length > 0)
-  const byName = new Map(aliased.map((item) => [item.name, item]))
-  const priority = PRIORITY_EMOJI_NAMES.map((name) => byName.get(name)).filter((i): i is EmojiCatalogItem => !!i)
-  const rest = aliased.filter((item) => !PRIORITY_EMOJI_NAMES.includes(item.name))
-  return [...priority, ...rest].slice(0, max)
+/** Lista FIXA — só esses 6 (mesmos da extensão Chrome antiga), não cresce com o que for
+ * mapeado depois pela galeria. Emoji fora dessa lista só aparece via colar/nome ou 🖼 todos. */
+function pickFavorites(): EmojiCatalogItem[] {
+  const byName = new Map(emojiCatalog.map((item) => [item.name, item]))
+  return PRIORITY_EMOJI_NAMES.map((name) => byName.get(name)).filter((i): i is EmojiCatalogItem => !!i)
 }
 
 function emojiPickerHtml(pieceId: number, slot: 1 | 2, current: string): string {
-  const favorites = pickFavorites(10)
+  const favorites = pickFavorites()
   const resolved = catalogItemForCurrent(current)
   const currentThumb = resolved
     ? `<img class="emoji-picker-current-img" src="${escapeHtml(resolved.imageUrl)}" alt="${escapeHtml(resolved.name)}" title="${escapeHtml(resolved.name)}" />`

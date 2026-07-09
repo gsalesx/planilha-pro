@@ -60,6 +60,11 @@ function nextSeq(workbookId: string, orderKey: string): number {
   return row.m + 1
 }
 
+/** Peça nova já nasce com CORAÇÃO nos 2 emojis — é o pedido mais comum de longe, evita
+ * o operador ter que clicar toda vez pro caso padrão (ver src/shopee-chat-panel.ts,
+ * favoritos fixos do picker). */
+const DEFAULT_EMOJI_NAME = 'CORAÇÃO'
+
 function insertPiece(
   workbookId: string,
   orderKey: string,
@@ -74,9 +79,9 @@ function insertPiece(
   const info = db
     .prepare(
       `INSERT INTO order_pieces (workbook_id, order_key, seq, tipo, genero, tamanho, molde, emoji1, emoji2, cor, nota, source, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, '', '', '#000000', '', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '#000000', '', ?, ?)`,
     )
-    .run(workbookId, orderKey, seq, tipo, genero, tamanho, molde, source, now)
+    .run(workbookId, orderKey, seq, tipo, genero, tamanho, molde, DEFAULT_EMOJI_NAME, DEFAULT_EMOJI_NAME, source, now)
   return {
     id: Number(info.lastInsertRowid),
     workbook_id: workbookId,
@@ -86,8 +91,8 @@ function insertPiece(
     genero,
     tamanho,
     molde,
-    emoji1: '',
-    emoji2: '',
+    emoji1: DEFAULT_EMOJI_NAME,
+    emoji2: DEFAULT_EMOJI_NAME,
     cor: '#000000',
     nota: '',
     source,
