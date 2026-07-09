@@ -63,16 +63,21 @@ docker compose up -d --build
 cd server && ./node_modules/.bin/tsc --noEmit
 ```
 
-## Migração SKU → peça (Fase 1, 2026-07-08)
+## Migração SKU → peça (Fases 1+2 implementadas, 2026-07-09)
 
 Iniciativa em andamento pra tirar o webchat nativo da Shopee + Google Drive do meio da criação das artes (repo `Criador de artes`), usando o chat e o storage de imagem que este app já tem. Ver plano completo/fases futuras na memória do repo Criador de artes (`planilha-pro-migracao-sku-pecas-2026-07-08`).
 
-**Fase 1 (implementada)** — motor de parsing SKU→peça, hardcoded (sem painel de admin, por pedido do usuário):
+**Fase 1** — motor de parsing SKU→peça, hardcoded (sem painel de admin, por pedido do usuário):
 - `server/src/sku-rules.ts` — `resolveFamily(sku)` casa texto do SKU contra 7 famílias conhecidas (CAMISOLA, CAMISOLA+SHORT, CAMISOLA+CONJUNTO, SHORT, CONJUNTO UNITARIO, CONJUNTO COMPLETO CASAL, SHORT CASAL); `parseOrderPieces(sku, modelName)` decompõe o campo "Modelo" (col C, variação Shopee) em 1-2 peças com `{tipo, genero?, tamanho, molde}` — `molde` já no formato de pasta usado em `Moldes/*.psd` do outro repo. `SHORT CASAL` ainda não tem formato padronizado (usuário vai definir depois) — sempre vira pendência.
 - Tabela `parse_issues` (`server/src/db.ts`) + rotas `server/src/routes/parse-issues.ts` (`POST /api/parse-issues/scan`, `GET /api/parse-issues`, `POST /api/parse-issues/:id/resolve`) + página `parse-issues.html`/`src/parse-issues.ts` — lista pedidos cujo SKU/Modelo não bateu com nenhuma família (SKU não reconhecido, formato errado, ou família `SHORT CASAL`), pra revisão manual.
-- Não mexe em nada do fluxo de Drive/extensão Chrome — aditivo, só dentro deste app.
 
-**Fases futuras (não implementadas ainda):** picker de fotos dentro de `shopee-chat-panel.ts` (checkboxes + peças pré-preenchidas, override manual) com storage de foto/instrução por peça; depois um endpoint servindo peças+fotos pro pipeline Python (`Criador de artes/scripts/planilha_pecas.py`), substituindo o download via rclone/Drive. **Quando isso acontecer, o sistema de Drive deve ser desativado, não excluído** (usuário pode precisar dele de novo).
+**Fase 2** — picker de peças embutido no chat (`src/shopee-chat-panel.ts`):
+- `GET/POST /api/workbooks/:wb/pieces/:orderKey` (`server/src/pieces.ts` + `server/src/routes/pieces.ts`) — `ensurePieces` auto-deriva peças via `parseOrderPieces` na 1ª abertura do chat e persiste em `order_pieces`; reaberturas seguintes retornam o que já foi salvo (edição manual não é sobrescrita). Override manual de tipo/genero/tamanho/emoji1/emoji2/cor por peça.
+- Fotos: `POST/GET/DELETE /api/pieces/:id/photo/:slot` — servidor baixa a foto direto da URL do chat Shopee (`shopeeCdnOriginalUrl` tira `@resize/@crop` pra pegar a original) e guarda em disco (tabela `piece_images`, reaproveita `env.dataDir/images`).
+- **UX (2026-07-09, feedback direto do usuário):** a seção de peças NÃO fica expandida por padrão dentro do painel de chat (header + card do pedido já ocupam bastante altura) — é uma barra compacta que abre uma **gaveta deslizante por cima do chat** (`.shopee-chat-pieces-overlay`, `position:absolute` + `transform: translateX`). Ao clicar "Escolher da conversa" a gaveta fecha sozinha pra liberar a visão das fotos; reabre sozinha depois de atribuir. Lição: ao adicionar UI nova a um painel/modal já denso, o padrão aqui é "recolhido por padrão, expande sob demanda" — não empurrar conteúdo existente pra baixo.
+- **Gotcha de deploy:** toda página HTML nova (novo entry do Vite em `vite.config.ts`) também precisa ser adicionada na linha `COPY index.html shopee-test.html shopee-products.html ...` do `Dockerfile` (stage `client-build`) — o Dockerfile só copia arquivos explicitamente listados, não a pasta toda. Esquecer isso faz o `vite build` falhar dentro do Docker (não local!) e o deploy vira "error" no Dokploy **sem sintoma visível pro usuário** (o container antigo continua rodando normalmente). Sempre conferir `deployment-all`/status do deploy após um `application-deploy`, não assumir sucesso.
+
+**Fase 3 (não implementada ainda):** endpoint servindo peças+fotos pro pipeline Python (`Criador de artes/scripts/planilha_pecas.py`), substituindo o download via rclone/Drive em `pipeline_prep.py`. **Quando isso acontecer, o sistema de Drive deve ser desativado, não excluído** (usuário pode precisar dele de novo).
 
 ## Convenções
 - Não criar `Data` como coluna (usuário rejeitou) — data fica no campo `sheet_date` da row, mostrada via `<select>` no header
