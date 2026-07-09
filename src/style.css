@@ -1843,10 +1843,37 @@ body.shopee-chat-open {
   background: #1e293b;
 }
 
-.shopee-chat-piece-nota {
+.shopee-chat-piece-bottom-row {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shopee-chat-piece-nota-toggle {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  width: 26px;
+  height: 26px;
+  line-height: 1;
+  opacity: 0.5;
+}
+.shopee-chat-piece-nota-toggle.has-nota {
+  opacity: 1;
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.shopee-chat-piece-nota {
+  display: none;
   flex-direction: column;
   gap: 3px;
+}
+.shopee-chat-piece-nota.is-open {
+  display: flex;
 }
 
 .shopee-chat-piece-nota label {

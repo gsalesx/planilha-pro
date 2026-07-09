@@ -65,8 +65,10 @@ app.use('/api', parseIssuesRouter)
 app.use('/api', piecesRouter)
 app.use('/api', emojiCatalogRouter)
 
-// imagens builtin do catálogo de emoji (server/assets/emojis, servido em build-time)
-app.use('/emoji-assets', requireAuth, express.static(ASSETS_DIR))
+// imagens builtin do catálogo de emoji (server/assets/emojis, servido em build-time) —
+// cache longo no navegador: são bytes fixos (baked na imagem Docker), só a LISTA de
+// nomes/atalhos é que precisa vir sempre fresca (ver loadEmojiCatalog no client).
+app.use('/emoji-assets', requireAuth, express.static(ASSETS_DIR, { maxAge: '7d', immutable: true }))
 
 // healthcheck público
 app.get('/healthz', (_req, res) => res.json({ ok: true }))

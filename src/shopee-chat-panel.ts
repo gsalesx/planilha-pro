@@ -103,12 +103,6 @@ function escapeHtml(text: string): string {
    =========================================================== */
 
 let emojiCatalog: EmojiCatalogItem[] = []
-let emojiCatalogLoadedAt = 0
-/** Catálogo (~110 itens) muda pouco — cachear evita recarregar tudo toda vez que o
- * chat abre pra um cliente novo. Mutação local (mapear atalho, subir customizado)
- * já atualiza `emojiCatalog` direto, então o cache não fica desatualizado por isso;
- * o TTL só cobre o caso de outra aba/pessoa ter mudado o catálogo nesse meio-tempo. */
-const EMOJI_CATALOG_TTL_MS = 10 * 60 * 1000
 
 const LOOKS_LIKE_EMOJI_RE =
   /[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{2300}-\u{23FF}]/u
@@ -154,12 +148,13 @@ function catalogItemForCurrent(current: string): EmojiCatalogItem | null {
 }
 
 async function loadEmojiCatalog(): Promise<void> {
-  const fresh = emojiCatalog.length > 0 && Date.now() - emojiCatalogLoadedAt < EMOJI_CATALOG_TTL_MS
-  if (fresh) return
+  // Lista (nomes/atalhos) sempre busca fresca — cachear isso arrisca mostrar
+  // mapeamento desatualizado/conflitante se outra sessão mudou algo nesse meio-tempo.
+  // As IMAGENS em si (bytes dos PNGs) são cacheadas pelo navegador via cache-control
+  // (ver /emoji-assets e /api/emoji-catalog/custom no servidor).
   try {
     const data = await getEmojiCatalog()
     emojiCatalog = data.items
-    emojiCatalogLoadedAt = Date.now()
   } catch (error) {
     console.warn('[emoji-catalog] falha ao carregar', error)
   }
@@ -454,8 +449,13 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           ${emojiPickerHtml(piece.id, 1, piece.emoji1)}
           ${emojiPickerHtml(piece.id, 2, piece.emoji2)}
         </div>
-        ${colorPickerHtml(piece.id, piece.cor || '#000000')}
-        <div class="shopee-chat-piece-nota">
+        <div class="shopee-chat-piece-bottom-row">
+          ${colorPickerHtml(piece.id, piece.cor || '#000000')}
+          <button type="button" class="shopee-chat-piece-nota-toggle${piece.nota?.trim() ? ' has-nota' : ''}"
+                  data-piece-id="${piece.id}"
+                  title="${piece.nota?.trim() ? 'Ver/editar observação' : 'Adicionar observação (raro)'}">📝</button>
+        </div>
+        <div class="shopee-chat-piece-nota${piece.nota?.trim() ? ' is-open' : ''}" data-piece-id="${piece.id}">
           <label for="nota-${piece.id}">📝 Observação da peça</label>
           <textarea id="nota-${piece.id}" class="shopee-chat-piece-nota-input" data-piece-id="${piece.id}"
                     rows="2" placeholder="ex.: usar só a parte de cima dessa foto, cliente pediu…"
@@ -516,6 +516,15 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       inp.addEventListener('change', () => {
         const pieceId = Number(inp.dataset.pieceId)
         void updateOrderPiece(pieceId, { cor: inp.value }).then(() => loadPieces())
+      })
+    })
+    piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-nota-toggle').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const pieceId = btn.dataset.pieceId
+        const box = piecesEl.querySelector<HTMLElement>(`.shopee-chat-piece-nota[data-piece-id="${pieceId}"]`)
+        if (!box) return
+        box.classList.toggle('is-open')
+        if (box.classList.contains('is-open')) box.querySelector('textarea')?.focus()
       })
     })
     piecesEl.querySelectorAll<HTMLTextAreaElement>('.shopee-chat-piece-nota-input').forEach((ta) => {

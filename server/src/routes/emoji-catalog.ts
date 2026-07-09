@@ -98,7 +98,9 @@ router.get('/emoji-catalog/custom/:fileName', requireAuth, (req, res) => {
     res.status(404).end()
     return
   }
-  res.setHeader('cache-control', 'private, max-age=86400')
+  // fileName tem hash aleatório (crypto.randomBytes) — mesmo nome NUNCA muda de
+  // conteúdo, pode cachear agressivo igual ao builtin.
+  res.setHeader('cache-control', 'private, max-age=604800, immutable')
   createReadStream(storagePath).pipe(res)
 })
 
