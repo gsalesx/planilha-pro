@@ -107,7 +107,7 @@ function buildShell() {
           <button type="button" class="btn btn-primary" id="shopee-link-conversations-btn" hidden title="Cruza username da col E com to_name do chat Shopee e grava conversation_id (não altera a planilha)">
             💬 Vincular conversas Shopee
           </button>
-          <button type="button" class="btn" id="shopee-sync-now-btn" hidden title="Roda agora a mesma sincronização que acontece sozinha a cada 8h (sem esperar)">
+          <button type="button" class="btn" id="shopee-sync-now-btn" hidden title="Roda agora a mesma sincronização que acontece sozinha a cada 2h (sem esperar)">
             🔄 Sincronizar agora
           </button>
           <button class="btn" id="logout-btn" title="Sair">Sair</button>

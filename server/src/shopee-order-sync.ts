@@ -68,7 +68,7 @@ function formatSheetDate(unixSec: number): string {
 
 /**
  * Aba própria pra pedidos sem ship_by_date resolvido ainda — fica visível no seletor de data
- * (em vez de sumir com sheet_date vazio) e é reconsultada a cada poll de 8h (resyncPendingDateOrders).
+ * (em vez de sumir com sheet_date vazio) e é reconsultada a cada poll de 2h (resyncPendingDateOrders).
  */
 export const SHOPEE_PENDING_DATE_LABEL = 'Sem data de envio'
 
@@ -350,7 +350,7 @@ async function collectOrderSns(
   }
 }
 
-/** Janela de busca — 20h com poll a cada 8h garante sobreposição se uma execução falhar. */
+/** Janela de busca — 20h com poll a cada 2h garante sobreposição ampla se uma execução falhar. */
 export const SHOPEE_POLL_LOOKBACK_HOURS = 20
 
 /** Busca detalhe em lotes de 50 e faz upsert — usado por todas as rotinas de sync abaixo. */
@@ -406,7 +406,7 @@ function findOrderSnsPendingDate(): string[] {
 
 /**
  * Reconsulta pedidos presos na aba "Sem data de envio" (ship_by_date ainda não calculado
- * pela Shopee na 1ª importação) — roda junto do poll de 8h, sem depender da janela de tempo,
+ * pela Shopee na 1ª importação) — roda junto do poll de 2h, sem depender da janela de tempo,
  * já que um pedido pode ficar dias parado antes do prazo de envio aparecer. Também cobre
  * `sheet_date=''` (pedidos que caíram antes do fix, sem o rótulo novo) — autocorrige sozinho.
  */

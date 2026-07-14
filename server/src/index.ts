@@ -104,12 +104,12 @@ ensureEmojiCatalogSeeded()
 
 /**
  * Poll pedidos recentes — única via de importação enquanto o push está desativado
- * (ver PUSH_PROCESSING_ENABLED em shopee-push-process.ts). Além da janela de 20h, reconsulta
+ * (ver PUSH_PROCESSING_ENABLED em shopee-push-process.ts). Além da janela de lookback, reconsulta
  * os pedidos presos na aba "Sem data de envio" (resyncPendingDateOrders) e reconfere a data de
  * todo pedido em READY_TO_SHIP (resyncReadyToShipDates) — cobre data errada antiga e o caso da
  * Shopee empurrar o ship_by_date +1 dia depois da 1ª importação.
  */
-const SHOPEE_POLL_MS = 8 * 60 * 60 * 1000
+const SHOPEE_POLL_MS = 2 * 60 * 60 * 1000
 let shopeePollBusy = false
 
 async function runShopeeRecentPoll(): Promise<void> {

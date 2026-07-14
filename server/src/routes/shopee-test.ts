@@ -172,7 +172,7 @@ router.post('/shopee/sync-workbook', requireAuth, async (req, res) => {
 })
 
 /**
- * POST /api/shopee/sync-now — mesma rotina do poll de 8h (janela de 20h + reconsulta dos
+ * POST /api/shopee/sync-now — mesma rotina do poll de 2h (janela de 20h + reconsulta dos
  * pedidos "Sem data de envio" + reconferência de data de todo READY_TO_SHIP), disparada na
  * hora pelo botão da UI. Push está desativado.
  */
