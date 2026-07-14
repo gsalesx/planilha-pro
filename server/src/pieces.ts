@@ -200,7 +200,13 @@ function shouldRebuildForQty(
   if (qty <= 1) return false
   if (!parsed.ok) return false
   if (!existing.every((p) => p.source === 'auto')) return false
-  if (existing.some((p) => p.photos[1] || p.photos[2])) return false
+  // Só bloqueia se já baixou foto de verdade (Confirmar pedido). Foto pendente
+  // do chat ainda pode re-derivar — o operador não fechou a separação.
+  const hasConfirmed = existing.some(
+    (p) =>
+      (Boolean(p.photos[1]) && !p.pendingUrls[1]) || (Boolean(p.photos[2]) && !p.pendingUrls[2]),
+  )
+  if (hasConfirmed) return false
   const expected = parsed.pieces.length * qty
   return existing.length < expected
 }
