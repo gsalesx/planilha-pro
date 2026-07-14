@@ -77,6 +77,9 @@ async function boot(): Promise<void> {
         <a href="/" class="shopee-test-back">← Planilhas</a>
         <h1>Catálogo de emojis</h1>
         <div class="emoji-catalog-toolbar">
+          <button type="button" class="btn btn-primary" id="btn-open-mold" title="Abre o Molde.psd no Photopea pra criar emoji novo">
+            Abrir molde no Photopea
+          </button>
           <input type="text" class="emoji-catalog-search" id="search" placeholder="buscar por nome…" />
           <label class="emoji-catalog-filter">
             <input type="checkbox" id="filter-unmapped" /> só sem atalho
@@ -106,11 +109,18 @@ async function boot(): Promise<void> {
   const gridEl = root.querySelector('#grid') as HTMLDivElement
   const searchEl = root.querySelector('#search') as HTMLInputElement
   const filterUnmappedEl = root.querySelector('#filter-unmapped') as HTMLInputElement
+  const openMoldBtn = root.querySelector('#btn-open-mold') as HTMLButtonElement
   const uploadForm = root.querySelector('#upload-form') as HTMLFormElement
   const uploadNameEl = root.querySelector('#upload-name') as HTMLInputElement
   const uploadAliasEl = root.querySelector('#upload-alias') as HTMLInputElement
   const uploadFileEl = root.querySelector('#upload-file') as HTMLInputElement
   const uploadStatusEl = root.querySelector('#upload-status') as HTMLParagraphElement
+
+  openMoldBtn.addEventListener('click', () => {
+    const moldUrl = `${window.location.origin}/emoji-mold/Molde.psd`
+    const config = encodeURIComponent(JSON.stringify({ files: [moldUrl] }))
+    window.open(`https://www.photopea.com#${config}`, '_blank', 'noopener,noreferrer')
+  })
 
   let catalog: EmojiCatalogItem[] = []
 

@@ -70,6 +70,19 @@ app.use('/api', emojiCatalogRouter)
 // nomes/atalhos é que precisa vir sempre fresca (ver loadEmojiCatalog no client).
 app.use('/emoji-assets', requireAuth, express.static(ASSETS_DIR, { maxAge: '7d', immutable: true }))
 
+// Molde PSD de emoji — público de propósito: o Photopea (domínio externo) precisa
+// baixar o arquivo via CORS. Não tem dado sensível, é só o template de artes.
+const emojiMoldDir = path.resolve(__dirname, '../assets/emoji-mold')
+app.use(
+  '/emoji-mold',
+  (_req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*')
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin')
+    next()
+  },
+  express.static(emojiMoldDir, { maxAge: '1d' }),
+)
+
 // healthcheck público
 app.get('/healthz', (_req, res) => res.json({ ok: true }))
 

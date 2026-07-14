@@ -3450,6 +3450,9 @@ table.sheet tbody th.row-num.is-active {
   align-items: center;
   gap: 10px;
 }
+.emoji-catalog-toolbar #btn-open-mold {
+  white-space: nowrap;
+}
 
 .emoji-catalog-search {
   font-size: 13px;

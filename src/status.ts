@@ -28,6 +28,8 @@ const STATUS_BY_LABEL = new Map<string, StatusOption>(
 export function findStatusOption(value: unknown): StatusOption {
   if (value == null) return STATUS_OPTIONS[0]
   const key = String(value).trim().toLowerCase()
+  // Legado: "Em produção" (sem número) trata como Em produção 1 até a migration no DB acabar.
+  if (key === 'em produção') return STATUS_BY_LABEL.get('em produção 1') ?? STATUS_OPTIONS[0]
   return STATUS_BY_LABEL.get(key) ?? STATUS_OPTIONS[0]
 }
 

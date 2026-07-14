@@ -396,6 +396,37 @@ db.exec(`
   }
 }
 
+/** Status legado "Em produção" → "Em produção 1" (coluna F, índice 5 do row_json). */
+{
+  const STATUS_COL = 5
+  const rows = db
+    .prepare('SELECT workbook_id, order_key, row_json FROM orders')
+    .all() as Array<{ workbook_id: string; order_key: string; row_json: string }>
+  const update = db.prepare(
+    'UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
+  )
+  let migrated = 0
+  const run = db.transaction(() => {
+    for (const row of rows) {
+      let cells: unknown
+      try {
+        cells = JSON.parse(row.row_json)
+      } catch {
+        continue
+      }
+      if (!Array.isArray(cells)) continue
+      if (String(cells[STATUS_COL] ?? '').trim() !== 'Em produção') continue
+      cells[STATUS_COL] = 'Em produção 1'
+      update.run(JSON.stringify(cells), Date.now(), row.workbook_id, row.order_key)
+      migrated++
+    }
+  })
+  run()
+  if (migrated > 0) {
+    console.log(`[migration] Em produção → Em produção 1: ${migrated} pedido(s)`)
+  }
+}
+
 export function nowMs(): number {
   return Date.now()
 }
