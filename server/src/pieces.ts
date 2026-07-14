@@ -15,7 +15,7 @@ import {
   type PecaTipo,
   type Tamanho,
 } from './sku-rules.js'
-import { SHOPEE_COL_MODEL, SHOPEE_COL_PRODUCT } from './shopee-columns.js'
+import { SHOPEE_COL_MODEL, SHOPEE_COL_PRODUCT, SHOPEE_COL_QTY } from './shopee-columns.js'
 
 export interface OrderPieceRow {
   id: number
@@ -126,17 +126,18 @@ function insertPiece(
 }
 
 /**
- * 1ª chamada por pedido: deriva peças do SKU/Modelo e persiste. Chamadas seguintes retornam
- * o que já está salvo (edição manual do usuário não é sobrescrita). Se o parser falhar,
+ * 1ª chamada por pedido: deriva peças do SKU/Modelo × quantidade (col D) e persiste.
+ * Qnt=2 com camisola+short → camisola, short, camisola, short (conjunto na sequência).
+ * Chamadas seguintes retornam o salvo (edição manual não é sobrescrita). Se o parser falhar,
  * registra pendência em parse_issues e retorna lista vazia + motivo.
+ *
+ * Exceção: se todas as peças ainda são `auto`, sem foto e a Qnt. indica mais unidades
+ * do que o que foi gravado (bug antigo), re-deriva e sobrescreve.
  */
 export function ensurePieces(
   workbookId: string,
   orderKey: string,
 ): { pieces: PieceWithPhotos[]; autoFailed?: string } {
-  const existing = listPieces(workbookId, orderKey)
-  if (existing.length > 0) return { pieces: existing }
-
   const orderRow = db
     .prepare('SELECT id, row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
     .get(workbookId, orderKey) as { id: string; row_json: string } | undefined
@@ -148,18 +149,60 @@ export function ensurePieces(
   } catch {
     return { pieces: [] }
   }
+
   const sku = (cells[SHOPEE_COL_PRODUCT] || '').trim()
   const modelName = (cells[SHOPEE_COL_MODEL] || '').trim()
-  const result = parseOrderPieces(sku, modelName)
-  if (!result.ok) {
-    recordParseIssueIfNeeded(workbookId, orderKey, orderRow.id, sku, modelName)
-    return { pieces: [], autoFailed: result.reason }
+  const qty = parseOrderQty(cells[SHOPEE_COL_QTY])
+  const parsed = parseOrderPieces(sku, modelName)
+
+  const existing = listPieces(workbookId, orderKey)
+  if (existing.length > 0) {
+    if (!shouldRebuildForQty(existing, parsed, qty)) {
+      return { pieces: existing }
+    }
+    for (const p of existing) deletePiece(p.id)
   }
 
-  const created = result.pieces.map((p, i) =>
+  if (!parsed.ok) {
+    recordParseIssueIfNeeded(workbookId, orderKey, orderRow.id, sku, modelName)
+    return { pieces: [], autoFailed: parsed.reason }
+  }
+
+  const expanded = expandPiecesByQty(parsed.pieces, qty)
+  const created = expanded.map((p, i) =>
     insertPiece(workbookId, orderKey, i + 1, p.tipo, p.genero ?? null, p.tamanho, p.molde, 'auto'),
   )
   return { pieces: created.map(attachPhotos) }
+}
+
+/** Quantidade da col D — vazio/ inválido = 1; teto 20 pra não explodir a UI. */
+function parseOrderQty(raw: unknown): number {
+  const n = Number(String(raw ?? '').trim().replace(',', '.'))
+  if (!Number.isFinite(n) || n < 1) return 1
+  return Math.min(Math.floor(n), 20)
+}
+
+/** Repete o conjunto derivado N vezes na sequência (1ª unidade completa, depois a 2ª…). */
+function expandPiecesByQty<T>(unitPieces: T[], qty: number): T[] {
+  if (qty <= 1) return unitPieces
+  const out: T[] = []
+  for (let u = 0; u < qty; u++) {
+    for (const p of unitPieces) out.push(p)
+  }
+  return out
+}
+
+function shouldRebuildForQty(
+  existing: PieceWithPhotos[],
+  parsed: ReturnType<typeof parseOrderPieces>,
+  qty: number,
+): boolean {
+  if (qty <= 1) return false
+  if (!parsed.ok) return false
+  if (!existing.every((p) => p.source === 'auto')) return false
+  if (existing.some((p) => p.photos[1] || p.photos[2])) return false
+  const expected = parsed.pieces.length * qty
+  return existing.length < expected
 }
 
 /** Peça extra criada na mão (pedido sem SKU reconhecido, ou peça a mais que o parser não previu). */
