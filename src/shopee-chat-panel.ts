@@ -666,6 +666,9 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         </div>
         <div class="emoji-gallery-grid"></div>
         <footer class="emoji-gallery-footer">
+          <button type="button" class="btn emoji-gallery-mold-btn" title="Abre o Molde.psd no Photopea pra criar emoji novo">
+            Criar emoji no Photopea
+          </button>
           <input type="text" class="emoji-gallery-upload-name" placeholder="nome do emoji customizado" />
           <label class="emoji-gallery-upload">
             + subir imagem
@@ -679,8 +682,15 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     const gridEl = modal.querySelector<HTMLElement>('.emoji-gallery-grid')!
     const searchEl = modal.querySelector<HTMLInputElement>('.emoji-gallery-search')!
     const closeBtn = modal.querySelector<HTMLButtonElement>('.emoji-gallery-close')!
+    const moldBtn = modal.querySelector<HTMLButtonElement>('.emoji-gallery-mold-btn')!
     const uploadInput = modal.querySelector<HTMLInputElement>('.emoji-gallery-upload-input')!
     const uploadNameInput = modal.querySelector<HTMLInputElement>('.emoji-gallery-upload-name')!
+
+    moldBtn.addEventListener('click', () => {
+      const moldUrl = `${window.location.origin}/emoji-mold/Molde.psd`
+      const config = encodeURIComponent(JSON.stringify({ files: [moldUrl] }))
+      window.open(`https://www.photopea.com#${config}`, '_blank', 'noopener,noreferrer')
+    })
 
     async function escolher(item: EmojiCatalogItem): Promise<void> {
       if (opts.pendingChar && !item.aliases.includes(opts.pendingChar)) {

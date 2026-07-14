@@ -2346,9 +2346,25 @@ body.shopee-chat-open {
 
 .emoji-gallery-footer {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   border-top: 1px solid #e2e8f0;
   padding-top: 8px;
+}
+
+.emoji-gallery-mold-btn {
+  width: 100%;
+  font-size: 12px;
+  padding: 6px 10px;
+  background: #0f766e;
+  color: #fff;
+  border-color: #0f766e;
+}
+
+.emoji-gallery-mold-btn:hover {
+  background: #0d9488;
+  border-color: #0d9488;
 }
 
 .emoji-gallery-upload-name {
