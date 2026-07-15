@@ -301,7 +301,7 @@ export async function getItemBaseInfo(itemIds: number[]): Promise<ShopeeApiRespo
     item_id_list: itemIds.join(','),
     need_tax_info: 'false',
     need_complaint_policy: 'false',
-    response_optional_fields: 'price_info,stock_info_v2',
+    response_optional_fields: 'price_info,stock_info_v2,pre_order',
   })
 }
 
