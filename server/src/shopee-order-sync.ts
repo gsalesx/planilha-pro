@@ -453,8 +453,10 @@ function findOrderSnsPendingDate(workbookId: string = SHOPEE_WORKBOOK_ID): strin
  * pela Shopee na 1ª importação) — roda junto do poll de 2h, sem depender da janela de tempo,
  * já que um pedido pode ficar dias parado antes do prazo de envio aparecer. Também cobre
  * `sheet_date=''` (pedidos que caíram antes do fix, sem o rótulo novo) — autocorrige sozinho.
- * `strictShipDate` propaga pro upsert — usado pelo workbook do webhook (ver
- * SHOPEE_WEBHOOK_WORKBOOK_ID) pra não voltar a cair no fallback create_time.
+ * `strictShipDate` propaga pro upsert — não usado por padrão aqui (o resync periódico tenta
+ * resolver com o que tiver disponível); é `true` só na escrita inicial do webhook
+ * (handleOrderStatusPush/handlePlaceOrderPush em shopee-push-process.ts), pra não cair no
+ * fallback create_time antes da Shopee calcular o ship_by_date de verdade.
  */
 export async function resyncPendingDateOrders(
   workbookId: string = SHOPEE_WORKBOOK_ID,

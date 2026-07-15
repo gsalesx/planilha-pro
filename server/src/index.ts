@@ -18,7 +18,7 @@ import {
   SHOPEE_POLL_LOOKBACK_HOURS,
 } from './shopee-order-sync.js'
 import { loadShopeeAuth } from './shopee-store.js'
-import { ensureShopeeWorkbook, SHOPEE_WEBHOOK_WORKBOOK_ID } from './shopee-workbook.js'
+import { ensureShopeeWorkbook } from './shopee-workbook.js'
 import backupRouter from './routes/backup.js'
 import emojiCatalogRouter from './routes/emoji-catalog.js'
 import imagesRouter from './routes/images.js'
@@ -105,22 +105,18 @@ ensureShopeeWorkbook()
 ensureEmojiCatalogSeeded()
 
 /**
- * Poll pedidos recentes — via oficial de importação pra wb_shopee (a planilha que o time usa).
- * Duas janelas por create_time E update_time (syncRecentShopeeOrders / syncRecentlyUpdatedShopeeOrders):
- * só create_time perdia pedido ANTIGO que muda de status (ex.: pago dias depois de criado) —
- * nunca era "recente" pra criação, não caía em "Sem data" nem em READY_TO_SHIP
- * (resyncReadyToShipDates só reconfere quem JÁ está READY_TO_SHIP no nosso banco), então ficava
- * com status velho pra sempre — ver memória `bug-shopee-unpaid-nunca-resincroniza-2026-07-15`.
- * Além disso, reconsulta os pedidos presos na aba "Sem data de envio" (resyncPendingDateOrders),
- * reconfere a data de todo pedido em READY_TO_SHIP (resyncReadyToShipDates) — cobre data errada
- * antiga e o caso da Shopee empurrar o ship_by_date +1 dia depois da 1ª importação — e reconfere
- * TODO pedido armazenado como PROCESSED (resyncProcessedOrders), sem depender de janela de tempo:
- * pedido pode ficar dias em PROCESSED antes de virar SHIPPED/COMPLETED, fora do alcance das duas
- * janelas de tempo acima — achado 2026-07-15, 22 "PROCESSED" no banco vs 1 real na Shopee, ver
- * memória `bug-shopee-processed-nunca-resincroniza-2026-07-15`.
- * Todas as chamadas abaixo são só pra wb_shopee (default de todos os parâmetros workbookId) —
- * a planilha experimental do webhook (SHOPEE_WEBHOOK_WORKBOOK_ID) tem seu próprio poll leve logo
- * abaixo, já que ela recebe pedido novo/mudança de status via push, não via este poll.
+ * Poll pedidos recentes — roda em cima de wb_shopee (única planilha), junto com o webhook
+ * (PUSH_PROCESSING_ENABLED em shopee-push-process.ts, reativado 2026-07-15): o webhook cobre
+ * tempo real, este poll cobre o que ele não alcança (pedido antigo que muda de status fora do
+ * radar do push, falha de entrega do push, etc). Duas janelas por create_time E update_time
+ * (syncRecentShopeeOrders / syncRecentlyUpdatedShopeeOrders): só create_time perdia pedido
+ * ANTIGO que muda de status (ex.: pago dias depois de criado) — ver memória
+ * `bug-shopee-unpaid-nunca-resincroniza-2026-07-15`. Além disso, reconsulta os pedidos presos na
+ * aba "Sem data de envio" (resyncPendingDateOrders), reconfere a data de todo pedido em
+ * READY_TO_SHIP (resyncReadyToShipDates) — cobre data errada antiga e o caso da Shopee empurrar o
+ * ship_by_date +1 dia depois da 1ª importação — e reconfere TODO pedido armazenado como PROCESSED
+ * (resyncProcessedOrders), sem depender de janela de tempo — ver memória
+ * `bug-shopee-processed-nunca-resincroniza-2026-07-15`.
  */
 const SHOPEE_POLL_MS = 2 * 60 * 60 * 1000
 let shopeePollBusy = false
@@ -172,39 +168,6 @@ async function runShopeeRecentPoll(): Promise<void> {
 
 setTimeout(() => void runShopeeRecentPoll(), 60_000)
 setInterval(() => void runShopeeRecentPoll(), SHOPEE_POLL_MS)
-
-/**
- * Resync leve só da aba "Sem data de envio" da planilha experimental do webhook
- * (SHOPEE_WEBHOOK_WORKBOOK_ID) — pedido novo/mudança de status já chega em tempo real via push
- * (ver PUSH_PROCESSING_ENABLED em shopee-push-process.ts); só falta reconferir quem ficou sem
- * ship_by_date na hora do push (strictShipDate=true em handleOrderStatusPush/handlePlaceOrderPush
- * evita usar create_time como fallback ali, pra não misturar data de compra com data de envio).
- * Guard de busy próprio — não compete com runShopeeRecentPoll (que é só de wb_shopee).
- */
-const SHOPEE_WEBHOOK_PENDING_POLL_MS = 2 * 60 * 60 * 1000
-let shopeeWebhookPendingBusy = false
-
-async function runShopeeWebhookPendingResync(): Promise<void> {
-  if (shopeeWebhookPendingBusy || !env.shopeePartnerKey || !loadShopeeAuth()) return
-  shopeeWebhookPendingBusy = true
-  try {
-    const pending = await resyncPendingDateOrders(SHOPEE_WEBHOOK_WORKBOOK_ID, true)
-    if (pending.updated > 0 || pending.errors.length > 0) {
-      console.log('[shopee-webhook-poll] concluído', {
-        pendingRechecked: pending.listed,
-        pendingResolved: pending.updated,
-        errors: pending.errors.length,
-      })
-    }
-  } catch (error) {
-    console.warn('[shopee-webhook-poll]', error instanceof Error ? error.message : error)
-  } finally {
-    shopeeWebhookPendingBusy = false
-  }
-}
-
-setTimeout(() => void runShopeeWebhookPendingResync(), 90_000)
-setInterval(() => void runShopeeWebhookPendingResync(), SHOPEE_WEBHOOK_PENDING_POLL_MS)
 
 app.listen(env.port, () => {
   console.log(`Planilha Pro server on http://localhost:${env.port}`)

@@ -5,7 +5,7 @@ import {
   shopeeOrderExists,
   updateShopeeOrderStatus,
 } from './shopee-order-sync.js'
-import { SHOPEE_WEBHOOK_WORKBOOK_ID } from './shopee-workbook.js'
+import { SHOPEE_WORKBOOK_ID } from './shopee-workbook.js'
 import { recordWebchatPushAttempt } from './shopee-webchat-push.js'
 
 function pushCode(parsed: unknown): number | null {
@@ -29,10 +29,10 @@ function extractStatus(data: unknown): string {
 
 /**
  * Code 3 — order_status_push: toda mudança de status (inclui UNPAID ao criar o pedido).
- * Escopado só pro SHOPEE_WEBHOOK_WORKBOOK_ID (planilha experimental) — nunca escreve em
- * wb_shopee, que continua exclusivo do poll de 2h. strictShipDate=true: se a Shopee ainda não
- * calculou o ship_by_date, cai na aba "Sem data de envio" em vez de usar create_time (o resync
- * de pending-date em index.ts reconfere depois).
+ * Escreve em wb_shopee (única planilha) — complementa o poll de 2h, cobrindo pedido em tempo
+ * real e casos que o poll não alcança (pedido antigo, mudança de status fora da janela).
+ * strictShipDate=true: se a Shopee ainda não calculou o ship_by_date, cai na aba "Sem data de
+ * envio" em vez de usar create_time (resyncPendingDateOrders no poll de 2h reconfere depois).
  */
 async function handleOrderStatusPush(data: unknown): Promise<void> {
   const orderSn = extractOrderSn(data)
@@ -42,13 +42,13 @@ async function handleOrderStatusPush(data: unknown): Promise<void> {
     return
   }
 
-  if (shopeeOrderExists(orderSn, SHOPEE_WEBHOOK_WORKBOOK_ID)) {
-    updateShopeeOrderStatus(orderSn, status, SHOPEE_WEBHOOK_WORKBOOK_ID)
+  if (shopeeOrderExists(orderSn, SHOPEE_WORKBOOK_ID)) {
+    updateShopeeOrderStatus(orderSn, status, SHOPEE_WORKBOOK_ID)
     console.log('[shopee-push] status atualizado', { orderSn, status })
     return
   }
 
-  const action = await importShopeeOrderBySn(orderSn, status, SHOPEE_WEBHOOK_WORKBOOK_ID, true)
+  const action = await importShopeeOrderBySn(orderSn, status, SHOPEE_WORKBOOK_ID, true)
   if (action === 'failed') {
     console.error('[shopee-push] falha ao importar pedido novo', { orderSn, status })
     return
@@ -64,9 +64,9 @@ async function handlePlaceOrderPush(data: unknown): Promise<void> {
 
   const orderSn = extractOrderSn(data)
   if (!orderSn) return
-  if (shopeeOrderExists(orderSn, SHOPEE_WEBHOOK_WORKBOOK_ID)) return
+  if (shopeeOrderExists(orderSn, SHOPEE_WORKBOOK_ID)) return
 
-  const action = await importShopeeOrderBySn(orderSn, 'UNPAID', SHOPEE_WEBHOOK_WORKBOOK_ID, true)
+  const action = await importShopeeOrderBySn(orderSn, 'UNPAID', SHOPEE_WORKBOOK_ID, true)
   console.log('[shopee-push] pedido importado (code 8 place_order)', { orderSn, action })
 }
 
@@ -109,12 +109,13 @@ function handleWebchatMessagePush(data: unknown): void {
 
 /**
  * Reativado em 2026-07-15 (era `false` desde 2026-07-03 — o push chegava com o pedido ainda sem
- * ship_by_date calculado). Agora o código 3/8 escreve SÓ em SHOPEE_WEBHOOK_WORKBOOK_ID (planilha
- * experimental duplicada de wb_shopee), nunca na oficial — wb_shopee continua exclusiva do poll
- * de 2h (ver index.ts). handleOrderStatusPush/handlePlaceOrderPush chamam com
- * `strictShipDate=true`: se ship_by_date ainda não veio, cai na aba "Sem data de envio" (não usa
- * create_time como fallback) e é reconferido pelo resync próprio em index.ts. O vínculo
- * automático de chat (code 10) NÃO depende desta flag — roda sempre, ver handleWebchatMessagePush.
+ * ship_by_date calculado). Escreve direto em wb_shopee, junto com o poll de 2h — as duas vias
+ * complementam uma à outra (poll cobre janelas amplas + resync por status; push cobre tempo real
+ * e pedido antigo que o poll não alcança). `strictShipDate=true` em
+ * handleOrderStatusPush/handlePlaceOrderPush evita o problema original: se ship_by_date ainda
+ * não veio, cai na aba "Sem data de envio" (não usa create_time como fallback) e
+ * resyncPendingDateOrders no poll de 2h reconfere depois. O vínculo automático de chat (code 10)
+ * NÃO depende desta flag — roda sempre, ver handleWebchatMessagePush.
  */
 const PUSH_PROCESSING_ENABLED = true
 
