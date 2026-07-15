@@ -31,9 +31,9 @@ function extractStatus(data: unknown): string {
  * já existente — o push só manda orderSn+status, sem data de envio nem nome do destinatário;
  * pra manter esses 2 campos frescos (junto com o status) é preciso o detalhe completo, não dá
  * pra só gravar o status isolado (2026-07-15: cron e webhook devem poder atualizar dia de envio,
- * status Shopee E nome do cliente, sempre). strictShipDate=true: se a Shopee ainda não calculou
- * o ship_by_date, cai na aba "Sem data de envio" em vez de usar create_time
- * (resyncPendingDateOrders no poll de 2h reconfere depois).
+ * status Shopee E nome do cliente, sempre). Se a Shopee ainda não calculou o ship_by_date, o
+ * pedido cai na aba "Sem data de envio" (resolveSheetDate NUNCA usa create_time como fallback) —
+ * resyncPendingDateOrders no poll de 2h fica reconferindo até a Shopee calcular de verdade.
  */
 async function handleOrderStatusPush(data: unknown): Promise<void> {
   const orderSn = extractOrderSn(data)
@@ -43,7 +43,7 @@ async function handleOrderStatusPush(data: unknown): Promise<void> {
     return
   }
 
-  const action = await importShopeeOrderBySn(orderSn, status, SHOPEE_WORKBOOK_ID, true)
+  const action = await importShopeeOrderBySn(orderSn, status, SHOPEE_WORKBOOK_ID)
   if (action === 'failed') {
     console.error('[shopee-push] falha ao importar/atualizar pedido', { orderSn, status })
     return
@@ -61,7 +61,7 @@ async function handlePlaceOrderPush(data: unknown): Promise<void> {
   if (!orderSn) return
   if (shopeeOrderExists(orderSn, SHOPEE_WORKBOOK_ID)) return
 
-  const action = await importShopeeOrderBySn(orderSn, 'UNPAID', SHOPEE_WORKBOOK_ID, true)
+  const action = await importShopeeOrderBySn(orderSn, 'UNPAID', SHOPEE_WORKBOOK_ID)
   console.log('[shopee-push] pedido importado (code 8 place_order)', { orderSn, action })
 }
 
@@ -106,11 +106,11 @@ function handleWebchatMessagePush(data: unknown): void {
  * Reativado em 2026-07-15 (era `false` desde 2026-07-03 — o push chegava com o pedido ainda sem
  * ship_by_date calculado). Escreve direto em wb_shopee, junto com o poll de 2h — as duas vias
  * complementam uma à outra (poll cobre janelas amplas + resync por status; push cobre tempo real
- * e pedido antigo que o poll não alcança). `strictShipDate=true` em
- * handleOrderStatusPush/handlePlaceOrderPush evita o problema original: se ship_by_date ainda
- * não veio, cai na aba "Sem data de envio" (não usa create_time como fallback) e
- * resyncPendingDateOrders no poll de 2h reconfere depois. O vínculo automático de chat (code 10)
- * NÃO depende desta flag — roda sempre, ver handleWebchatMessagePush.
+ * e pedido antigo que o poll não alcança). O problema original (ship_by_date zerado) foi
+ * resolvido em `resolveSheetDate`, não aqui: ela nunca usa create_time como fallback, pedido sem
+ * ship_by_date cai em "Sem data de envio" e resyncPendingDateOrders no poll de 2h fica
+ * reconferindo até a Shopee calcular de verdade. O vínculo automático de chat (code 10) NÃO
+ * depende desta flag — roda sempre, ver handleWebchatMessagePush.
  */
 const PUSH_PROCESSING_ENABLED = true
 

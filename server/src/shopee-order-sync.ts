@@ -73,16 +73,15 @@ function formatSheetDate(unixSec: number): string {
 export const SHOPEE_PENDING_DATE_LABEL = 'Sem data de envio'
 
 /**
- * Data do `<select>` no header — prevista de envio (ship_by_date), não data da compra.
- * `strictShipDate` (usado pelo workbook alimentado por webhook): NÃO cai pro create_time
- * quando ship_by_date ainda não veio — força SHOPEE_PENDING_DATE_LABEL de propósito, pra cair
- * na aba "Sem data de envio" e ser reconferido depois, em vez de misturar data de compra com
- * data de envio (o push às vezes chega antes da Shopee calcular o prazo).
+ * Data do `<select>` no header — prevista de envio (ship_by_date), NUNCA data da compra
+ * (create_time). A Shopee manda ship_by_date=0 (não null/undefined) quando ainda não calculou
+ * o prazo — nesse caso o pedido fica em SHOPEE_PENDING_DATE_LABEL ("Sem data de envio") até a
+ * Shopee calcular de verdade. Nunca usar create_time como data provisória (decisão do usuário
+ * 2026-07-15) — o pedido fica no limbo sendo reconferido a cada poll de 2h
+ * (resyncPendingDateOrders) até ter a data real, não uma data "chutada" da compra.
  */
-function resolveSheetDate(order: ShopeeOrderDetail, strictShipDate = false): string {
-  // `||` (não `??`): a Shopee manda ship_by_date=0 (não null/undefined) quando ainda não calculou
-  // o prazo — precisa cair pro create_time nesse caso (exceto em strictShipDate).
-  const ts = strictShipDate ? order.ship_by_date : order.ship_by_date || order.create_time
+function resolveSheetDate(order: ShopeeOrderDetail): string {
+  const ts = order.ship_by_date
   return ts ? formatSheetDate(ts) : SHOPEE_PENDING_DATE_LABEL
 }
 
@@ -192,7 +191,6 @@ export async function importShopeeOrderBySn(
   orderSn: string,
   fallbackStatus?: string,
   workbookId: string = SHOPEE_WORKBOOK_ID,
-  strictShipDate = false,
 ): Promise<'created' | 'updated' | 'unchanged' | 'failed'> {
   const sn = orderSn.trim()
   if (!sn) return 'failed'
@@ -209,7 +207,7 @@ export async function importShopeeOrderBySn(
         continue
       }
       if (fallbackStatus && !order.order_status) order.order_status = fallbackStatus
-      return upsertShopeeOrder(order, workbookId, strictShipDate)
+      return upsertShopeeOrder(order, workbookId)
     } catch (error) {
       console.warn(
         `[shopee-push] get_order_detail erro (tentativa ${attempt + 1}/${retryDelaysMs.length})`,
@@ -230,12 +228,11 @@ export async function importShopeeOrderBySn(
 export function upsertShopeeOrder(
   order: ShopeeOrderDetail,
   workbookId: string = SHOPEE_WORKBOOK_ID,
-  strictShipDate = false,
 ): 'created' | 'updated' | 'unchanged' {
   const orderSn = order.order_sn?.trim()
   if (!orderSn) throw new Error('order_sn ausente')
 
-  const sheetDate = resolveSheetDate(order, strictShipDate)
+  const sheetDate = resolveSheetDate(order)
   const itemRows = mapShopeeOrderToItemRows(order)
   const shopeeStatus = order.order_status ?? ''
   const recipient = order.recipient_address?.name ?? ''
@@ -382,7 +379,6 @@ async function upsertOrderSnsBatched(
   orderSns: string[],
   preErrors: string[] = [],
   workbookId: string = SHOPEE_WORKBOOK_ID,
-  strictShipDate = false,
 ): Promise<ShopeeSyncResult> {
   const result: ShopeeSyncResult = { listed: orderSns.length, created: 0, updated: 0, errors: [...preErrors] }
 
@@ -393,7 +389,7 @@ async function upsertOrderSnsBatched(
       const orders = parseOrderList(data)
       for (const order of orders) {
         try {
-          const action = upsertShopeeOrder(order, workbookId, strictShipDate)
+          const action = upsertShopeeOrder(order, workbookId)
           if (action === 'created') result.created++
           else if (action === 'updated') result.updated++
         } catch (error) {
@@ -456,20 +452,16 @@ function findOrderSnsPendingDate(workbookId: string = SHOPEE_WORKBOOK_ID): strin
 
 /**
  * Reconsulta pedidos presos na aba "Sem data de envio" (ship_by_date ainda não calculado
- * pela Shopee na 1ª importação) — roda junto do poll de 2h, sem depender da janela de tempo,
- * já que um pedido pode ficar dias parado antes do prazo de envio aparecer. Também cobre
- * `sheet_date=''` (pedidos que caíram antes do fix, sem o rótulo novo) — autocorrige sozinho.
- * `strictShipDate` propaga pro upsert — não usado por padrão aqui (o resync periódico tenta
- * resolver com o que tiver disponível); é `true` só na escrita inicial do webhook
- * (handleOrderStatusPush/handlePlaceOrderPush em shopee-push-process.ts), pra não cair no
- * fallback create_time antes da Shopee calcular o ship_by_date de verdade.
+ * pela Shopee) — roda junto do poll de 2h, sem depender de janela de tempo, já que um pedido
+ * pode ficar dias parado antes do prazo de envio aparecer. Também cobre `sheet_date=''`
+ * (pedidos que caíram antes do fix, sem o rótulo novo) — autocorrige sozinho. Nunca resolve com
+ * data provisória (create_time) — `resolveSheetDate` não tem mais esse fallback; o pedido só
+ * sai daqui quando a Shopee realmente calcular o ship_by_date, mesmo que demore várias rodadas
+ * de 2h em 2h (decisão do usuário 2026-07-15).
  */
-export async function resyncPendingDateOrders(
-  workbookId: string = SHOPEE_WORKBOOK_ID,
-  strictShipDate = false,
-): Promise<ShopeeSyncResult> {
+export async function resyncPendingDateOrders(workbookId: string = SHOPEE_WORKBOOK_ID): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
-  return upsertOrderSnsBatched(findOrderSnsPendingDate(workbookId), [], workbookId, strictShipDate)
+  return upsertOrderSnsBatched(findOrderSnsPendingDate(workbookId), [], workbookId)
 }
 
 function findOrderSnsByShopeeStatus(
