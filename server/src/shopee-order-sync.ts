@@ -16,7 +16,6 @@ import {
   SHOPEE_COL_SHOPEE_STATUS,
   SHOPEE_COL_USERNAME,
   SHOPEE_ROW_COLS,
-  SHOPEE_INTERNAL_STATUS_PROCESSED,
   SHOPEE_INTERNAL_STATUS_CANCELLED,
 } from './shopee-columns.js'
 import { ensureShopeeWorkbook, SHOPEE_WORKBOOK_ID } from './shopee-workbook.js'
@@ -88,12 +87,13 @@ function itemSku(item: ShopeeItemRow): string {
   return (item.model_sku ?? item.item_sku ?? '').trim()
 }
 
-/** Col F — espelha status terminal da Shopee no fluxo interno. */
+/** Col F — espelha status terminal da Shopee no fluxo interno. PROCESSED
+ * NÃO vira "Concluído" automático (decisão do usuário 2026-07-14) — esse
+ * status só é setado manualmente na UI, o fluxo de produção não deve ser
+ * sobrescrito por um webhook. */
 function applyInternalStatusFromShopee(row: string[], shopeeStatus: string): void {
   const status = shopeeStatus.trim().toUpperCase()
-  if (status === 'PROCESSED') {
-    row[SHOPEE_COL_INTERNAL_STATUS] = SHOPEE_INTERNAL_STATUS_PROCESSED
-  } else if (status === 'CANCELLED') {
+  if (status === 'CANCELLED') {
     row[SHOPEE_COL_INTERNAL_STATUS] = SHOPEE_INTERNAL_STATUS_CANCELLED
   }
 }
