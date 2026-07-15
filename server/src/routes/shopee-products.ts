@@ -3,7 +3,7 @@ import { Router } from 'express'
 import { requireAuth } from '../auth.js'
 import { env } from '../env.js'
 import {
-  applyDaysToShipToAll,
+  applyDaysToShipToItem,
   applyProductSkuUpdate,
   fetchProductCatalog,
 } from '../shopee-product-catalog.js'
@@ -70,25 +70,27 @@ router.post('/shopee/products/sku', requireAuth, async (req, res) => {
   }
 })
 
-/** POST /api/shopee/products/days-to-ship — aplica o mesmo prazo de postagem a TODOS os produtos */
+/** POST /api/shopee/products/days-to-ship — 1 produto por vez (client itera e mostra progresso;
+ * escrever em paralelo estoura rate limit da Shopee com facilidade). */
 router.post('/shopee/products/days-to-ship', requireAuth, async (req, res) => {
   if (!shopeeConfigured()) {
     res.status(400).json({ error: 'Shopee não configurada' })
     return
   }
-  const daysToShip = Number((req.body as { daysToShip?: unknown })?.daysToShip)
-  if (!Number.isFinite(daysToShip)) {
-    res.status(400).json({ error: 'daysToShip (número) obrigatório' })
+  const body = req.body as { itemId?: unknown; daysToShip?: unknown }
+  const itemId = Number(body.itemId)
+  const daysToShip = Number(body.daysToShip)
+  if (!Number.isFinite(itemId) || itemId <= 0 || !Number.isFinite(daysToShip)) {
+    res.status(400).json({ error: 'itemId e daysToShip (número) obrigatórios' })
     return
   }
   try {
-    const results = await applyDaysToShipToAll(daysToShip)
-    const ok = results.filter((r) => r.ok).length
-    const failed = results.filter((r) => !r.ok)
-    res.json({ ok: true, total: results.length, updated: ok, failed })
+    await applyDaysToShipToItem(itemId, daysToShip)
+    res.json({ ok: true, itemId })
   } catch (error) {
     res.status(502).json({
       ok: false,
+      itemId,
       error: error instanceof Error ? error.message : 'Erro ao atualizar prazo de postagem',
     })
   }

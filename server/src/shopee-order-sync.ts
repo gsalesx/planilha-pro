@@ -464,7 +464,11 @@ export async function resyncPendingDateOrders(
   return upsertOrderSnsBatched(findOrderSnsPendingDate(workbookId), [], workbookId, strictShipDate)
 }
 
-function findOrderSnsReadyToShip(workbookId: string = SHOPEE_WORKBOOK_ID): string[] {
+function findOrderSnsByShopeeStatus(
+  statuses: string[],
+  workbookId: string = SHOPEE_WORKBOOK_ID,
+): string[] {
+  const wanted = new Set(statuses)
   const rows = db
     .prepare('SELECT id, row_json FROM orders WHERE workbook_id = ?')
     .all(workbookId) as Array<{ id: string; row_json: string }>
@@ -476,7 +480,7 @@ function findOrderSnsReadyToShip(workbookId: string = SHOPEE_WORKBOOK_ID): strin
     } catch {
       continue
     }
-    if (cells[SHOPEE_COL_SHOPEE_STATUS] === 'READY_TO_SHIP') orderSns.add(row.id)
+    if (wanted.has(cells[SHOPEE_COL_SHOPEE_STATUS])) orderSns.add(row.id)
   }
   return [...orderSns]
 }
@@ -488,7 +492,19 @@ function findOrderSnsReadyToShip(workbookId: string = SHOPEE_WORKBOOK_ID): strin
  */
 export async function resyncReadyToShipDates(workbookId: string = SHOPEE_WORKBOOK_ID): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
-  return upsertOrderSnsBatched(findOrderSnsReadyToShip(workbookId), [], workbookId)
+  return upsertOrderSnsBatched(findOrderSnsByShopeeStatus(['READY_TO_SHIP'], workbookId), [], workbookId)
+}
+
+/**
+ * Reconfere TODO pedido armazenado como PROCESSED, sem depender de janela de tempo (create_time
+ * OU update_time podem estar velhos demais — pedido pode ficar dias em PROCESSED antes de virar
+ * SHIPPED/COMPLETED, e nenhum resync por tempo cobria isso). Achado 2026-07-15: 22 pedidos
+ * "PROCESSED" no banco, mas só 1 realmente PROCESSED na Shopee — o resto já tinha avançado
+ * (COMPLETED etc) sem a gente saber. Ver memória `bug-shopee-processed-nunca-resincroniza-2026-07-15`.
+ */
+export async function resyncProcessedOrders(workbookId: string = SHOPEE_WORKBOOK_ID): Promise<ShopeeSyncResult> {
+  ensureShopeeWorkbook()
+  return upsertOrderSnsBatched(findOrderSnsByShopeeStatus(['PROCESSED'], workbookId), [], workbookId)
 }
 
 async function collectAllOrderSns(timeFrom: number, timeTo: number, errors?: string[]): Promise<string[]> {

@@ -643,7 +643,10 @@ function renderShopeeStatusSelect() {
     updateStatusCounts()
   }
   // Reaplica após poll/applyUrlGridViewState — o dropdown sozinho não restaura o filtro na grid.
-  grid.setColumnFilter(SHOPEE_STATUS_COLUMN_INDEX, currentShopeeStatusFilter ? [currentShopeeStatusFilter] : null)
+  grid.setColumnFilter(
+    SHOPEE_STATUS_COLUMN_INDEX,
+    currentShopeeStatusFilter ? shopeeStatusMatchValues(currentShopeeStatusFilter) : null,
+  )
 }
 
 function getOrderId(rowIndex: number): string | null {

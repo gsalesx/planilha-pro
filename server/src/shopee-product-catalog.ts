@@ -172,52 +172,24 @@ export async function applyProductSkuUpdate(itemId: number, sku: string): Promis
   }
 }
 
-export interface DaysToShipResult {
-  itemId: number
-  name: string
-  ok: boolean
-  error?: string
+/** Lista todo item_id do catálogo — o client chama isso e depois aplica o prazo de postagem
+ * 1 produto por vez (ver applyDaysToShipToItem), pra UI mostrar progresso real e não estourar
+ * rate limit da Shopee com escrita em paralelo. */
+export async function listAllProductItemIds(): Promise<number[]> {
+  return fetchAllItemIds()
 }
 
-/** Chamadas de escrita em paralelo — mais baixo que MODEL_FETCH_CONCURRENCY (leitura) porque
- * update_item é mais sensível a rate limit do que get_model_list. */
-const DAYS_TO_SHIP_CONCURRENCY = 3
-
-/** Aplica o mesmo prazo de postagem (dias) a TODOS os produtos do catálogo. `is_pre_order` de
- * cada item é preservado (lido do próprio get_item_base_info, não é possível mudar só
- * days_to_ship sem mandar o par pra Shopee). Best-effort: item que falhar não derruba o resto,
- * volta no resultado com `ok:false` + motivo. */
-export async function applyDaysToShipToAll(daysToShip: number): Promise<DaysToShipResult[]> {
+/** Aplica o prazo de postagem (dias) a 1 produto. `is_pre_order` é preservado (lido do próprio
+ * get_item_base_info — não dá pra mudar só days_to_ship sem mandar o par pra Shopee). */
+export async function applyDaysToShipToItem(itemId: number, daysToShip: number): Promise<void> {
   if (!Number.isFinite(daysToShip) || daysToShip < 1 || daysToShip > 30) {
     throw new Error('Prazo de postagem deve ser um número entre 1 e 30 dias')
   }
+  const data = await getItemBaseInfo([itemId])
+  const row = parseItemList(data)[0]
+  if (!row) throw new Error('Produto não encontrado')
 
-  const itemIds = await fetchAllItemIds()
-  const rows: ItemBaseRow[] = []
-  for (let i = 0; i < itemIds.length; i += 50) {
-    const batch = itemIds.slice(i, i + 50)
-    const data = await getItemBaseInfo(batch)
-    rows.push(...parseItemList(data))
-  }
-
-  const results: DaysToShipResult[] = []
-  await mapWithConcurrency(rows, DAYS_TO_SHIP_CONCURRENCY, async (row) => {
-    if (!row.item_id) return
-    const name = row.item_name ?? String(row.item_id)
-    try {
-      const isPreOrder = row.pre_order?.is_pre_order ?? false
-      const data = await updateItemDaysToShip(row.item_id, daysToShip, isPreOrder)
-      assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'update_item')
-      results.push({ itemId: row.item_id, name, ok: true })
-    } catch (error) {
-      results.push({
-        itemId: row.item_id,
-        name,
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    }
-  })
-
-  return results
+  const isPreOrder = row.pre_order?.is_pre_order ?? false
+  const updateData = await updateItemDaysToShip(itemId, daysToShip, isPreOrder)
+  assertShopeeOk(updateData as ShopeeApiResponse<Record<string, unknown>>, 'update_item')
 }

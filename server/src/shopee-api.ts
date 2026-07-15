@@ -344,7 +344,10 @@ export async function updateModelSkus(
   })
 }
 
-export const SHOPEE_ITEM_LIST_STATUSES = ['NORMAL', 'UNLIST'] as const
+/** NORMAL+UNLIST sozinhos ficavam ~13 produtos abaixo do total real da loja (2026-07-15) —
+ * REVIEWING (produto em análise da Shopee, ainda não publicado) também conta pro vendedor.
+ * DELETED/BANNED ficam de fora de propósito (não editáveis, não fazem sentido no catálogo). */
+export const SHOPEE_ITEM_LIST_STATUSES = ['NORMAL', 'UNLIST', 'REVIEWING'] as const
 
 export async function fetchAllItemIds(statuses = SHOPEE_ITEM_LIST_STATUSES): Promise<number[]> {
   const seen = new Set<number>()

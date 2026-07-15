@@ -11,6 +11,7 @@ import { env, isProd } from './env.js'
 import { ASSETS_DIR, ensureEmojiCatalogSeeded } from './emoji-catalog.js'
 import {
   resyncPendingDateOrders,
+  resyncProcessedOrders,
   resyncReadyToShipDates,
   syncRecentShopeeOrders,
   syncRecentlyUpdatedShopeeOrders,
@@ -110,9 +111,13 @@ ensureEmojiCatalogSeeded()
  * nunca era "recente" pra criação, não caía em "Sem data" nem em READY_TO_SHIP
  * (resyncReadyToShipDates só reconfere quem JÁ está READY_TO_SHIP no nosso banco), então ficava
  * com status velho pra sempre — ver memória `bug-shopee-unpaid-nunca-resincroniza-2026-07-15`.
- * Além disso, reconsulta os pedidos presos na aba "Sem data de envio" (resyncPendingDateOrders) e
+ * Além disso, reconsulta os pedidos presos na aba "Sem data de envio" (resyncPendingDateOrders),
  * reconfere a data de todo pedido em READY_TO_SHIP (resyncReadyToShipDates) — cobre data errada
- * antiga e o caso da Shopee empurrar o ship_by_date +1 dia depois da 1ª importação.
+ * antiga e o caso da Shopee empurrar o ship_by_date +1 dia depois da 1ª importação — e reconfere
+ * TODO pedido armazenado como PROCESSED (resyncProcessedOrders), sem depender de janela de tempo:
+ * pedido pode ficar dias em PROCESSED antes de virar SHIPPED/COMPLETED, fora do alcance das duas
+ * janelas de tempo acima — achado 2026-07-15, 22 "PROCESSED" no banco vs 1 real na Shopee, ver
+ * memória `bug-shopee-processed-nunca-resincroniza-2026-07-15`.
  * Todas as chamadas abaixo são só pra wb_shopee (default de todos os parâmetros workbookId) —
  * a planilha experimental do webhook (SHOPEE_WEBHOOK_WORKBOOK_ID) tem seu próprio poll leve logo
  * abaixo, já que ela recebe pedido novo/mudança de status via push, não via este poll.
@@ -128,13 +133,19 @@ async function runShopeeRecentPoll(): Promise<void> {
     const updated = await syncRecentlyUpdatedShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS })
     const pending = await resyncPendingDateOrders()
     const readyToShip = await resyncReadyToShipDates()
+    const processed = await resyncProcessedOrders()
     const errors =
-      result.errors.length + updated.errors.length + pending.errors.length + readyToShip.errors.length
+      result.errors.length +
+      updated.errors.length +
+      pending.errors.length +
+      readyToShip.errors.length +
+      processed.errors.length
     if (
       result.created > 0 ||
       updated.updated > 0 ||
       pending.updated > 0 ||
       readyToShip.updated > 0 ||
+      processed.updated > 0 ||
       errors > 0
     ) {
       console.log('[shopee-poll] concluído', {
@@ -147,6 +158,8 @@ async function runShopeeRecentPoll(): Promise<void> {
         pendingResolved: pending.updated,
         readyToShipRechecked: readyToShip.listed,
         readyToShipFixed: readyToShip.updated,
+        processedRechecked: processed.listed,
+        processedFixed: processed.updated,
         errors,
       })
     }

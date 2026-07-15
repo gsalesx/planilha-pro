@@ -143,6 +143,12 @@ async function boot(): Promise<void> {
           <button type="button" class="btn" id="btn-days-to-ship">Aplicar a todos</button>
           <button type="button" class="btn" id="btn-refresh">Atualizar</button>
         </div>
+        <div class="shopee-products-bulk-progress" id="days-to-ship-progress" hidden>
+          <div class="shopee-products-bulk-progress-track">
+            <div class="shopee-products-bulk-progress-bar" id="days-to-ship-progress-bar"></div>
+          </div>
+          <p class="shopee-products-bulk-progress-text" id="days-to-ship-progress-text"></p>
+        </div>
       </header>
       <section class="shopee-products-bulk-bar" id="bulk-bar" hidden>
         <p class="shopee-products-bulk-hint">
@@ -406,8 +412,26 @@ async function boot(): Promise<void> {
 
   root.querySelector('#btn-refresh')!.addEventListener('click', () => void loadCatalog())
 
+  async function applyDaysToShipOne(itemId: number, days: number): Promise<void> {
+    await api<{ ok: boolean }>('/shopee/products/days-to-ship', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ itemId, daysToShip: days }),
+    })
+  }
+
   const daysToShipInput = root.querySelector('#days-to-ship-input') as HTMLInputElement
   const daysToShipBtn = root.querySelector('#btn-days-to-ship') as HTMLButtonElement
+  const daysToShipProgress = root.querySelector('#days-to-ship-progress') as HTMLDivElement
+  const daysToShipProgressBar = root.querySelector('#days-to-ship-progress-bar') as HTMLDivElement
+  const daysToShipProgressText = root.querySelector('#days-to-ship-progress-text') as HTMLParagraphElement
+
+  function setDaysToShipProgress(done: number, total: number, label: string): void {
+    daysToShipProgress.hidden = false
+    daysToShipProgressBar.style.width = `${total > 0 ? Math.round((done / total) * 100) : 0}%`
+    daysToShipProgressText.textContent = label
+  }
+
   daysToShipBtn.addEventListener('click', () => {
     const days = Number(daysToShipInput.value)
     if (!Number.isFinite(days) || days < 1 || days > 30) {
@@ -415,34 +439,34 @@ async function boot(): Promise<void> {
       daysToShipInput.focus()
       return
     }
+    const total = products.length
     openConfirmDialog({
       title: 'Aplicar prazo de postagem a todos',
-      body: `Isso muda o prazo de postagem pra <strong>${days} dia(s)</strong> em <strong>TODOS os ${products.length} produtos</strong> da loja na Shopee (afeta o prazo prometido pro comprador). Confirma?`,
+      body: `Isso muda o prazo de postagem pra <strong>${days} dia(s)</strong> em <strong>TODOS os ${total} produtos</strong> da loja na Shopee (afeta o prazo prometido pro comprador). Aplica 1 produto por vez — pode demorar. Confirma?`,
       confirmLabel: 'Aplicar a todos',
       danger: true,
       onConfirm: async () => {
         daysToShipBtn.disabled = true
-        statusEl.textContent = `Aplicando prazo de ${days} dia(s) a ${products.length} produto(s)…`
-        try {
-          const result = await api<{ total: number; updated: number; failed: Array<{ name: string; error?: string }> }>(
-            '/shopee/products/days-to-ship',
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ daysToShip: days }),
-            },
-          )
-          statusEl.textContent =
-            result.failed.length === 0
-              ? `Prazo de postagem atualizado em ${result.updated} produto(s).`
-              : `Prazo atualizado em ${result.updated}/${result.total} — falhou em: ${result.failed
-                  .map((f) => f.name)
-                  .join(', ')}`
-        } catch (error) {
-          statusEl.textContent = `Erro ao aplicar prazo de postagem: ${(error as Error).message}`
-        } finally {
-          daysToShipBtn.disabled = false
+        const failed: string[] = []
+        for (let i = 0; i < total; i++) {
+          const product = products[i]
+          setDaysToShipProgress(i, total, `Aplicando prazo (${i} de ${total}) — ${product.name}`)
+          try {
+            await applyDaysToShipOne(product.itemId, days)
+          } catch (error) {
+            failed.push(product.name)
+            console.warn('[days-to-ship] falhou', product.itemId, (error as Error).message)
+          }
         }
+        setDaysToShipProgress(total, total, `Concluído: ${total - failed.length}/${total}`)
+        statusEl.textContent =
+          failed.length === 0
+            ? `Prazo de postagem atualizado em ${total} produto(s).`
+            : `Prazo atualizado em ${total - failed.length}/${total} — falhou em: ${failed.join(', ')}`
+        daysToShipBtn.disabled = false
+        setTimeout(() => {
+          daysToShipProgress.hidden = true
+        }, 4000)
       },
     })
   })
