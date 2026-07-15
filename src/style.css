@@ -1665,6 +1665,14 @@ body.shopee-chat-open {
   object-fit: contain;
   background: #f1f5f9;
 }
+.shopee-chat-image-caption {
+  padding: 6px 4px 2px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #0f172a;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .shopee-chat-compose {
   display: flex;
   gap: 8px;

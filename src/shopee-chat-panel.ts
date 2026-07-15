@@ -231,7 +231,13 @@ function colorPickerHtml(pieceId: number, current: string): string {
 function renderMessageBody(msg: ShopeeChatMessage): string {
   if (msg.imageUrl) {
     const url = escapeHtml(msg.imageUrl)
-    return `<a class="shopee-chat-image-link" href="${url}" target="_blank" rel="noopener noreferrer"><img class="shopee-chat-image" src="${url}" alt="Imagem enviada no chat" loading="lazy" /></a>`
+    const img = `<a class="shopee-chat-image-link" href="${url}" target="_blank" rel="noopener noreferrer"><img class="shopee-chat-image" src="${url}" alt="Imagem enviada no chat" loading="lazy" /></a>`
+    // Mensagens tipo "image_with_text" (ex.: "Esse no vestido" junto da foto)
+    // vêm com imageUrl E text preenchidos — sem a legenda o operador precisa
+    // abrir o app da Shopee só pra ver qual peça a foto se refere.
+    const isPlaceholder = /^\[\w+\]$/.test(msg.text ?? '')
+    const caption = msg.text && !isPlaceholder ? `<div class="shopee-chat-image-caption">${escapeHtml(msg.text)}</div>` : ''
+    return img + caption
   }
   return escapeHtml(msg.text)
 }
