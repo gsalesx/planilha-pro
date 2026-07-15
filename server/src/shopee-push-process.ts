@@ -5,7 +5,7 @@ import {
   shopeeOrderExists,
   updateShopeeOrderStatus,
 } from './shopee-order-sync.js'
-import { ensureShopeeWorkbook } from './shopee-workbook.js'
+import { SHOPEE_WEBHOOK_WORKBOOK_ID } from './shopee-workbook.js'
 import { recordWebchatPushAttempt } from './shopee-webchat-push.js'
 
 function pushCode(parsed: unknown): number | null {
@@ -27,7 +27,13 @@ function extractStatus(data: unknown): string {
   return String((data as { status?: string }).status ?? '')
 }
 
-/** Code 3 — order_status_push: toda mudança de status (inclui UNPAID ao criar o pedido). */
+/**
+ * Code 3 — order_status_push: toda mudança de status (inclui UNPAID ao criar o pedido).
+ * Escopado só pro SHOPEE_WEBHOOK_WORKBOOK_ID (planilha experimental) — nunca escreve em
+ * wb_shopee, que continua exclusivo do poll de 2h. strictShipDate=true: se a Shopee ainda não
+ * calculou o ship_by_date, cai na aba "Sem data de envio" em vez de usar create_time (o resync
+ * de pending-date em index.ts reconfere depois).
+ */
 async function handleOrderStatusPush(data: unknown): Promise<void> {
   const orderSn = extractOrderSn(data)
   const status = extractStatus(data)
@@ -36,13 +42,13 @@ async function handleOrderStatusPush(data: unknown): Promise<void> {
     return
   }
 
-  if (shopeeOrderExists(orderSn)) {
-    updateShopeeOrderStatus(orderSn, status)
+  if (shopeeOrderExists(orderSn, SHOPEE_WEBHOOK_WORKBOOK_ID)) {
+    updateShopeeOrderStatus(orderSn, status, SHOPEE_WEBHOOK_WORKBOOK_ID)
     console.log('[shopee-push] status atualizado', { orderSn, status })
     return
   }
 
-  const action = await importShopeeOrderBySn(orderSn, status)
+  const action = await importShopeeOrderBySn(orderSn, status, SHOPEE_WEBHOOK_WORKBOOK_ID, true)
   if (action === 'failed') {
     console.error('[shopee-push] falha ao importar pedido novo', { orderSn, status })
     return
@@ -58,9 +64,9 @@ async function handlePlaceOrderPush(data: unknown): Promise<void> {
 
   const orderSn = extractOrderSn(data)
   if (!orderSn) return
-  if (shopeeOrderExists(orderSn)) return
+  if (shopeeOrderExists(orderSn, SHOPEE_WEBHOOK_WORKBOOK_ID)) return
 
-  const action = await importShopeeOrderBySn(orderSn, 'UNPAID')
+  const action = await importShopeeOrderBySn(orderSn, 'UNPAID', SHOPEE_WEBHOOK_WORKBOOK_ID, true)
   console.log('[shopee-push] pedido importado (code 8 place_order)', { orderSn, action })
 }
 
@@ -102,14 +108,15 @@ function handleWebchatMessagePush(data: unknown): void {
 }
 
 /**
- * Desativado em 2026-07-03: importação/atualização de pedidos e a saudação automática passam a
- * vir só do poll de 8h (ver syncRecentShopeeOrders/resyncPendingDateOrders em index.ts) — o push
- * estava chegando com o pedido ainda sem ship_by_date calculado. O endpoint /api/shopee/push
- * continua respondendo 200 normalmente (handleShopeePushPost) pra não invalidar a assinatura na
- * Shopee; só o processamento fica parado aqui. Reativar: virar `true` de novo. O vínculo
+ * Reativado em 2026-07-15 (era `false` desde 2026-07-03 — o push chegava com o pedido ainda sem
+ * ship_by_date calculado). Agora o código 3/8 escreve SÓ em SHOPEE_WEBHOOK_WORKBOOK_ID (planilha
+ * experimental duplicada de wb_shopee), nunca na oficial — wb_shopee continua exclusiva do poll
+ * de 2h (ver index.ts). handleOrderStatusPush/handlePlaceOrderPush chamam com
+ * `strictShipDate=true`: se ship_by_date ainda não veio, cai na aba "Sem data de envio" (não usa
+ * create_time como fallback) e é reconferido pelo resync próprio em index.ts. O vínculo
  * automático de chat (code 10) NÃO depende desta flag — roda sempre, ver handleWebchatMessagePush.
  */
-const PUSH_PROCESSING_ENABLED = false
+const PUSH_PROCESSING_ENABLED = true
 
 /** Processa pushes de pedido — chamar após responder 200 à Shopee. */
 export async function processShopeePush(parsed: unknown): Promise<void> {
@@ -135,8 +142,6 @@ export async function processShopeePush(parsed: unknown): Promise<void> {
   }
 
   if (!PUSH_PROCESSING_ENABLED) return
-
-  ensureShopeeWorkbook()
 
   if (code === 3) {
     await handleOrderStatusPush(data)

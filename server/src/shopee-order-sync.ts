@@ -71,11 +71,17 @@ function formatSheetDate(unixSec: number): string {
  */
 export const SHOPEE_PENDING_DATE_LABEL = 'Sem data de envio'
 
-/** Data do `<select>` no header — prevista de envio (ship_by_date), não data da compra. */
-function resolveSheetDate(order: ShopeeOrderDetail): string {
+/**
+ * Data do `<select>` no header — prevista de envio (ship_by_date), não data da compra.
+ * `strictShipDate` (usado pelo workbook alimentado por webhook): NÃO cai pro create_time
+ * quando ship_by_date ainda não veio — força SHOPEE_PENDING_DATE_LABEL de propósito, pra cair
+ * na aba "Sem data de envio" e ser reconferido depois, em vez de misturar data de compra com
+ * data de envio (o push às vezes chega antes da Shopee calcular o prazo).
+ */
+function resolveSheetDate(order: ShopeeOrderDetail, strictShipDate = false): string {
   // `||` (não `??`): a Shopee manda ship_by_date=0 (não null/undefined) quando ainda não calculou
-  // o prazo — precisa cair pro create_time nesse caso.
-  const ts = order.ship_by_date || order.create_time
+  // o prazo — precisa cair pro create_time nesse caso (exceto em strictShipDate).
+  const ts = strictShipDate ? order.ship_by_date : order.ship_by_date || order.create_time
   return ts ? formatSheetDate(ts) : SHOPEE_PENDING_DATE_LABEL
 }
 
@@ -153,22 +159,22 @@ interface ExistingOrderRow {
   sheet_date: string
 }
 
-function findOrderByKey(orderKey: string): ExistingOrderRow | undefined {
+function findOrderByKey(orderKey: string, workbookId: string = SHOPEE_WORKBOOK_ID): ExistingOrderRow | undefined {
   return db
     .prepare('SELECT order_key, row_json, sheet_date FROM orders WHERE workbook_id = ? AND order_key = ?')
-    .get(SHOPEE_WORKBOOK_ID, orderKey) as ExistingOrderRow | undefined
+    .get(workbookId, orderKey) as ExistingOrderRow | undefined
 }
 
-function findOrdersBySn(orderSn: string): ExistingOrderRow[] {
+function findOrdersBySn(orderSn: string, workbookId: string = SHOPEE_WORKBOOK_ID): ExistingOrderRow[] {
   return db
     .prepare(
       'SELECT order_key, row_json, sheet_date FROM orders WHERE workbook_id = ? AND id = ? ORDER BY order_key ASC',
     )
-    .all(SHOPEE_WORKBOOK_ID, orderSn) as ExistingOrderRow[]
+    .all(workbookId, orderSn) as ExistingOrderRow[]
 }
 
-export function shopeeOrderExists(orderSn: string): boolean {
-  return findOrdersBySn(orderSn.trim()).length > 0
+export function shopeeOrderExists(orderSn: string, workbookId: string = SHOPEE_WORKBOOK_ID): boolean {
+  return findOrdersBySn(orderSn.trim(), workbookId).length > 0
 }
 
 function sleep(ms: number): Promise<void> {
@@ -179,6 +185,8 @@ function sleep(ms: number): Promise<void> {
 export async function importShopeeOrderBySn(
   orderSn: string,
   fallbackStatus?: string,
+  workbookId: string = SHOPEE_WORKBOOK_ID,
+  strictShipDate = false,
 ): Promise<'created' | 'updated' | 'unchanged' | 'failed'> {
   const sn = orderSn.trim()
   if (!sn) return 'failed'
@@ -195,7 +203,7 @@ export async function importShopeeOrderBySn(
         continue
       }
       if (fallbackStatus && !order.order_status) order.order_status = fallbackStatus
-      return upsertShopeeOrder(order)
+      return upsertShopeeOrder(order, workbookId, strictShipDate)
     } catch (error) {
       console.warn(
         `[shopee-push] get_order_detail erro (tentativa ${attempt + 1}/${retryDelaysMs.length})`,
@@ -213,11 +221,15 @@ export async function importShopeeOrderBySn(
  * rotinas de reconferência (resyncPendingDateOrders/resyncReadyToShipDates) que rodam de novo
  * sobre pedidos que já estavam certos.
  */
-export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'updated' | 'unchanged' {
+export function upsertShopeeOrder(
+  order: ShopeeOrderDetail,
+  workbookId: string = SHOPEE_WORKBOOK_ID,
+  strictShipDate = false,
+): 'created' | 'updated' | 'unchanged' {
   const orderSn = order.order_sn?.trim()
   if (!orderSn) throw new Error('order_sn ausente')
 
-  const sheetDate = resolveSheetDate(order)
+  const sheetDate = resolveSheetDate(order, strictShipDate)
   const itemRows = mapShopeeOrderToItemRows(order)
   const shopeeStatus = order.order_status ?? ''
   const recipient = order.recipient_address?.name ?? ''
@@ -228,7 +240,7 @@ export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'update
   let nextPos =
     (db
       .prepare('SELECT COALESCE(MAX(position), -1) AS m FROM orders WHERE workbook_id = ?')
-      .get(SHOPEE_WORKBOOK_ID) as { m: number }).m + 1
+      .get(workbookId) as { m: number }).m + 1
 
   const updateStmt = db.prepare(
     'UPDATE orders SET row_json = ?, sheet_date = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
@@ -241,9 +253,9 @@ export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'update
   for (let i = 0; i < itemRows.length; i++) {
     const occurrence = i + 1
     const orderKey = shopeeOrderKey(sheetDate, orderSn, occurrence)
-    let existing = findOrderByKey(orderKey)
+    let existing = findOrderByKey(orderKey, workbookId)
     if (!existing && occurrence === 1) {
-      const legacy = findOrdersBySn(orderSn)
+      const legacy = findOrdersBySn(orderSn, workbookId)
       if (legacy.length === 1) existing = legacy[0]
     }
 
@@ -263,7 +275,7 @@ export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'update
       applyInternalStatusFromShopee(row, shopeeStatus)
       const rowJson = JSON.stringify(row)
       if (rowJson !== existing.row_json || sheetDate !== existing.sheet_date) {
-        updateStmt.run(rowJson, sheetDate, now, SHOPEE_WORKBOOK_ID, existing.order_key)
+        updateStmt.run(rowJson, sheetDate, now, workbookId, existing.order_key)
         anyChanged = true
       }
     } else {
@@ -271,7 +283,7 @@ export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'update
       anyCreated = true
       anyChanged = true
       insertStmt.run(
-        SHOPEE_WORKBOOK_ID,
+        workbookId,
         orderKey,
         orderSn,
         JSON.stringify(row),
@@ -285,14 +297,18 @@ export function upsertShopeeOrder(order: ShopeeOrderDetail): 'created' | 'update
   }
 
   if (anyChanged) {
-    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, SHOPEE_WORKBOOK_ID)
+    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
   }
   return anyCreated ? 'created' : anyChanged ? 'updated' : 'unchanged'
 }
 
 /** Atualiza Status Shopee (col H) em todas as linhas do pedido — push code 3. */
-export function updateShopeeOrderStatus(orderSn: string, shopeeStatus: string): 'updated' | 'missing' {
-  const rows = findOrdersBySn(orderSn.trim())
+export function updateShopeeOrderStatus(
+  orderSn: string,
+  shopeeStatus: string,
+  workbookId: string = SHOPEE_WORKBOOK_ID,
+): 'updated' | 'missing' {
+  const rows = findOrdersBySn(orderSn.trim(), workbookId)
   if (rows.length === 0) return 'missing'
   const now = nowMs()
   const updateStmt = db.prepare(
@@ -303,9 +319,9 @@ export function updateShopeeOrderStatus(orderSn: string, shopeeStatus: string): 
     while (row.length < SHOPEE_ROW_COLS) row.push('')
     row[SHOPEE_COL_SHOPEE_STATUS] = shopeeStatus
     applyInternalStatusFromShopee(row, shopeeStatus)
-    updateStmt.run(JSON.stringify(row), now, SHOPEE_WORKBOOK_ID, existing.order_key)
+    updateStmt.run(JSON.stringify(row), now, workbookId, existing.order_key)
   }
-  db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, SHOPEE_WORKBOOK_ID)
+  db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
   return 'updated'
 }
 
@@ -356,7 +372,12 @@ async function collectOrderSns(
 export const SHOPEE_POLL_LOOKBACK_HOURS = 20
 
 /** Busca detalhe em lotes de 50 e faz upsert — usado por todas as rotinas de sync abaixo. */
-async function upsertOrderSnsBatched(orderSns: string[], preErrors: string[] = []): Promise<ShopeeSyncResult> {
+async function upsertOrderSnsBatched(
+  orderSns: string[],
+  preErrors: string[] = [],
+  workbookId: string = SHOPEE_WORKBOOK_ID,
+  strictShipDate = false,
+): Promise<ShopeeSyncResult> {
   const result: ShopeeSyncResult = { listed: orderSns.length, created: 0, updated: 0, errors: [...preErrors] }
 
   for (let i = 0; i < orderSns.length; i += 50) {
@@ -366,7 +387,7 @@ async function upsertOrderSnsBatched(orderSns: string[], preErrors: string[] = [
       const orders = parseOrderList(data)
       for (const order of orders) {
         try {
-          const action = upsertShopeeOrder(order)
+          const action = upsertShopeeOrder(order, workbookId, strictShipDate)
           if (action === 'created') result.created++
           else if (action === 'updated') result.updated++
         } catch (error) {
@@ -420,10 +441,10 @@ export async function syncRecentlyUpdatedShopeeOrders(options: {
   return upsertOrderSnsBatched(orderSns, errors)
 }
 
-function findOrderSnsPendingDate(): string[] {
+function findOrderSnsPendingDate(workbookId: string = SHOPEE_WORKBOOK_ID): string[] {
   const rows = db
     .prepare('SELECT DISTINCT id FROM orders WHERE workbook_id = ? AND sheet_date IN (?, ?)')
-    .all(SHOPEE_WORKBOOK_ID, SHOPEE_PENDING_DATE_LABEL, '') as Array<{ id: string }>
+    .all(workbookId, SHOPEE_PENDING_DATE_LABEL, '') as Array<{ id: string }>
   return rows.map((r) => r.id)
 }
 
@@ -432,16 +453,21 @@ function findOrderSnsPendingDate(): string[] {
  * pela Shopee na 1ª importação) — roda junto do poll de 2h, sem depender da janela de tempo,
  * já que um pedido pode ficar dias parado antes do prazo de envio aparecer. Também cobre
  * `sheet_date=''` (pedidos que caíram antes do fix, sem o rótulo novo) — autocorrige sozinho.
+ * `strictShipDate` propaga pro upsert — usado pelo workbook do webhook (ver
+ * SHOPEE_WEBHOOK_WORKBOOK_ID) pra não voltar a cair no fallback create_time.
  */
-export async function resyncPendingDateOrders(): Promise<ShopeeSyncResult> {
+export async function resyncPendingDateOrders(
+  workbookId: string = SHOPEE_WORKBOOK_ID,
+  strictShipDate = false,
+): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
-  return upsertOrderSnsBatched(findOrderSnsPendingDate())
+  return upsertOrderSnsBatched(findOrderSnsPendingDate(workbookId), [], workbookId, strictShipDate)
 }
 
-function findOrderSnsReadyToShip(): string[] {
+function findOrderSnsReadyToShip(workbookId: string = SHOPEE_WORKBOOK_ID): string[] {
   const rows = db
     .prepare('SELECT id, row_json FROM orders WHERE workbook_id = ?')
-    .all(SHOPEE_WORKBOOK_ID) as Array<{ id: string; row_json: string }>
+    .all(workbookId) as Array<{ id: string; row_json: string }>
   const orderSns = new Set<string>()
   for (const row of rows) {
     let cells: string[]
@@ -460,9 +486,9 @@ function findOrderSnsReadyToShip(): string[] {
  * pedidos que vieram com data errada antes do fix do `resolveSheetDate`, e cobre o caso da
  * Shopee às vezes empurrar o ship_by_date +1 dia depois (bug do lado deles) já visto na prática.
  */
-export async function resyncReadyToShipDates(): Promise<ShopeeSyncResult> {
+export async function resyncReadyToShipDates(workbookId: string = SHOPEE_WORKBOOK_ID): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
-  return upsertOrderSnsBatched(findOrderSnsReadyToShip())
+  return upsertOrderSnsBatched(findOrderSnsReadyToShip(workbookId), [], workbookId)
 }
 
 async function collectAllOrderSns(timeFrom: number, timeTo: number, errors?: string[]): Promise<string[]> {

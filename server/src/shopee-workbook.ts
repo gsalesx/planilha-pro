@@ -4,6 +4,14 @@ import { db, nowMs } from './db.js'
 export const SHOPEE_WORKBOOK_ID = 'wb_shopee'
 export const SHOPEE_WORKBOOK_NAME = 'Shopee — automática'
 
+/**
+ * Planilha experimental (2026-07-15), duplicada de wb_shopee, alimentada SÓ pelo webhook da
+ * Shopee (PUSH_PROCESSING_ENABLED em shopee-push-process.ts) — nunca pelo poll de 2h. Objetivo:
+ * comparar por um tempo se cron ou webhook perde algum pedido, e decidir qual manter. wb_shopee
+ * continua sendo a planilha oficial que o time usa; esta é só observação/comparação.
+ */
+export const SHOPEE_WEBHOOK_WORKBOOK_ID = 'wb_574714e9c8d6516b'
+
 export function isShopeeWorkbookId(id: string): boolean {
   return id === SHOPEE_WORKBOOK_ID
 }
