@@ -507,6 +507,25 @@ export async function resyncProcessedOrders(workbookId: string = SHOPEE_WORKBOOK
   return upsertOrderSnsBatched(findOrderSnsByShopeeStatus(['PROCESSED'], workbookId), [], workbookId)
 }
 
+function findAllOrderSns(workbookId: string = SHOPEE_WORKBOOK_ID): string[] {
+  const rows = db
+    .prepare('SELECT DISTINCT id FROM orders WHERE workbook_id = ?')
+    .all(workbookId) as Array<{ id: string }>
+  return rows.map((r) => r.id)
+}
+
+/**
+ * Reconfere TODO pedido que já está no workbook, um por um, contra o detalhe real na Shopee —
+ * conferência manual completa (2026-07-15). Diferente de `syncShopeeWorkbookOrders`: NUNCA lista
+ * pedido novo via get_order_list (isso importou ~3200 pedidos históricos nunca rastreados sem
+ * querer, teve que reverter) — só busca o order_sn de quem JÁ está no nosso banco, então é
+ * impossível esse resync criar pedido novo, só atualizar os existentes.
+ */
+export async function resyncAllKnownOrders(workbookId: string = SHOPEE_WORKBOOK_ID): Promise<ShopeeSyncResult> {
+  ensureShopeeWorkbook()
+  return upsertOrderSnsBatched(findAllOrderSns(workbookId), [], workbookId)
+}
+
 async function collectAllOrderSns(timeFrom: number, timeTo: number, errors?: string[]): Promise<string[]> {
   return collectOrderSns(timeFrom, timeTo, errors)
 }

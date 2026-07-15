@@ -24,6 +24,7 @@ import {
   mapShopeeOrderToItemRows,
   mapShopeeOrderToRow,
   parseShopeeOrderDetail,
+  resyncAllKnownOrders,
   resyncPendingDateOrders,
   resyncReadyToShipDates,
   syncRecentShopeeOrders,
@@ -167,6 +168,29 @@ router.post('/shopee/sync-workbook', requireAuth, async (req, res) => {
     res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'Erro ao sincronizar planilha Shopee',
+    })
+  }
+})
+
+/**
+ * POST /api/shopee/resync-all — reconfere TODO pedido já existente no workbook contra o
+ * detalhe real na Shopee, um por um (status, data de envio, nome do destinatário). NUNCA lista
+ * pedido novo via get_order_list — só atualiza order_sn que já está no nosso banco, então não
+ * corre o risco de importar histórico não rastreado (ver `syncShopeeWorkbookOrders`, que faz
+ * isso e já causou um import indesejado de ~3200 pedidos antigos em 2026-07-15).
+ */
+router.post('/shopee/resync-all', requireAuth, async (_req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  try {
+    const result = await resyncAllKnownOrders()
+    res.json({ ok: true, ...result })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao reconferir pedidos',
     })
   }
 })
