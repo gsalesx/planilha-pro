@@ -480,6 +480,19 @@ export async function sendShopeePreview(opts: {
   })
 }
 
+/** Manda uma mensagem inicial (ex. "Oi") pro comprador de um pedido sem chat vinculado
+ * ainda — a Shopee cria a conversa na hora, sem precisar de contato prévio do comprador. */
+export async function startShopeeConversation(opts: {
+  orderKey: string
+  message?: string
+}): Promise<{ ok: boolean; buyerUserId: number; buyerUsername: string; conversationId: string }> {
+  return request('/shopee/messages/start-conversation', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+}
+
 /* ===========================================================
    Peças por pedido (Fase 2 migração SKU→peça — picker no chat)
    =========================================================== */

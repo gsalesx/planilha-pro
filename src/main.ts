@@ -18,6 +18,7 @@ import {
   clearShopeeBuyerChats,
   uploadImage,
   sendShopeePreview,
+  startShopeeConversation,
   type OrderStyleDelta,
 } from './api'
 import {
@@ -901,19 +902,36 @@ function handleChatRequest(row: number, col: number) {
     openAlertDialog({ title: 'Chat Shopee', body: 'Esta linha não tem username na coluna E.' })
     return
   }
-  const linked = grid?.getLinkedChatUsernames().has(buyerUsername.toLowerCase())
-  if (!linked) {
-    openAlertDialog({
-      title: 'Chat Shopee',
-      body: 'Chat não vinculado. Use "Vincular conversas Shopee" na barra de ferramentas.',
-    })
-    return
-  }
   const orderKey = getOrderKey(row)
   if (!orderKey || !currentWorkbookId) {
     openAlertDialog({ title: 'Chat Shopee', body: 'Não foi possível identificar o pedido desta linha.' })
     return
   }
+  const linked = grid?.getLinkedChatUsernames().has(buyerUsername.toLowerCase())
+  if (!linked) {
+    openConfirmDialog({
+      title: 'Chat Shopee',
+      body:
+        'Chat não vinculado ainda (comprador nunca mandou mensagem). Use "Vincular conversas Shopee" ' +
+        'na barra de ferramentas se ele já tiver conversado, ou clique em "Iniciar conversa" pra mandar ' +
+        'um "Oi" agora e abrir o chat.',
+      confirmLabel: 'Iniciar conversa',
+      onConfirm: () => startChatForRow(row, col, orderKey, buyerUsername),
+    })
+    return
+  }
+  openChatPanelForRow(row, col, orderKey, cells, sheet, buyerUsername)
+}
+
+function openChatPanelForRow(
+  row: number,
+  col: number,
+  orderKey: string,
+  cells: CellValue[],
+  sheet: SheetData,
+  buyerUsername: string,
+) {
+  if (!currentWorkbookId) return
   void openShopeeChatPanel({
     workbookId: currentWorkbookId,
     orderKey,
@@ -927,6 +945,28 @@ function handleChatRequest(row: number, col: number) {
     sheetDate: sheet.rowDates?.[row] ?? '',
     onConfirmed: () => grid?.selectAndReveal(row, col),
   })
+}
+
+/** Manda "Oi" pro comprador via order_detail (sem precisar de chat prévio), religa
+ * o cache local de chats vinculados e abre o painel de chat na sequência. */
+async function startChatForRow(
+  row: number,
+  col: number,
+  orderKey: string,
+  buyerUsername: string,
+): Promise<void> {
+  setStatusText('Iniciando conversa...')
+  try {
+    await startShopeeConversation({ orderKey })
+    await refreshLinkedBuyerChats()
+    setStatusText('Conversa iniciada')
+    const sheet = workbook?.sheets[workbook.sheetOrder[0]]
+    const cells = sheet?.rows[row]
+    if (!sheet || !cells) return
+    openChatPanelForRow(row, col, orderKey, cells, sheet, buyerUsername)
+  } catch (error) {
+    handleApiError(error, 'Falha ao iniciar conversa')
+  }
 }
 
 function getCurrentSelectedRows(): number[] {

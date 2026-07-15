@@ -18,6 +18,7 @@ import {
   getOrderList,
   getOrderDetail,
   getShopInfo,
+  ORDER_BUYER_FIELDS,
   SHOPEE_CONVERSATION_SCAN_MAX,
 } from '../shopee-api.js'
 import {
@@ -31,7 +32,7 @@ import {
   syncShopeeWorkbookOrders,
   SHOPEE_POLL_LOOKBACK_HOURS,
 } from '../shopee-order-sync.js'
-import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames, getWorkbookLinkStatus, clearBuyerChatsForWorkbook, getLinkScanBootstrap, saveLinkStartCursor, loadLinkStartCursor, warmLinkStartCursorChunk } from '../shopee-link-conversations.js'
+import { linkConversationsForWorkbook, linkConversationsScanChunk, getBuyerChatByUsername, listLinkedBuyerUsernames, getWorkbookLinkStatus, clearBuyerChatsForWorkbook, getLinkScanBootstrap, saveLinkStartCursor, loadLinkStartCursor, warmLinkStartCursorChunk, linkBuyerChatFromWebchatMessage } from '../shopee-link-conversations.js'
 import {
   armAutoGreet,
   disarmAutoGreet,
@@ -681,6 +682,76 @@ router.post('/shopee/messages/send-preview', requireAuth, async (req, res) => {
       query: { username, workbookId, orderKey, col },
       shopeeImageUrl,
     })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/**
+ * POST /api/shopee/messages/start-conversation — inicia um chat novo com o comprador
+ * quando ainda não existe conversa (botão "Iniciar conversa" ao lado de "Vincular
+ * conversas Shopee", pra pedido sem chat vinculado). Busca buyer_user_id via
+ * get_order_detail (a Shopee não permite buscar por username, só a partir do pedido
+ * ou de uma conversa já existente) e manda a mensagem — mesmo padrão do
+ * shopee-auto-greet.ts, só que sob demanda em vez de automático no READY_TO_SHIP.
+ */
+router.post('/shopee/messages/start-conversation', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const orderKey = typeof req.body?.orderKey === 'string' ? req.body.orderKey.trim() : ''
+  const message =
+    typeof req.body?.message === 'string' && req.body.message.trim() ? req.body.message.trim() : 'Oi'
+  if (!orderKey) {
+    res.status(400).json({ error: 'orderKey obrigatório' })
+    return
+  }
+  try {
+    const detail = await getOrderDetail([orderKey], ORDER_BUYER_FIELDS)
+    if (detail.error) {
+      res.status(502).json({
+        ok: false,
+        error: `${detail.error}${detail.message ? ` — ${detail.message}` : ''}`,
+      })
+      return
+    }
+    const detailBody =
+      detail.response != null && typeof detail.response === 'object'
+        ? (detail.response as Record<string, unknown>)
+        : (detail as Record<string, unknown>)
+    const list = (detailBody.order_list as Array<Record<string, unknown>> | undefined) ?? []
+    const row = list.find((o) => o.order_sn === orderKey) ?? list[0]
+    const buyerUserId = Number(row?.buyer_user_id) || 0
+    const buyerUsername = typeof row?.buyer_username === 'string' ? row.buyer_username : ''
+    if (!buyerUserId) {
+      res.status(502).json({ ok: false, error: 'buyer_user_id não retornado pelo pedido' })
+      return
+    }
+
+    const sent = await sendChatMessage({ toId: buyerUserId, text: message })
+    if (sent.error) {
+      res.status(502).json({
+        ok: false,
+        error: `${sent.error}${sent.message ? ` — ${sent.message}` : ''}`,
+      })
+      return
+    }
+    const sentBody =
+      sent.response != null && typeof sent.response === 'object'
+        ? (sent.response as Record<string, unknown>)
+        : (sent as Record<string, unknown>)
+    const conversationId =
+      sentBody.conversation_id != null ? String(sentBody.conversation_id) : ''
+
+    if (buyerUsername && conversationId) {
+      linkBuyerChatFromWebchatMessage({ buyerUserId, buyerUsername, conversationId })
+    }
+
+    res.json({ ok: true, buyerUserId, buyerUsername, conversationId })
   } catch (error) {
     res.status(502).json({
       ok: false,
