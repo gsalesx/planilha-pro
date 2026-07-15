@@ -1,7 +1,7 @@
 import './style.css'
 
 import { checkAuth, login } from './api'
-import { openPromptDialog } from './dialog'
+import { openConfirmDialog, openPromptDialog } from './dialog'
 
 export interface CatalogProduct {
   itemId: number
@@ -136,6 +136,11 @@ async function boot(): Promise<void> {
           <label class="shopee-products-select-all">
             <input type="checkbox" id="select-all" /> Selecionar todos
           </label>
+          <label class="shopee-products-days-to-ship-label">
+            <span>Prazo de postagem (todos)</span>
+            <input type="number" id="days-to-ship-input" min="1" max="30" step="1" placeholder="dias" />
+          </label>
+          <button type="button" class="btn" id="btn-days-to-ship">Aplicar a todos</button>
           <button type="button" class="btn" id="btn-refresh">Atualizar</button>
         </div>
       </header>
@@ -400,6 +405,47 @@ async function boot(): Promise<void> {
   })
 
   root.querySelector('#btn-refresh')!.addEventListener('click', () => void loadCatalog())
+
+  const daysToShipInput = root.querySelector('#days-to-ship-input') as HTMLInputElement
+  const daysToShipBtn = root.querySelector('#btn-days-to-ship') as HTMLButtonElement
+  daysToShipBtn.addEventListener('click', () => {
+    const days = Number(daysToShipInput.value)
+    if (!Number.isFinite(days) || days < 1 || days > 30) {
+      alert('Digite um número de dias entre 1 e 30.')
+      daysToShipInput.focus()
+      return
+    }
+    openConfirmDialog({
+      title: 'Aplicar prazo de postagem a todos',
+      body: `Isso muda o prazo de postagem pra <strong>${days} dia(s)</strong> em <strong>TODOS os ${products.length} produtos</strong> da loja na Shopee (afeta o prazo prometido pro comprador). Confirma?`,
+      confirmLabel: 'Aplicar a todos',
+      danger: true,
+      onConfirm: async () => {
+        daysToShipBtn.disabled = true
+        statusEl.textContent = `Aplicando prazo de ${days} dia(s) a ${products.length} produto(s)…`
+        try {
+          const result = await api<{ total: number; updated: number; failed: Array<{ name: string; error?: string }> }>(
+            '/shopee/products/days-to-ship',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ daysToShip: days }),
+            },
+          )
+          statusEl.textContent =
+            result.failed.length === 0
+              ? `Prazo de postagem atualizado em ${result.updated} produto(s).`
+              : `Prazo atualizado em ${result.updated}/${result.total} — falhou em: ${result.failed
+                  .map((f) => f.name)
+                  .join(', ')}`
+        } catch (error) {
+          statusEl.textContent = `Erro ao aplicar prazo de postagem: ${(error as Error).message}`
+        } finally {
+          daysToShipBtn.disabled = false
+        }
+      },
+    })
+  })
 
   await loadCatalog()
 }

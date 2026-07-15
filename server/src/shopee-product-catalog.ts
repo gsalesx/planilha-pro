@@ -4,6 +4,7 @@ import {
   getItemBaseInfo,
   getModelList,
   type ShopeeApiResponse,
+  updateItemDaysToShip,
   updateItemSku,
   updateModelSkus,
 } from './shopee-api.js'
@@ -25,6 +26,7 @@ export interface CatalogProduct {
   hasModel: boolean
   models: CatalogModel[]
   status: string
+  daysToShip: number | null
 }
 
 interface ItemBaseRow {
@@ -36,6 +38,7 @@ interface ItemBaseRow {
   image?: { image_url_list?: string[]; image_url?: string }
   price_info?: Array<{ current_price?: number; original_price?: number }> | { current_price?: number }
   stock_info_v2?: { summary_info?: { total_available_stock?: number } }
+  pre_order?: { is_pre_order?: boolean; days_to_ship?: number }
 }
 
 interface ModelRow {
@@ -68,6 +71,7 @@ function mapItemBaseFromRow(row: ItemBaseRow): CatalogProduct {
     hasModel: Boolean(row.has_model),
     models: [],
     status: row.item_status ?? '',
+    daysToShip: row.pre_order?.days_to_ship ?? null,
   }
 }
 
@@ -166,4 +170,54 @@ export async function applyProductSkuUpdate(itemId: number, sku: string): Promis
       assertShopeeOk(modelData as ShopeeApiResponse<Record<string, unknown>>, 'update_model')
     }
   }
+}
+
+export interface DaysToShipResult {
+  itemId: number
+  name: string
+  ok: boolean
+  error?: string
+}
+
+/** Chamadas de escrita em paralelo — mais baixo que MODEL_FETCH_CONCURRENCY (leitura) porque
+ * update_item é mais sensível a rate limit do que get_model_list. */
+const DAYS_TO_SHIP_CONCURRENCY = 3
+
+/** Aplica o mesmo prazo de postagem (dias) a TODOS os produtos do catálogo. `is_pre_order` de
+ * cada item é preservado (lido do próprio get_item_base_info, não é possível mudar só
+ * days_to_ship sem mandar o par pra Shopee). Best-effort: item que falhar não derruba o resto,
+ * volta no resultado com `ok:false` + motivo. */
+export async function applyDaysToShipToAll(daysToShip: number): Promise<DaysToShipResult[]> {
+  if (!Number.isFinite(daysToShip) || daysToShip < 1 || daysToShip > 30) {
+    throw new Error('Prazo de postagem deve ser um número entre 1 e 30 dias')
+  }
+
+  const itemIds = await fetchAllItemIds()
+  const rows: ItemBaseRow[] = []
+  for (let i = 0; i < itemIds.length; i += 50) {
+    const batch = itemIds.slice(i, i + 50)
+    const data = await getItemBaseInfo(batch)
+    rows.push(...parseItemList(data))
+  }
+
+  const results: DaysToShipResult[] = []
+  await mapWithConcurrency(rows, DAYS_TO_SHIP_CONCURRENCY, async (row) => {
+    if (!row.item_id) return
+    const name = row.item_name ?? String(row.item_id)
+    try {
+      const isPreOrder = row.pre_order?.is_pre_order ?? false
+      const data = await updateItemDaysToShip(row.item_id, daysToShip, isPreOrder)
+      assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'update_item')
+      results.push({ itemId: row.item_id, name, ok: true })
+    } catch (error) {
+      results.push({
+        itemId: row.item_id,
+        name,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  })
+
+  return results
 }

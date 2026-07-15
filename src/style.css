@@ -3075,6 +3075,24 @@ table.sheet tbody th.row-num.is-active {
   cursor: pointer;
 }
 
+.shopee-products-days-to-ship-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.shopee-products-days-to-ship-label input {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #1f2937;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 0.85rem;
+  width: 64px;
+}
+
 .shopee-products-search {
   border: 1px solid #cbd5e1;
   background: #fff;

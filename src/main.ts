@@ -43,6 +43,7 @@ import {
   SHOPEE_DEFAULT_STATUS_FILTER,
   SHOPEE_STATUS_COLUMN_INDEX,
   SHOPEE_STATUS_FILTER_OPTIONS,
+  shopeeStatusMatchValues,
 } from './shopee-workbook'
 import { openShopeeChatPanel } from './shopee-chat-panel'
 import { FIXED_HEADERS, parseXlsx } from './xlsx-parser'
@@ -559,7 +560,10 @@ function renderDateSelect() {
     // Quick-list: só datas com pedido "a enviar" (READY_TO_SHIP) + a data ativa (se for outra,
     // ex.: chegou via busca/pendência) + "Personalizado" abrindo o calendário com TODAS as datas.
     const readyDates = sortDates(
-      grid.getAvailableDatesForColumnValue(SHOPEE_STATUS_COLUMN_INDEX, SHOPEE_DEFAULT_STATUS_FILTER),
+      grid.getAvailableDatesForColumnValue(
+        SHOPEE_STATUS_COLUMN_INDEX,
+        shopeeStatusMatchValues(SHOPEE_DEFAULT_STATUS_FILTER),
+      ),
     )
     const quickDates = active && !readyDates.includes(active) ? sortDates([...readyDates, active]) : readyDates
     select.innerHTML =
@@ -632,7 +636,10 @@ function renderShopeeStatusSelect() {
   ).join('')
   select.onchange = () => {
     currentShopeeStatusFilter = select.value
-    grid.setColumnFilter(SHOPEE_STATUS_COLUMN_INDEX, currentShopeeStatusFilter ? [currentShopeeStatusFilter] : null)
+    grid.setColumnFilter(
+      SHOPEE_STATUS_COLUMN_INDEX,
+      currentShopeeStatusFilter ? shopeeStatusMatchValues(currentShopeeStatusFilter) : null,
+    )
     updateStatusCounts()
   }
   // Reaplica após poll/applyUrlGridViewState — o dropdown sozinho não restaura o filtro na grid.
@@ -1456,11 +1463,17 @@ async function refreshFromServer(options: { force?: boolean } = {}): Promise<boo
     grid.setWorkbook(workbook)
     if (isShopeeWorkbookId(currentWorkbookId)) {
       // grid.setWorkbook() limpa this.filters a cada poll — reaplica o status ativo.
-      grid.setColumnFilter(SHOPEE_STATUS_COLUMN_INDEX, currentShopeeStatusFilter ? [currentShopeeStatusFilter] : null)
+      grid.setColumnFilter(
+      SHOPEE_STATUS_COLUMN_INDEX,
+      currentShopeeStatusFilter ? shopeeStatusMatchValues(currentShopeeStatusFilter) : null,
+    )
       if (!shopeeDateDefaultApplied) {
         shopeeDateDefaultApplied = true
         const readyDates = sortDates(
-          grid.getAvailableDatesForColumnValue(SHOPEE_STATUS_COLUMN_INDEX, SHOPEE_DEFAULT_STATUS_FILTER),
+          grid.getAvailableDatesForColumnValue(
+        SHOPEE_STATUS_COLUMN_INDEX,
+        shopeeStatusMatchValues(SHOPEE_DEFAULT_STATUS_FILTER),
+      ),
         )
         const requestedUrlDate = getUrlDate()
         const requestedHasReady =

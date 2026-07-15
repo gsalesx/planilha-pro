@@ -319,6 +319,20 @@ export async function updateItemSku(itemId: number, itemSku: string): Promise<Sh
   })
 }
 
+/** Prazo de postagem (dias pra despachar) — `is_pre_order` precisa ir junto, a Shopee rejeita
+ * `days_to_ship` sozinho sem o par. Ler o valor atual de `is_pre_order` (get_item_base_info,
+ * campo pre_order) antes de chamar, pra não mudar esse flag sem querer. */
+export async function updateItemDaysToShip(
+  itemId: number,
+  daysToShip: number,
+  isPreOrder: boolean,
+): Promise<ShopeeApiResponse> {
+  return shopApiPost('/api/v2/product/update_item', {
+    item_id: itemId,
+    pre_order: { is_pre_order: isPreOrder, days_to_ship: daysToShip },
+  })
+}
+
 export async function updateModelSkus(
   itemId: number,
   models: Array<{ model_id: number; model_sku: string }>,

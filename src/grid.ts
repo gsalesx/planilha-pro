@@ -247,17 +247,19 @@ export class GridView {
     return [...set]
   }
 
-  /** Datas que têm pelo menos 1 linha com `col === value` — usado pelo quick-select de status Shopee. */
-  getAvailableDatesForColumnValue(col: number, value: string): string[] {
+  /** Datas que têm pelo menos 1 linha com `col` batendo em algum de `values` (OR) — usado pelo
+   * quick-select de status Shopee. */
+  getAvailableDatesForColumnValue(col: number, values: string | string[]): string[] {
     const sheet = this.getActiveSheet()
     if (!sheet) return []
+    const wanted = new Set(Array.isArray(values) ? values : [values])
     const dates = sheet.rowDates ?? []
     const set = new Set<string>()
     for (let i = 0; i < dates.length; i++) {
       const d = dates[i]
       if (!d) continue
       const cell = sheet.rows[i]?.[col]
-      if (cell != null && String(cell) === value) set.add(d)
+      if (cell != null && wanted.has(String(cell))) set.add(d)
     }
     return [...set]
   }

@@ -34,6 +34,21 @@ export const SHOPEE_STATUS_FILTER_OPTIONS: ShopeeStatusFilterOption[] = [
 /** Status padrão ao entrar na planilha Shopee — também define quais datas aparecem no quick-select. */
 export const SHOPEE_DEFAULT_STATUS_FILTER = 'READY_TO_SHIP'
 
+/**
+ * "A enviar" precisa casar mais de 1 status da Shopee: READY_TO_SHIP (ainda não confirmado) E
+ * PROCESSED (pago/confirmado, mas ainda não postado — apesar do nome, não significa "enviado").
+ * Valores sem entrada aqui casam só consigo mesmo (ver `shopeeStatusMatchValues`).
+ */
+const SHOPEE_STATUS_FILTER_MATCH: Record<string, string[]> = {
+  READY_TO_SHIP: ['READY_TO_SHIP', 'PROCESSED'],
+}
+
+/** Valores de Status Shopee (coluna H) que um filtro do dropdown deve casar — alguns filtros
+ * (ex. "A enviar") representam mais de 1 status real da Shopee. */
+export function shopeeStatusMatchValues(filterValue: string): string[] {
+  return SHOPEE_STATUS_FILTER_MATCH[filterValue] ?? [filterValue]
+}
+
 export const SHOPEE_HEADERS = [
   'ID do pedido',
   'SKU',
