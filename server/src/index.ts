@@ -13,6 +13,7 @@ import {
   resyncPendingDateOrders,
   resyncReadyToShipDates,
   syncRecentShopeeOrders,
+  syncRecentlyUpdatedShopeeOrders,
   SHOPEE_POLL_LOOKBACK_HOURS,
 } from './shopee-order-sync.js'
 import { loadShopeeAuth } from './shopee-store.js'
@@ -104,10 +105,15 @@ ensureEmojiCatalogSeeded()
 
 /**
  * Poll pedidos recentes — única via de importação enquanto o push está desativado
- * (ver PUSH_PROCESSING_ENABLED em shopee-push-process.ts). Além da janela de lookback, reconsulta
- * os pedidos presos na aba "Sem data de envio" (resyncPendingDateOrders) e reconfere a data de
- * todo pedido em READY_TO_SHIP (resyncReadyToShipDates) — cobre data errada antiga e o caso da
- * Shopee empurrar o ship_by_date +1 dia depois da 1ª importação.
+ * (ver PUSH_PROCESSING_ENABLED em shopee-push-process.ts). Duas janelas por create_time E
+ * update_time (syncRecentShopeeOrders / syncRecentlyUpdatedShopeeOrders): só create_time perdia
+ * pedido ANTIGO que muda de status (ex.: pago dias depois de criado) — nunca era "recente" pra
+ * criação, não caía em "Sem data" nem em READY_TO_SHIP (resyncReadyToShipDates só reconfere quem
+ * JÁ está READY_TO_SHIP no nosso banco), então ficava com status velho pra sempre — ver memória
+ * `bug-shopee-unpaid-nunca-resincroniza-2026-07-15`. Além disso, reconsulta os pedidos presos na
+ * aba "Sem data de envio" (resyncPendingDateOrders) e reconfere a data de todo pedido em
+ * READY_TO_SHIP (resyncReadyToShipDates) — cobre data errada antiga e o caso da Shopee empurrar o
+ * ship_by_date +1 dia depois da 1ª importação.
  */
 const SHOPEE_POLL_MS = 2 * 60 * 60 * 1000
 let shopeePollBusy = false
@@ -117,14 +123,24 @@ async function runShopeeRecentPoll(): Promise<void> {
   shopeePollBusy = true
   try {
     const result = await syncRecentShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS })
+    const updated = await syncRecentlyUpdatedShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS })
     const pending = await resyncPendingDateOrders()
     const readyToShip = await resyncReadyToShipDates()
-    const errors = result.errors.length + pending.errors.length + readyToShip.errors.length
-    if (result.created > 0 || pending.updated > 0 || readyToShip.updated > 0 || errors > 0) {
+    const errors =
+      result.errors.length + updated.errors.length + pending.errors.length + readyToShip.errors.length
+    if (
+      result.created > 0 ||
+      updated.updated > 0 ||
+      pending.updated > 0 ||
+      readyToShip.updated > 0 ||
+      errors > 0
+    ) {
       console.log('[shopee-poll] concluído', {
         listed: result.listed,
         created: result.created,
         updated: result.updated,
+        byUpdateTimeListed: updated.listed,
+        byUpdateTimeUpdated: updated.updated,
         pendingRechecked: pending.listed,
         pendingResolved: pending.updated,
         readyToShipRechecked: readyToShip.listed,

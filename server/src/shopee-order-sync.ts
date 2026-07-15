@@ -313,6 +313,7 @@ async function collectOrderSnsPage(
   timeFrom: number,
   timeTo: number,
   orderStatus: string | undefined,
+  timeRangeField: 'create_time' | 'update_time' = 'create_time',
 ): Promise<string[]> {
   const sns: string[] = []
   let cursor = ''
@@ -324,7 +325,7 @@ async function collectOrderSnsPage(
       orderStatus,
       pageSize: 100,
       cursor: cursor || undefined,
-      timeRangeField: 'create_time',
+      timeRangeField,
     })
     sns.push(...page.orderSnList)
     more = page.more
@@ -339,9 +340,10 @@ async function collectOrderSns(
   timeFrom: number,
   timeTo: number,
   errors?: string[],
+  timeRangeField: 'create_time' | 'update_time' = 'create_time',
 ): Promise<string[]> {
   try {
-    return collectOrderSnsPage(timeFrom, timeTo, undefined)
+    return collectOrderSnsPage(timeFrom, timeTo, undefined, timeRangeField)
   } catch (error) {
     const msg = `get_order_list: ${error instanceof Error ? error.message : String(error)}`
     console.warn('[shopee-sync] get_order_list falhou —', msg)
@@ -394,6 +396,27 @@ export async function syncRecentShopeeOrders(options: {
 
   const errors: string[] = []
   const orderSns = await collectOrderSns(timeFrom, timeTo, errors)
+  return upsertOrderSnsBatched(orderSns, errors)
+}
+
+/**
+ * Reconsulta por `update_time` em vez de `create_time` — cobre pedido ANTIGO que só mudou de
+ * status (ex.: pago dias depois de criado) dentro da janela. `syncRecentShopeeOrders` (create_time)
+ * só pega pedido CRIADO na janela; um pedido criado há 9 dias e pago hoje nunca aparecia em
+ * nenhum resync (não é "recente" pra criação, não é "Sem data", e resyncReadyToShipDates só
+ * pega quem JÁ está READY_TO_SHIP no nosso banco — UNPAID ficava órfão pra sempre). Ver memória
+ * `bug-shopee-unpaid-nunca-resincroniza-2026-07-15`.
+ */
+export async function syncRecentlyUpdatedShopeeOrders(options: {
+  hours?: number
+} = {}): Promise<ShopeeSyncResult> {
+  ensureShopeeWorkbook()
+  const hours = Math.min(Math.max(options.hours ?? SHOPEE_POLL_LOOKBACK_HOURS, 1), 168)
+  const timeTo = Math.floor(Date.now() / 1000)
+  const timeFrom = timeTo - hours * 3600
+
+  const errors: string[] = []
+  const orderSns = await collectOrderSns(timeFrom, timeTo, errors, 'update_time')
   return upsertOrderSnsBatched(orderSns, errors)
 }
 
