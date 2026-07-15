@@ -543,6 +543,50 @@ router.delete('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
   res.json({ ok: true, deleted: deletedCount, sheetDate, updatedAt: now })
 })
 
+/** DELETE /workbooks/:workbookId/orders-batch — body { keys: string[] } (order_key exato).
+ *  Apaga só os pedidos listados (e imagens em disco) — usado pra reverter import errado sem
+ *  arriscar apagar pedido legítimo que caia na mesma sheet_date. */
+router.delete('/workbooks/:workbookId/orders-batch', requireAuth, (req, res) => {
+  const workbookId = req.params.workbookId
+  if (!getWorkbook(workbookId)) {
+    res.status(404).json({ error: 'Planilha não encontrada' })
+    return
+  }
+  const keys = (req.body as { keys?: unknown })?.keys
+  if (!Array.isArray(keys) || keys.length === 0 || !keys.every((k) => typeof k === 'string')) {
+    res.status(400).json({ error: 'keys (string[]) obrigatório' })
+    return
+  }
+
+  const placeholders = keys.map(() => '?').join(',')
+  const imagePaths = db
+    .prepare(
+      `SELECT storage_path FROM images WHERE workbook_id = ? AND order_id IN (${placeholders})`,
+    )
+    .all(workbookId, ...keys) as Array<{ storage_path: string }>
+
+  const now = nowMs()
+  let deletedCount = 0
+  const txn = db.transaction(() => {
+    const result = db
+      .prepare(`DELETE FROM orders WHERE workbook_id = ? AND order_key IN (${placeholders})`)
+      .run(workbookId, ...keys)
+    deletedCount = result.changes
+    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
+  })
+  txn()
+
+  for (const row of imagePaths) {
+    try {
+      if (existsSync(row.storage_path)) unlinkSync(row.storage_path)
+    } catch {
+      // ignore
+    }
+  }
+
+  res.json({ ok: true, deleted: deletedCount, requested: keys.length, updatedAt: now })
+})
+
 router.get('/health', (_req, res) => {
   res.json({ ok: true, dataDir: env.dataDir })
 })
