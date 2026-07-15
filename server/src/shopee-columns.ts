@@ -25,6 +25,7 @@ export const SHOPEE_HEADERS = [
 ]
 
 export const SHOPEE_INTERNAL_STATUS_CANCELLED = 'Cancelado'
+export const SHOPEE_INTERNAL_STATUS_SHIPPED = 'Concluído'
 
 export function emptyShopeeRow(): string[] {
   return Array.from({ length: SHOPEE_ROW_COLS }, () => '')

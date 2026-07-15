@@ -1,10 +1,6 @@
 import { maybeGreetOnReadyToShip } from './shopee-auto-greet.js'
 import { linkBuyerChatFromWebchatMessage } from './shopee-link-conversations.js'
-import {
-  importShopeeOrderBySn,
-  shopeeOrderExists,
-  updateShopeeOrderStatus,
-} from './shopee-order-sync.js'
+import { importShopeeOrderBySn, shopeeOrderExists } from './shopee-order-sync.js'
 import { SHOPEE_WORKBOOK_ID } from './shopee-workbook.js'
 import { recordWebchatPushAttempt } from './shopee-webchat-push.js'
 
@@ -31,8 +27,13 @@ function extractStatus(data: unknown): string {
  * Code 3 — order_status_push: toda mudança de status (inclui UNPAID ao criar o pedido).
  * Escreve em wb_shopee (única planilha) — complementa o poll de 2h, cobrindo pedido em tempo
  * real e casos que o poll não alcança (pedido antigo, mudança de status fora da janela).
- * strictShipDate=true: se a Shopee ainda não calculou o ship_by_date, cai na aba "Sem data de
- * envio" em vez de usar create_time (resyncPendingDateOrders no poll de 2h reconfere depois).
+ * Sempre busca o detalhe completo (importShopeeOrderBySn → upsertShopeeOrder), pedido novo ou
+ * já existente — o push só manda orderSn+status, sem data de envio nem nome do destinatário;
+ * pra manter esses 2 campos frescos (junto com o status) é preciso o detalhe completo, não dá
+ * pra só gravar o status isolado (2026-07-15: cron e webhook devem poder atualizar dia de envio,
+ * status Shopee E nome do cliente, sempre). strictShipDate=true: se a Shopee ainda não calculou
+ * o ship_by_date, cai na aba "Sem data de envio" em vez de usar create_time
+ * (resyncPendingDateOrders no poll de 2h reconfere depois).
  */
 async function handleOrderStatusPush(data: unknown): Promise<void> {
   const orderSn = extractOrderSn(data)
@@ -42,18 +43,12 @@ async function handleOrderStatusPush(data: unknown): Promise<void> {
     return
   }
 
-  if (shopeeOrderExists(orderSn, SHOPEE_WORKBOOK_ID)) {
-    updateShopeeOrderStatus(orderSn, status, SHOPEE_WORKBOOK_ID)
-    console.log('[shopee-push] status atualizado', { orderSn, status })
-    return
-  }
-
   const action = await importShopeeOrderBySn(orderSn, status, SHOPEE_WORKBOOK_ID, true)
   if (action === 'failed') {
-    console.error('[shopee-push] falha ao importar pedido novo', { orderSn, status })
+    console.error('[shopee-push] falha ao importar/atualizar pedido', { orderSn, status })
     return
   }
-  console.log('[shopee-push] pedido importado (code 3)', { orderSn, status, action })
+  console.log('[shopee-push] pedido atualizado (code 3)', { orderSn, status, action })
 }
 
 /** Code 8 — reserved_stock_change_push com action place_order (compra feita, antes do status push). */
