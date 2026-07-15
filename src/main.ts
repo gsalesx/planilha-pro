@@ -1201,6 +1201,11 @@ function bindSearch() {
     const tag = target?.tagName
     const inField = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable === true
     if (inField) return
+    // Chat da Shopee aberto por cima da grid: a seleção de célula continua
+    // "ativa" por baixo mesmo sem foco em input, então sem essa checagem
+    // Ctrl+C dentro do chat (ex.: copiar imagem de emoji) roubava o valor
+    // da célula em vez do que o usuário estava copiando no chat.
+    if (document.body.classList.contains('shopee-chat-open')) return
     if (!grid) return
 
     // Ctrl/Cmd+C: copia os valores das células selecionadas (1 col × N linhas).
