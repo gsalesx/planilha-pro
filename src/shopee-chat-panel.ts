@@ -234,9 +234,16 @@ function renderMessageBody(msg: ShopeeChatMessage): string {
     const img = `<a class="shopee-chat-image-link" href="${url}" target="_blank" rel="noopener noreferrer"><img class="shopee-chat-image" src="${url}" alt="Imagem enviada no chat" loading="lazy" /></a>`
     // Mensagens tipo "image_with_text" (ex.: "Esse no vestido" junto da foto)
     // vêm com imageUrl E text preenchidos — sem a legenda o operador precisa
-    // abrir o app da Shopee só pra ver qual peça a foto se refere.
+    // abrir o app da Shopee só pra ver qual peça a foto se refere. Mas
+    // imagem "simples" (sem legenda de verdade) também cai nesse ramo com
+    // `text` = placeholder "[image]" OU a própria URL da imagem (fallback
+    // do backend quando a Shopee não manda content.text) — nesses casos não
+    // é legenda, não mostra nada.
     const isPlaceholder = /^\[\w+\]$/.test(msg.text ?? '')
-    const caption = msg.text && !isPlaceholder ? `<div class="shopee-chat-image-caption">${escapeHtml(msg.text)}</div>` : ''
+    const isUrl = /^https?:\/\//i.test(msg.text ?? '')
+    const caption = msg.text && !isPlaceholder && !isUrl
+      ? `<div class="shopee-chat-image-caption">${escapeHtml(msg.text)}</div>`
+      : ''
     return img + caption
   }
   return escapeHtml(msg.text)
