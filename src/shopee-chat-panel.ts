@@ -501,7 +501,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           <span class="shopee-chat-piece-molde">${escapeHtml(piece.molde)}</span>
           ${
             firstPieceId != null
-              ? `<button type="button" class="shopee-chat-piece-copy-first" data-piece-id="${piece.id}" data-source-id="${firstPieceId}" title="Copiar fotos e emojis da 1ª peça">📋 copiar da 1ª</button>`
+              ? `<button type="button" class="shopee-chat-piece-copy-first" data-piece-id="${piece.id}" data-source-id="${firstPieceId}" title="Copiar fotos, emojis e cor da 1ª peça">📋 copiar da 1ª</button>`
               : ''
           }
           <button type="button" class="shopee-chat-piece-delete" data-piece-id="${piece.id}" title="Remover peça">🗑</button>
