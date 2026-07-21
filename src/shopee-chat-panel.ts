@@ -231,7 +231,16 @@ function colorPickerHtml(pieceId: number, current: string): string {
 function renderMessageBody(msg: ShopeeChatMessage): string {
   if (msg.imageUrl) {
     const url = escapeHtml(msg.imageUrl)
-    const img = `<a class="shopee-chat-image-link" href="${url}" target="_blank" rel="noopener noreferrer"><img class="shopee-chat-image" src="${url}" alt="Imagem enviada no chat" loading="lazy" /></a>`
+    // referrerpolicy=no-referrer: CDN da Shopee às vezes bloqueia hotlink com
+    // Referer do nosso domínio — a foto some até fechar/abrir o chat. Retry
+    // automático + botão ↻ cobrem falha intermitente (rede/429 no browser).
+    const img = `<div class="shopee-chat-image-wrap">
+      <a class="shopee-chat-image-link" href="${url}" target="_blank" rel="noopener noreferrer">
+        <img class="shopee-chat-image" src="${url}" data-src="${url}" alt="Imagem enviada no chat"
+             loading="lazy" referrerpolicy="no-referrer" data-retries="0" />
+      </a>
+      <button type="button" class="shopee-chat-image-retry" title="Recarregar imagem" aria-label="Recarregar imagem">↻</button>
+    </div>`
     // Mensagens tipo "image_with_text" (ex.: "Esse no vestido" junto da foto)
     // vêm com imageUrl E text preenchidos — sem a legenda o operador precisa
     // abrir o app da Shopee só pra ver qual peça a foto se refere. Mas
@@ -247,6 +256,47 @@ function renderMessageBody(msg: ShopeeChatMessage): string {
     return img + caption
   }
   return escapeHtml(msg.text)
+}
+
+const CHAT_IMAGE_MAX_AUTO_RETRIES = 3
+
+function reloadChatImage(img: HTMLImageElement, bumpRetry = false): void {
+  const src = img.getAttribute('data-src') || ''
+  if (!src) return
+  if (bumpRetry) {
+    img.dataset.retries = String(Number(img.dataset.retries || '0') + 1)
+  } else {
+    img.dataset.retries = '0'
+  }
+  img.classList.remove('is-broken')
+  img.classList.add('is-loading-retry')
+  img.closest('.shopee-chat-image-wrap')?.classList.remove('is-broken')
+  // Fragmento (#) força o browser a pedir de novo sem alterar a URL que o CDN vê
+  // (query ?_r= quebraria URLs assinadas da Shopee).
+  img.removeAttribute('src')
+  img.src = `${src}#r=${Date.now()}`
+}
+
+function wireChatImages(root: HTMLElement): void {
+  root.querySelectorAll<HTMLImageElement>('img.shopee-chat-image').forEach((img) => {
+    if (img.dataset.wired === '1') return
+    img.dataset.wired = '1'
+    img.addEventListener('error', () => {
+      const n = Number(img.dataset.retries || '0')
+      if (n < CHAT_IMAGE_MAX_AUTO_RETRIES) {
+        window.setTimeout(() => reloadChatImage(img, true), 400 * 2 ** n)
+        return
+      }
+      img.classList.add('is-broken')
+      img.classList.remove('is-loading-retry')
+      img.closest('.shopee-chat-image-wrap')?.classList.add('is-broken')
+    })
+    img.addEventListener('load', () => {
+      img.classList.remove('is-loading-retry', 'is-broken')
+      img.closest('.shopee-chat-image-wrap')?.classList.remove('is-broken')
+      img.dataset.retries = '0'
+    })
+  })
 }
 
 function renderMessages(messages: ShopeeChatMessage[], buyerUsername: string): string {
@@ -868,6 +918,15 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   }
 
   messagesEl.addEventListener('click', (e) => {
+    const retryBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('.shopee-chat-image-retry')
+    if (retryBtn) {
+      e.preventDefault()
+      e.stopPropagation()
+      const wrap = retryBtn.closest('.shopee-chat-image-wrap')
+      const img = wrap?.querySelector<HTMLImageElement>('img.shopee-chat-image')
+      if (img) reloadChatImage(img, false)
+      return
+    }
     if (!armed) return
     const link = (e.target as HTMLElement).closest<HTMLAnchorElement>('.shopee-chat-image-link')
     if (!link) return
@@ -924,6 +983,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       const history = await fetchShopeeChatHistory(order.buyerUsername)
       chatMeta = { conversationId: history.chat.conversationId, toId: history.chat.toId }
       messagesEl.innerHTML = renderMessages(history.messages, order.buyerUsername)
+      wireChatImages(messagesEl)
       messagesEl.scrollTop = messagesEl.scrollHeight
     } catch (error) {
       messagesEl.insertAdjacentHTML(
@@ -948,6 +1008,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     const history = await fetchShopeeChatHistory(order.buyerUsername)
     chatMeta = { conversationId: history.chat.conversationId, toId: history.chat.toId }
     messagesEl.innerHTML = renderMessages(history.messages, order.buyerUsername)
+    wireChatImages(messagesEl)
     if (history.truncated) {
       messagesEl.insertAdjacentHTML(
         'afterbegin',

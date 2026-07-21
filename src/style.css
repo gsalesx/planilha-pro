@@ -1657,6 +1657,11 @@ body.shopee-chat-open {
   display: block;
   line-height: 0;
 }
+.shopee-chat-image-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
 .shopee-chat-image {
   display: block;
   max-width: 100%;
@@ -1664,6 +1669,39 @@ body.shopee-chat-open {
   border-radius: 10px;
   object-fit: contain;
   background: #f1f5f9;
+}
+.shopee-chat-image.is-loading-retry {
+  opacity: 0.55;
+}
+.shopee-chat-image-wrap.is-broken .shopee-chat-image {
+  min-width: 120px;
+  min-height: 80px;
+  outline: 1px dashed #cbd5e1;
+}
+.shopee-chat-image-retry {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.shopee-chat-image-wrap:hover .shopee-chat-image-retry,
+.shopee-chat-image-wrap.is-broken .shopee-chat-image-retry,
+.shopee-chat-image-wrap:focus-within .shopee-chat-image-retry {
+  opacity: 1;
+}
+.shopee-chat-image-retry:hover {
+  background: rgba(15, 23, 42, 0.9);
 }
 .shopee-chat-image-caption {
   padding: 6px 4px 2px;

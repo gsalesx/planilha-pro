@@ -38,6 +38,50 @@ function shopeeCdnOriginalUrl(url: string): string {
   return url.slice(0, at)
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * Download do CDN Shopee com retry — 429/503 e falha de rede são comuns quando
+ * o "Confirmar pedido" baixa várias originais em sequência. Respeita Retry-After
+ * quando a Shopee manda; senão backoff 0.8s → 2s → 5s.
+ */
+async function fetchShopeeCdn(url: string): Promise<Response> {
+  const delaysMs = [0, 800, 2000, 5000]
+  let lastError: Error | null = null
+  for (let i = 0; i < delaysMs.length; i++) {
+    if (delaysMs[i] > 0) await sleep(delaysMs[i])
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+        redirect: 'follow',
+      })
+      if (response.status === 429 || response.status === 503) {
+        lastError = new Error(`HTTP ${response.status}`)
+        const retryAfter = Number(response.headers.get('retry-after'))
+        if (Number.isFinite(retryAfter) && retryAfter > 0 && retryAfter <= 30) {
+          await sleep(retryAfter * 1000)
+        }
+        continue
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return response
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      // 4xx (exceto 429 já tratado) não vale insistir
+      if (lastError.message.startsWith('HTTP 4') && !lastError.message.includes('429')) {
+        throw lastError
+      }
+    }
+  }
+  throw lastError ?? new Error('falha ao baixar do CDN')
+}
+
 function parsePiecePatch(body: unknown): PiecePatch {
   const b = (body ?? {}) as Record<string, unknown>
   const patch: PiecePatch = {}
@@ -280,14 +324,17 @@ router.post('/workbooks/:workbookId/pieces/:orderKey/confirm', requireAuth, asyn
     .all(workbookId, orderKey) as Array<{ id: number }>
   const errors: string[] = []
 
+  let downloadIndex = 0
   for (const { id: pieceId } of pieces) {
     const pending = db
       .prepare('SELECT slot, url, crop FROM piece_pending_photos WHERE piece_id = ?')
       .all(pieceId) as Array<{ slot: number; url: string; crop: string }>
     for (const p of pending) {
+      // Espaça downloads pra não estourar rate-limit do CDN (várias originais de uma vez).
+      if (downloadIndex > 0) await sleep(250)
+      downloadIndex++
       try {
-        const response = await fetch(p.url)
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const response = await fetchShopeeCdn(p.url)
         const buffer = Buffer.from(await response.arrayBuffer())
         const mime = response.headers.get('content-type') || 'image/jpeg'
         const ext = mime.includes('png') ? '.png' : mime.includes('webp') ? '.webp' : '.jpg'
