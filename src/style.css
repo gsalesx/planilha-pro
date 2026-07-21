@@ -1954,6 +1954,12 @@ body.shopee-chat-open {
   padding: 10px;
 }
 
+.shopee-chat-pieces-confirmed-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .shopee-chat-pieces-confirmed {
   text-align: center;
   font-size: 13px;
@@ -1963,6 +1969,27 @@ body.shopee-chat-open {
   border: 1px solid #bbf7d0;
   border-radius: 8px;
   padding: 9px;
+}
+
+.shopee-chat-edit-order {
+  width: 100%;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+}
+
+.shopee-chat-edit-order:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.shopee-chat-pieces-list.is-locked {
+  opacity: 0.72;
+  pointer-events: none;
+  user-select: none;
 }
 
 .shopee-chat-pieces-hint {

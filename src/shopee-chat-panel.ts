@@ -421,6 +421,13 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   })
 
   let armed: { pieceId: number; slot: 1 | 2 } | null = null
+  /** Pedido já "Separado": cards ficam travados até o operador clicar em Editar
+   * (aí pode alterar cor/foto/emoji e confirmar de novo). */
+  let reeditingConfirmed = false
+
+  function isConfirmedLocked(): boolean {
+    return order.status === CONFIRMED_STATUS && !reeditingConfirmed
+  }
 
   function armSlot(pieceId: number, slot: 1 | 2): void {
     armed = armed && armed.pieceId === pieceId && armed.slot === slot ? null : { pieceId, slot }
@@ -839,11 +846,18 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   }
 
   function confirmBarHtml(pieces: OrderPiece[]): string {
-    if (order.status === CONFIRMED_STATUS) {
-      return `<div class="shopee-chat-pieces-confirmed">✓ Pedido confirmado — status "Separado"</div>`
+    if (isConfirmedLocked()) {
+      return `
+        <div class="shopee-chat-pieces-confirmed-wrap">
+          <div class="shopee-chat-pieces-confirmed">✓ Pedido confirmado — status "Separado"</div>
+          <button type="button" class="btn shopee-chat-edit-order" id="shopee-chat-edit-order">✎ Editar</button>
+        </div>
+      `
     }
     const missing = pieces.filter((p) => !p.photos[1]).length
-    const label = missing > 0 ? `✅ Confirmar pedido (${missing} peça(s) sem foto)` : '✅ Confirmar pedido'
+    const reconfirm = order.status === CONFIRMED_STATUS
+    const base = reconfirm ? '✅ Confirmar alterações' : '✅ Confirmar pedido'
+    const label = missing > 0 ? `${base} (${missing} peça(s) sem foto)` : base
     return `
       <button type="button" class="btn btn-primary shopee-chat-confirm-order" id="shopee-chat-confirm-order"
               ${pieces.length === 0 ? 'disabled' : ''}>${label}</button>
@@ -851,8 +865,19 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   }
 
   function bindConfirmBar(pieces: OrderPiece[]): void {
+    const editBtn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-edit-order')
+    if (editBtn) {
+      editBtn.addEventListener('click', () => {
+        reeditingConfirmed = true
+        void loadPieces()
+      })
+      return
+    }
+
     const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-confirm-order')
     if (!btn) return
+    const reconfirm = order.status === CONFIRMED_STATUS
+    const idleLabel = reconfirm ? '✅ Confirmar alterações' : '✅ Confirmar pedido'
     btn.addEventListener('click', () => {
       const missing = pieces.filter((p) => !p.photos[1]).length
       const doConfirm = async () => {
@@ -866,21 +891,24 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
             cells: [{ col: STATUS_COLUMN_INDEX, value: CONFIRMED_STATUS }],
           })
           order.status = CONFIRMED_STATUS
+          reeditingConfirmed = false
           closeShopeeChatPanel()
           order.onConfirmed?.()
         } catch (error) {
           alert(`Falha ao confirmar: ${(error as Error).message}`)
           btn.disabled = false
-          btn.textContent = '✅ Confirmar pedido'
+          btn.textContent = idleLabel
         }
       }
       openConfirmDialog({
-        title: 'Confirmar pedido',
+        title: reconfirm ? 'Confirmar alterações' : 'Confirmar pedido',
         body:
           missing > 0
             ? `${missing} peça(s) ainda sem Foto 1. Confirmar mesmo assim? O pedido vai pro Criador de artes com o que já tem.`
-            : 'Marca o pedido como "Separado" — o Criador de artes vai puxar da fila e montar a arte a partir daqui. As fotos/emojis/cor já escolhidos ficam salvos como estão.',
-        confirmLabel: 'Confirmar pedido',
+            : reconfirm
+              ? 'Salva as alterações e mantém o pedido como "Separado". O Criador de artes usa o que estiver salvo aqui.'
+              : 'Marca o pedido como "Separado" — o Criador de artes vai puxar da fila e montar a arte a partir daqui. As fotos/emojis/cor já escolhidos ficam salvos como estão.',
+        confirmLabel: reconfirm ? 'Confirmar alterações' : 'Confirmar pedido',
         danger: missing > 0,
         onConfirm: doConfirm,
       })
@@ -895,21 +923,25 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       const failedHint = data.autoFailed
         ? `<p class="shopee-chat-pieces-hint">Não deu pra montar a peça sozinho pelo SKU (${escapeHtml(data.autoFailed)}). Adicione na mão:</p>`
         : ''
+      const locked = isConfirmedLocked()
       piecesEl.innerHTML = `
         <div class="shopee-chat-pieces-header">
-          <button type="button" class="btn shopee-chat-piece-add" id="shopee-chat-piece-add">+ Adicionar peça</button>
+          <button type="button" class="btn shopee-chat-piece-add" id="shopee-chat-piece-add"
+                  ${locked ? 'disabled title="Clique em Editar pra alterar"' : ''}>+ Adicionar peça</button>
         </div>
         ${failedHint}
-        <div class="shopee-chat-pieces-list">${cards}</div>
+        <div class="shopee-chat-pieces-list${locked ? ' is-locked' : ''}">${cards}</div>
         <div class="shopee-chat-pieces-confirm-bar">${confirmBarHtml(data.pieces)}</div>
       `
-      overlay.querySelector('#shopee-chat-piece-add')!.addEventListener('click', async () => {
-        await addOrderPiece(order.workbookId, order.orderKey)
-        void loadPieces()
-      })
-      bindPieceCards()
+      if (!locked) {
+        overlay.querySelector('#shopee-chat-piece-add')!.addEventListener('click', async () => {
+          await addOrderPiece(order.workbookId, order.orderKey)
+          void loadPieces()
+        })
+        bindPieceCards()
+        renderPieceButtons()
+      }
       bindConfirmBar(data.pieces)
-      renderPieceButtons()
       updatePiecesToggleLabel(data)
     } catch (error) {
       piecesEl.innerHTML = `<div class="shopee-chat-error-inline">Falha ao carregar peças: ${escapeHtml((error as Error).message)}</div>`
