@@ -35,12 +35,13 @@ export const SHOPEE_STATUS_FILTER_OPTIONS: ShopeeStatusFilterOption[] = [
 export const SHOPEE_DEFAULT_STATUS_FILTER = 'READY_TO_SHIP'
 
 /**
- * "A enviar" precisa casar mais de 1 status da Shopee: READY_TO_SHIP (ainda não confirmado) E
- * PROCESSED (pago/confirmado, mas ainda não postado — apesar do nome, não significa "enviado").
+ * "A enviar" precisa casar mais de 1 status da Shopee: READY_TO_SHIP (ainda não confirmado),
+ * PROCESSED (pago/confirmado, mas ainda não postado — apesar do nome, não significa "enviado")
+ * e IN_CANCEL (cancelamento em andamento — ainda aparece na fila de envio da Shopee).
  * Valores sem entrada aqui casam só consigo mesmo (ver `shopeeStatusMatchValues`).
  */
 const SHOPEE_STATUS_FILTER_MATCH: Record<string, string[]> = {
-  READY_TO_SHIP: ['READY_TO_SHIP', 'PROCESSED'],
+  READY_TO_SHIP: ['READY_TO_SHIP', 'PROCESSED', 'IN_CANCEL'],
 }
 
 /** Valores de Status Shopee (coluna H) que um filtro do dropdown deve casar — alguns filtros
