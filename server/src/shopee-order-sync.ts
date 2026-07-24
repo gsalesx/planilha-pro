@@ -257,9 +257,18 @@ export function upsertShopeeOrder(
     const occurrence = i + 1
     const orderKey = shopeeOrderKey(sheetDate, orderSn, occurrence)
     let existing = findOrderByKey(orderKey, workbookId)
-    if (!existing && occurrence === 1) {
+    if (!existing) {
+      // A key de occurrence>1 embute sheetDate — quando o ship_by_date resolve (ex.: sai de
+      // "Sem data de envio" pra uma data real), a key muda e a linha antiga vira órfã presa no
+      // limbo se a gente não procurar por sufixo (ignorando a data velha). Ver bug
+      // 2026-07-24: pedidos de 2+ itens duplicavam, 1 cópia travada em "Sem data de envio".
       const legacy = findOrdersBySn(orderSn, workbookId)
-      if (legacy.length === 1) existing = legacy[0]
+      if (occurrence === 1) {
+        if (legacy.length === 1) existing = legacy[0]
+      } else {
+        const suffix = `__${orderSn}__${occurrence}`
+        existing = legacy.find((r) => r.order_key.endsWith(suffix))
+      }
     }
 
     const row = itemRows[i]
