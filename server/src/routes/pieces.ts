@@ -153,10 +153,11 @@ router.delete('/pieces/:id', requireAuth, (req, res) => {
 })
 
 /**
- * POST /api/pieces/:id/copy-from/:sourceId — copia fotos (slots 1/2) + emoji1/emoji2 + cor
- * da peça de origem pra peça de destino. Usado quando o pedido tem N peças (ex.: camisola +
- * short) com as MESMAS fotos/emojis/cor — copiar da 1ª peça em vez de escolher tudo de novo.
- * Não mexe em tipo/gênero/tamanho (cada peça mantém o seu molde).
+ * POST /api/pieces/:id/copy-from/:sourceId — copia fotos (slots 1/2) + emoji1/emoji2 da
+ * peça de origem pra peça de destino. Usado quando o pedido tem N peças (ex.: camisola +
+ * short) com as MESMAS fotos/emojis — copiar da 1ª peça em vez de escolher tudo de novo.
+ * Não mexe em tipo/gênero/tamanho/cor (cada peça mantém o seu, igual ao "copiar imagens
+ * do 1º" do picker_manual.py no Criador de artes).
  */
 router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
   const targetId = Number(req.params.id)
@@ -166,8 +167,8 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
     return
   }
   const source = db
-    .prepare('SELECT emoji1, emoji2, cor FROM order_pieces WHERE id = ?')
-    .get(sourceId) as { emoji1: string; emoji2: string; cor: string } | undefined
+    .prepare('SELECT emoji1, emoji2 FROM order_pieces WHERE id = ?')
+    .get(sourceId) as { emoji1: string; emoji2: string } | undefined
   if (!source || !pieceExists(targetId)) {
     res.status(404).json({ error: 'Peça não encontrada' })
     return
@@ -176,8 +177,8 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
   const now = nowMs()
   const txn = db.transaction(() => {
     db.prepare(
-      `UPDATE order_pieces SET emoji1 = ?, emoji2 = ?, cor = ?, source = 'manual', updated_at = ? WHERE id = ?`,
-    ).run(source.emoji1, source.emoji2, source.cor, now, targetId)
+      `UPDATE order_pieces SET emoji1 = ?, emoji2 = ?, source = 'manual', updated_at = ? WHERE id = ?`,
+    ).run(source.emoji1, source.emoji2, now, targetId)
 
     // pendentes (ainda não baixadas) — só copia a referência de URL, sem download.
     const sourcePending = db

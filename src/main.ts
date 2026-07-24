@@ -943,6 +943,7 @@ function openChatPanelForRow(
     buyerUsername,
     recipient: cellText(cells, RECIPIENT_COLUMN_INDEX),
     sheetDate: sheet.rowDates?.[row] ?? '',
+    productImageUrl: sheet.rowProductImages?.[row] ?? '',
     onConfirmed: () => grid?.selectAndReveal(row, col),
   })
 }

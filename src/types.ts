@@ -50,6 +50,8 @@ export interface SheetData {
   rowKeys?: string[]
   /** sheet name (date) of origin, indexed by row */
   rowDates?: string[]
+  /** foto do anúncio/produto (Shopee), indexed by row */
+  rowProductImages?: string[]
   /** keyed by `${rowIndex}:${colIndex}` */
   images: Record<string, CellImage>
   /** keyed by `${rowIndex}:${colIndex}` */

@@ -21,6 +21,9 @@ export interface ServerOrder {
   styles: Record<string, CellStyle>
   disappeared: boolean
   sheetDate?: string
+  /** Foto do anúncio/produto (item_list.image_info.image_url da Shopee) — cacheada
+   * no sync, só pra referência visual do operador. */
+  productImageUrl?: string
   position: number
   updatedAt: number
   images: Array<{ col: number; url: string; fileName: string; mime: string; size?: number; updatedAt?: number }>
@@ -678,6 +681,7 @@ export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook
   const rows: CellValue[][] = []
   const rowKeys: string[] = []
   const rowDates: string[] = []
+  const rowProductImages: string[] = []
   const images: Record<string, { url: string; fileName: string; updatedAt?: number }> = {}
   const cellStyles: Record<string, CellStyle> = {}
   const rowFlags: Record<number, { disappeared?: boolean }> = {}
@@ -686,6 +690,7 @@ export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook
     rows.push(order.row)
     rowKeys.push(order.key ?? order.id)
     rowDates.push(order.sheetDate ?? '')
+    rowProductImages.push(order.productImageUrl ?? '')
     for (const [colKey, style] of Object.entries(order.styles ?? {})) {
       cellStyles[`${idx}:${colKey}`] = style
     }
@@ -714,6 +719,7 @@ export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook
         rows,
         rowKeys,
         rowDates,
+        rowProductImages,
         images,
         cellStyles,
         rowFlags,

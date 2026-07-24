@@ -15,6 +15,7 @@ interface OrderRow {
   styles_json: string
   disappeared: number
   sheet_date: string
+  product_image_url: string
   position: number
   updated_at: number
 }
@@ -103,7 +104,7 @@ function buildWorkbookPayload(workbookId: string, since?: number) {
 
   const orders = db
     .prepare(
-      'SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders WHERE workbook_id = ? ORDER BY position ASC',
+      'SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, product_image_url, position, updated_at FROM orders WHERE workbook_id = ? ORDER BY position ASC',
     )
     .all(workbookId) as OrderRow[]
 
@@ -129,6 +130,7 @@ function buildWorkbookPayload(workbookId: string, since?: number) {
       styles: JSON.parse(o.styles_json || '{}'),
       disappeared: o.disappeared === 1,
       sheetDate: o.sheet_date || '',
+      productImageUrl: o.product_image_url || '',
       position: o.position,
       updatedAt: o.updated_at,
       images: (imagesByOrder.get(o.order_key) ?? []).map((i) => ({
@@ -337,6 +339,7 @@ function serializeOrderRow(workbookId: string, o: OrderRow) {
     styles: JSON.parse(o.styles_json || '{}'),
     disappeared: o.disappeared === 1,
     sheetDate: o.sheet_date || '',
+    productImageUrl: o.product_image_url || '',
     position: o.position,
     updatedAt: o.updated_at,
     images: (db
@@ -370,7 +373,7 @@ router.get('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
   }
   const rows = db
     .prepare(
-      `SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at
+      `SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, product_image_url, position, updated_at
          FROM orders WHERE ${where.join(' AND ')} ORDER BY position ASC`,
     )
     .all(...params) as OrderRow[]
@@ -436,7 +439,7 @@ router.post('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
   })
   txn()
   const created = db
-    .prepare('SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at FROM orders WHERE workbook_id = ? ORDER BY position DESC LIMIT 1')
+    .prepare('SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, product_image_url, position, updated_at FROM orders WHERE workbook_id = ? ORDER BY position DESC LIMIT 1')
     .get(workbookId) as OrderRow
   res.status(201).json(serializeOrderRow(workbookId, created))
 })

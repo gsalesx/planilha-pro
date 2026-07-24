@@ -226,6 +226,15 @@ db.exec(`
   }
 }
 
+// Foto do produto/anúncio (image_info.image_url do get_order_detail da Shopee) — mostrada
+// no card do chat pra o operador ver "o que o cliente comprou de fato" sem entrar na Shopee.
+{
+  const cols = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>
+  if (!cols.some((c) => c.name === 'product_image_url')) {
+    db.exec("ALTER TABLE orders ADD COLUMN product_image_url TEXT NOT NULL DEFAULT ''")
+  }
+}
+
 // Mapa comprador Shopee → chat (fora da planilha; usado para envio de prévias etc.)
 db.exec(`
   CREATE TABLE IF NOT EXISTS shopee_buyer_chats (

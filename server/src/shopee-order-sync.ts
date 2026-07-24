@@ -27,6 +27,10 @@ interface ShopeeItemRow {
   model_name?: string
   model_sku?: string
   model_quantity_purchased?: number
+  /** Foto do anúncio/produto — vem de graça no get_order_detail (não precisa
+   * de response_optional_fields extra). Usada só pra referência visual do
+   * operador ("o que o cliente comprou de fato"), nunca pra montar a arte. */
+  image_info?: { image_url?: string }
 }
 
 interface ShopeeOrderDetail {
@@ -91,6 +95,10 @@ function joinField(values: string[]): string {
 
 function itemSku(item: ShopeeItemRow): string {
   return (item.model_sku ?? item.item_sku ?? '').trim()
+}
+
+function itemImageUrl(item: ShopeeItemRow | undefined): string {
+  return (item?.image_info?.image_url ?? '').trim()
 }
 
 /**
@@ -162,18 +170,21 @@ interface ExistingOrderRow {
   order_key: string
   row_json: string
   sheet_date: string
+  product_image_url: string
 }
 
 function findOrderByKey(orderKey: string, workbookId: string = SHOPEE_WORKBOOK_ID): ExistingOrderRow | undefined {
   return db
-    .prepare('SELECT order_key, row_json, sheet_date FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .prepare(
+      'SELECT order_key, row_json, sheet_date, product_image_url FROM orders WHERE workbook_id = ? AND order_key = ?',
+    )
     .get(workbookId, orderKey) as ExistingOrderRow | undefined
 }
 
 function findOrdersBySn(orderSn: string, workbookId: string = SHOPEE_WORKBOOK_ID): ExistingOrderRow[] {
   return db
     .prepare(
-      'SELECT order_key, row_json, sheet_date FROM orders WHERE workbook_id = ? AND id = ? ORDER BY order_key ASC',
+      'SELECT order_key, row_json, sheet_date, product_image_url FROM orders WHERE workbook_id = ? AND id = ? ORDER BY order_key ASC',
     )
     .all(workbookId, orderSn) as ExistingOrderRow[]
 }
@@ -246,34 +257,28 @@ export function upsertShopeeOrder(
       .get(workbookId) as { m: number }).m + 1
 
   const updateStmt = db.prepare(
-    'UPDATE orders SET row_json = ?, sheet_date = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
+    'UPDATE orders SET row_json = ?, sheet_date = ?, product_image_url = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
   )
   const insertStmt = db.prepare(
-    `INSERT INTO orders (workbook_id, order_key, id, row_json, styles_json, disappeared, sheet_date, position, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO orders (workbook_id, order_key, id, row_json, styles_json, disappeared, sheet_date, product_image_url, position, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
 
   for (let i = 0; i < itemRows.length; i++) {
     const occurrence = i + 1
     const orderKey = shopeeOrderKey(sheetDate, orderSn, occurrence)
     let existing = findOrderByKey(orderKey, workbookId)
-    if (!existing) {
-      // A key de occurrence>1 embute sheetDate — quando o ship_by_date resolve (ex.: sai de
-      // "Sem data de envio" pra uma data real), a key muda e a linha antiga vira órfã presa no
-      // limbo se a gente não procurar por sufixo (ignorando a data velha). Ver bug
-      // 2026-07-24: pedidos de 2+ itens duplicavam, 1 cópia travada em "Sem data de envio".
+    if (!existing && occurrence === 1) {
       const legacy = findOrdersBySn(orderSn, workbookId)
-      if (occurrence === 1) {
-        if (legacy.length === 1) existing = legacy[0]
-      } else {
-        const suffix = `__${orderSn}__${occurrence}`
-        existing = legacy.find((r) => r.order_key.endsWith(suffix))
-      }
+      if (legacy.length === 1) existing = legacy[0]
     }
 
     const row = itemRows[i]
     row[SHOPEE_COL_RECIPIENT] = recipient
     row[SHOPEE_COL_SHOPEE_STATUS] = shopeeStatus
+    // Só a foto de fato do item comprado — nunca "adivinhar" de outro item da mesma
+    // ordem (occurrence != i seria a peça errada).
+    const productImageUrl = itemImageUrl(order.item_list?.[i])
 
     if (existing) {
       const prev = JSON.parse(existing.row_json) as string[]
@@ -286,8 +291,10 @@ export function upsertShopeeOrder(
       row[SHOPEE_COL_USERNAME] = prev[SHOPEE_COL_USERNAME]
       applyInternalStatusFromShopee(row, shopeeStatus)
       const rowJson = JSON.stringify(row)
-      if (rowJson !== existing.row_json || sheetDate !== existing.sheet_date) {
-        updateStmt.run(rowJson, sheetDate, now, workbookId, existing.order_key)
+      const nextImageUrl = productImageUrl || existing.product_image_url
+      if (rowJson !== existing.row_json || sheetDate !== existing.sheet_date
+          || nextImageUrl !== existing.product_image_url) {
+        updateStmt.run(rowJson, sheetDate, nextImageUrl, now, workbookId, existing.order_key)
         anyChanged = true
       }
     } else {
@@ -302,6 +309,7 @@ export function upsertShopeeOrder(
         '{}',
         0,
         sheetDate,
+        productImageUrl,
         nextPos++,
         now,
       )
