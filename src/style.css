@@ -3874,6 +3874,28 @@ table.sheet tbody th.row-num.is-active {
 
 .picker-editor-acoes { display: flex; gap: 8px; margin-top: auto; }
 .picker-editor-acoes .btn { flex: 1; }
+
+/* O `.btn` global é texto BRANCO sobre fundo branco translúcido — foi desenhado
+   pro cabeçalho verde escuro do app. Dentro do painel branco do editor ficava
+   literalmente invisível ("Resetar", "Salvar" e "Remover fundo" sumiam), então
+   aqui as cores são reafirmadas pro fundo claro. */
+.picker-editor-controles .btn {
+  justify-content: center;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: #fff;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+.picker-editor-controles .btn:hover { background: #f1f5f9; }
+.picker-editor-controles .btn-primary {
+  background: #217346;
+  color: #fff;
+  border-color: #217346;
+  font-weight: 600;
+}
+.picker-editor-controles .btn-primary:hover { background: #1a5c38; }
+
 .picker-editor-status {
   font-size: 12px;
   color: #475569;

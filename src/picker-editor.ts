@@ -9,6 +9,8 @@
  * partir do centro com dx/dy.
  */
 const CANVAS = 900
+/** Laranja da guia de corte — precisa destacar sobre pele, roupa e fundo claro. */
+const GUIA_COR = '#ff7a18'
 
 export type ModoFoto = 'coracao' | 'recorte'
 
@@ -212,9 +214,73 @@ export async function abrirPickerEditor(
     heart = null
   }
 
+  /**
+   * `heart-mask.png` é ESCALA DE CINZA sem canal alpha (é o formato que o sharp
+   * espera no servidor, que lê o canal L como máscara). No navegador ela carrega
+   * 100% opaca, então usá-la direto em `destination-out`/`destination-in` apagava
+   * ou preservava o quadro INTEIRO — era por isso que a mascaração do coração não
+   * aparecia. Aqui a luminância vira alpha, produzindo a máscara de verdade.
+   */
+  function mascaraComAlpha(img: HTMLImageElement): HTMLCanvasElement {
+    const m = document.createElement('canvas')
+    m.width = CANVAS
+    m.height = CANVAS
+    const mc = m.getContext('2d')!
+    mc.drawImage(img, 0, 0, CANVAS, CANVAS)
+    const dados = mc.getImageData(0, 0, CANVAS, CANVAS)
+    const px = dados.data
+    for (let i = 0; i < px.length; i += 4) {
+      px[i + 3] = px[i] // luminância → alpha
+      px[i] = 255
+      px[i + 1] = 255
+      px[i + 2] = 255
+    }
+    mc.putImageData(dados, 0, 0)
+    return m
+  }
+
+  /**
+   * Anel de contorno de uma máscara: dilata a silhueta em 8 direções e subtrai a
+   * original, sobrando só a borda. É o que dá a linha grossa e destacada em cima
+   * da foto — sem isso o único indício do formato era um escurecimento sutil.
+   */
+  function anelDaMascara(m: HTMLCanvasElement, cor: string, espessura: number): HTMLCanvasElement {
+    const anel = document.createElement('canvas')
+    anel.width = CANVAS
+    anel.height = CANVAS
+    const c = anel.getContext('2d')!
+    const e = espessura
+    const desloc: Array<[number, number]> = [
+      [-e, 0], [e, 0], [0, -e], [0, e],
+      [-e, -e], [e, -e], [-e, e], [e, e],
+    ]
+    for (const [ox, oy] of desloc) c.drawImage(m, ox, oy, CANVAS, CANVAS)
+    c.globalCompositeOperation = 'source-in'
+    c.fillStyle = cor
+    c.fillRect(0, 0, CANVAS, CANVAS)
+    c.globalCompositeOperation = 'destination-out'
+    c.drawImage(m, 0, 0, CANVAS, CANVAS)
+    return anel
+  }
+
+  // getImageData lança SecurityError em canvas "tainted". Aqui é same-origin,
+  // então não deveria acontecer — mas uma exceção nesta linha derrubaria a
+  // montagem do editor inteiro (foi assim que os botões sumiram da outra vez).
+  let heartMask: HTMLCanvasElement | null = null
+  let heartAnel: HTMLCanvasElement | null = null
+  try {
+    heartMask = heart ? mascaraComAlpha(heart) : null
+    heartAnel = heartMask ? anelDaMascara(heartMask, GUIA_COR, 5) : null
+  } catch {
+    heartMask = null
+    heartAnel = null
+  }
+
   /** Camada onde a borracha pinta (mesma resolução da foto sem fundo). */
   let apagador: HTMLCanvasElement | null = null
   let borrachaAtiva = false
+  /** Posição do mouse no canvas — só usada pra desenhar a bolinha da borracha. */
+  let cursor: { x: number; y: number } | null = null
 
   async function carregarFonte(): Promise<void> {
     const url = modo === 'recorte' ? `${base}/sem-fundo` : `${base}?t=${Date.now()}`
@@ -258,28 +324,58 @@ export async function abrirPickerEditor(
     c.restore()
   }
 
-  /** Contorno do formato — é a "mascaração" que mostra onde vai cortar. */
+  /**
+   * Contorno do formato — é a "mascaração" que mostra onde vai cortar.
+   * Escurece o que fica de fora e traça a borda em laranja por cima: só o
+   * escurecimento era discreto demais pra enxergar em foto clara.
+   */
   function desenharGuia(c: CanvasRenderingContext2D): void {
     c.save()
-    c.strokeStyle = 'rgba(15,23,42,.85)'
-    c.lineWidth = 4
-    c.setLineDash([14, 10])
     if (modo === 'recorte') {
+      // Fora da cápsula escurecido, com a mesma leitura do modo coração.
+      c.save()
+      c.beginPath()
+      c.rect(0, 0, CANVAS, CANVAS)
       caminhoCapsula(c, uWidth)
+      c.fillStyle = 'rgba(15,23,42,.45)'
+      c.fill('evenodd')
+      c.restore()
+      // Halo escuro por baixo pra linha não sumir em foto clara.
+      caminhoCapsula(c, uWidth)
+      c.strokeStyle = 'rgba(15,23,42,.55)'
+      c.lineWidth = 11
       c.stroke()
-    } else if (heart) {
-      // Sem path do coração no cliente: escurece TUDO menos a máscara, então
-      // o que fica claro é exatamente o que a arte vai aproveitar.
+      caminhoCapsula(c, uWidth)
+      c.strokeStyle = GUIA_COR
+      c.lineWidth = 5
+      c.stroke()
+    } else if (heartMask) {
       const fora = document.createElement('canvas')
       fora.width = CANVAS
       fora.height = CANVAS
       const fc = fora.getContext('2d')!
-      fc.fillStyle = 'rgba(15,23,42,.55)'
+      fc.fillStyle = 'rgba(15,23,42,.45)'
       fc.fillRect(0, 0, CANVAS, CANVAS)
       fc.globalCompositeOperation = 'destination-out'
-      fc.drawImage(heart, 0, 0, CANVAS, CANVAS)
+      fc.drawImage(heartMask, 0, 0, CANVAS, CANVAS)
       c.drawImage(fora, 0, 0)
+      if (heartAnel) c.drawImage(heartAnel, 0, 0)
     }
+    c.restore()
+  }
+
+  /** Bolinha da borracha: mostra exatamente a área que o clique vai apagar. */
+  function desenharCursorBorracha(c: CanvasRenderingContext2D): void {
+    if (!borrachaAtiva || !cursor) return
+    c.save()
+    c.beginPath()
+    c.arc(cursor.x, cursor.y, Number(inBrush.value) / 2, 0, Math.PI * 2)
+    c.strokeStyle = 'rgba(255,255,255,.95)'
+    c.lineWidth = 4
+    c.stroke()
+    c.strokeStyle = 'rgba(15,23,42,.9)'
+    c.lineWidth = 2
+    c.stroke()
     c.restore()
   }
 
@@ -288,13 +384,14 @@ export async function abrirPickerEditor(
     ctx.clearRect(0, 0, CANVAS, CANVAS)
     desenharFoto(ctx)
     desenharGuia(ctx)
+    desenharCursorBorracha(ctx)
 
     // DIREITA: o resultado, já recortado no formato.
     ctxSaida.clearRect(0, 0, CANVAS, CANVAS)
     desenharFoto(ctxSaida)
     ctxSaida.globalCompositeOperation = 'destination-in'
     if (modo === 'coracao') {
-      if (heart) ctxSaida.drawImage(heart, 0, 0, CANVAS, CANVAS)
+      if (heartMask) ctxSaida.drawImage(heartMask, 0, 0, CANVAS, CANVAS)
     } else {
       desenharCapsula(ctxSaida, uWidth)
     }
@@ -380,10 +477,23 @@ export async function abrirPickerEditor(
     ultimo = p
     canvas.style.cursor = 'grabbing'
   })
+  // A bolinha da borracha precisa acompanhar o mouse mesmo sem botão pressionado.
+  canvas.addEventListener('mousemove', (ev) => {
+    if (!borrachaAtiva || arrastando) return
+    cursor = paraCanvas(ev)
+    desenhar()
+  })
+  canvas.addEventListener('mouseleave', () => {
+    if (!borrachaAtiva) return
+    cursor = null
+    desenhar()
+  })
+
   window.addEventListener('mousemove', (ev) => {
     if (!arrastando) return
     const p = paraCanvas(ev)
     if (borrachaAtiva) {
+      cursor = p
       apagarEm(p)
     } else {
       ajuste.dx += p.x - ultimo.x
@@ -394,7 +504,7 @@ export async function abrirPickerEditor(
   })
   window.addEventListener('mouseup', () => {
     arrastando = false
-    canvas.style.cursor = borrachaAtiva ? 'crosshair' : 'grab'
+    canvas.style.cursor = borrachaAtiva ? 'none' : 'grab'
   })
 
   canvas.addEventListener(
@@ -468,8 +578,13 @@ export async function abrirPickerEditor(
   q<HTMLButtonElement>('.in-borracha').addEventListener('click', (ev) => {
     borrachaAtiva = !borrachaAtiva
     ;(ev.currentTarget as HTMLButtonElement).classList.toggle('ativo', borrachaAtiva)
-    canvas.style.cursor = borrachaAtiva ? 'crosshair' : 'grab'
+    canvas.style.cursor = borrachaAtiva ? 'none' : 'grab'
+    if (!borrachaAtiva) cursor = null
+    desenhar()
   })
+
+  // Mudar o tamanho do pincel precisa redesenhar a bolinha na hora.
+  inBrush.addEventListener('input', () => desenhar())
 
   q<HTMLButtonElement>('.in-removebg').addEventListener('click', async (ev) => {
     const btn = ev.currentTarget as HTMLButtonElement
