@@ -1881,7 +1881,10 @@ function applyShopeeWorkbookToolbar(workbookId: string) {
   const isShopee = isShopeeWorkbookId(workbookId)
   setToolbarBtnVisible(document.querySelector('#baixar-aprovados-data-btn'), isShopee)
   setToolbarBtnVisible(document.querySelector('#baixar-aprovados-todos-btn'), isShopee)
-  setToolbarBtnVisible(document.querySelector('#shopee-link-conversations-btn'), true)
+  // "Vincular conversas" sai da barra (pedido do user), mas a FUNÇÃO continua:
+  // passou a rodar sozinha junto do poll de 2h no servidor. Sem isso, comprador
+  // novo nunca vincularia e o disparo automático o pularia como "sem chat".
+  setToolbarBtnVisible(document.querySelector('#shopee-link-conversations-btn'), false)
   setToolbarBtnVisible(document.querySelector('#xlsx-update-label'), !isShopee)
   setToolbarBtnVisible(document.querySelector('#xlsx-photos-label'), !isShopee)
   setShopeeActionBanner('', 'hidden')

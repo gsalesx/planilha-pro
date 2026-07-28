@@ -18,7 +18,12 @@ import {
   SHOPEE_POLL_LOOKBACK_HOURS,
 } from './shopee-order-sync.js'
 import { loadShopeeAuth } from './shopee-store.js'
-import { ensureShopeeWorkbook } from './shopee-workbook.js'
+import {
+  linkConversationsScanChunk,
+  loadLinkStartCursor,
+  saveLinkStartCursor,
+} from './shopee-link-conversations.js'
+import { ensureShopeeWorkbook, SHOPEE_WORKBOOK_ID } from './shopee-workbook.js'
 import backupRouter from './routes/backup.js'
 import emojiCatalogRouter from './routes/emoji-catalog.js'
 import imagesRouter from './routes/images.js'
@@ -161,10 +166,38 @@ async function runShopeeRecentPoll(): Promise<void> {
         errors,
       })
     }
+    await vincularConversasAuto()
   } catch (error) {
     console.warn('[shopee-poll]', error instanceof Error ? error.message : error)
   } finally {
     shopeePollBusy = false
+  }
+}
+
+/**
+ * Vincula conversas do chat aos pedidos — o que antes era o botão "Vincular
+ * conversas Shopee" na barra. O botão saiu da tela (pedido do user), então
+ * roda aqui junto do poll: sem isso, comprador novo nunca vincularia e o
+ * disparo automático de prévias o pularia como "sem chat vinculado".
+ *
+ * Best-effort e um chunk por poll: é uma varredura paginada e cara, e o
+ * cursor persiste entre execuções, então cada rodada avança um pedaço.
+ */
+async function vincularConversasAuto(): Promise<void> {
+  try {
+    const r = await linkConversationsScanChunk(SHOPEE_WORKBOOK_ID, {
+      nextTimestampNano: loadLinkStartCursor() ?? undefined,
+    })
+    if (r.nextTimestampNano) saveLinkStartCursor(r.nextTimestampNano)
+    if (r.linkedThisChunk > 0) {
+      console.log('[shopee-link-auto] vinculados', {
+        novos: r.linkedThisChunk,
+        total: r.linked,
+        conversasVarridas: r.conversationsScanned,
+      })
+    }
+  } catch (error) {
+    console.warn('[shopee-link-auto]', error instanceof Error ? error.message : error)
   }
 }
 
