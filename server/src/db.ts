@@ -387,6 +387,39 @@ db.exec(`
   );
 `)
 
+/**
+ * Trilha de auditoria de TUDO que mexe em pedido sem humano na frente: poll de 2h,
+ * webhook da Shopee, upsert linha a linha, mutações via API de automação.
+ *
+ * Existe porque o `console.log` morre no restart do container: quando um pedido de 2 peças
+ * apareceu como 3 linhas (bug da order_key com data embutida, 2026-07-28 — casos 24lehsilva/
+ * livea.maria123/taty1lima), não havia NENHUM registro de qual rotina criou a linha extra nem
+ * quando — a timeline teve que ser deduzida de `position`/`updated_at`. Regra: qualquer
+ * escrita automática em `orders` deixa rastro aqui.
+ *
+ * `run_id` correlaciona todos os eventos de uma mesma execução (um poll, um push).
+ * `detail_json` é livre — guardar o máximo de contexto, inclusive payload cru quando couber.
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at INTEGER NOT NULL,
+    level TEXT NOT NULL DEFAULT 'info',
+    source TEXT NOT NULL,
+    event TEXT NOT NULL,
+    run_id TEXT,
+    workbook_id TEXT,
+    order_sn TEXT,
+    order_key TEXT,
+    detail_json TEXT NOT NULL DEFAULT '{}'
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_log_at ON audit_log (at);
+  CREATE INDEX IF NOT EXISTS idx_audit_log_order_sn ON audit_log (order_sn, at);
+  CREATE INDEX IF NOT EXISTS idx_audit_log_event ON audit_log (event, at);
+  CREATE INDEX IF NOT EXISTS idx_audit_log_run ON audit_log (run_id);
+  CREATE INDEX IF NOT EXISTS idx_audit_log_level ON audit_log (level, at);
+`)
+
 // Migration idempotente: garante order_pieces.nota em DBs criados antes dessa coluna existir.
 {
   const cols = db.prepare("PRAGMA table_info(order_pieces)").all() as Array<{ name: string }>

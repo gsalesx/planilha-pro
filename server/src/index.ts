@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import express from 'express'
 
+import { newRunId, pruneAudit, recordAudit } from './audit.js'
 import { cleanupExpiredSessions, requireAuth } from './auth.js'
 import { env, isProd } from './env.js'
 import { ASSETS_DIR, ensureEmojiCatalogSeeded } from './emoji-catalog.js'
@@ -24,6 +25,7 @@ import {
   saveLinkStartCursor,
 } from './shopee-link-conversations.js'
 import { ensureShopeeWorkbook, SHOPEE_WORKBOOK_ID } from './shopee-workbook.js'
+import auditRouter from './routes/audit.js'
 import backupRouter from './routes/backup.js'
 import emojiCatalogRouter from './routes/emoji-catalog.js'
 import imagesRouter from './routes/images.js'
@@ -73,6 +75,7 @@ app.use('/api', parseIssuesRouter)
 app.use('/api', piecesRouter)
 app.use('/api', pickerRouter)
 app.use('/api', emojiCatalogRouter)
+app.use('/api', auditRouter)
 
 // imagens builtin do catálogo de emoji (server/assets/emojis, servido em build-time) —
 // cache longo no navegador: são bytes fixos (baked na imagem Docker), só a LISTA de
@@ -111,6 +114,18 @@ cleanupExpiredSessions()
 ensureShopeeWorkbook()
 ensureEmojiCatalogSeeded()
 
+// Reinício do servidor é o evento que explica buraco no log — registrar sempre.
+recordAudit({
+  source: 'boot',
+  event: 'servidor.iniciado',
+  detail: { nodeEnv: env.nodeEnv, dataDir: env.dataDir, pid: process.pid },
+})
+setInterval(() => {
+  const removidos = pruneAudit()
+  if (removidos > 0) console.log(`[audit] ${removidos} evento(s) fora da retenção removidos`)
+}, 24 * 60 * 60 * 1000)
+pruneAudit()
+
 /**
  * Poll pedidos recentes — roda em cima de wb_shopee (única planilha), junto com o webhook
  * (PUSH_PROCESSING_ENABLED em shopee-push-process.ts, reativado 2026-07-15): o webhook cobre
@@ -129,46 +144,76 @@ const SHOPEE_POLL_MS = 2 * 60 * 60 * 1000
 let shopeePollBusy = false
 
 async function runShopeeRecentPoll(): Promise<void> {
-  if (shopeePollBusy || !env.shopeePartnerKey || !loadShopeeAuth()) return
+  if (shopeePollBusy || !env.shopeePartnerKey || !loadShopeeAuth()) {
+    if (shopeePollBusy) {
+      recordAudit({ source: 'poll', event: 'poll.pulado', level: 'warn', detail: { motivo: 'execução anterior ainda rodando' } })
+    }
+    return
+  }
   shopeePollBusy = true
+  // Toda escrita das 5 rotinas abaixo carrega este runId no audit_log — dá pra reconstruir
+  // exatamente o que uma rodada do cron fez, mesmo semanas depois.
+  const runId = newRunId('poll')
+  const ctx = { source: 'poll' as const, runId }
+  const t0 = Date.now()
+  recordAudit({ source: 'poll', runId, event: 'poll.inicio', detail: { lookbackHours: SHOPEE_POLL_LOOKBACK_HOURS } })
   try {
-    const result = await syncRecentShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS })
-    const updated = await syncRecentlyUpdatedShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS })
-    const pending = await resyncPendingDateOrders()
-    const readyToShip = await resyncReadyToShipDates()
-    const processed = await resyncProcessedOrders()
-    const errors =
-      result.errors.length +
-      updated.errors.length +
-      pending.errors.length +
-      readyToShip.errors.length +
-      processed.errors.length
+    const result = await syncRecentShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS, ctx })
+    const updated = await syncRecentlyUpdatedShopeeOrders({ hours: SHOPEE_POLL_LOOKBACK_HOURS, ctx })
+    const pending = await resyncPendingDateOrders(SHOPEE_WORKBOOK_ID, ctx)
+    const readyToShip = await resyncReadyToShipDates(SHOPEE_WORKBOOK_ID, ctx)
+    const processed = await resyncProcessedOrders(SHOPEE_WORKBOOK_ID, ctx)
+    const todosErros = [
+      ...result.errors,
+      ...updated.errors,
+      ...pending.errors,
+      ...readyToShip.errors,
+      ...processed.errors,
+    ]
+    const resumo = {
+      listed: result.listed,
+      created: result.created,
+      updated: result.updated,
+      byUpdateTimeListed: updated.listed,
+      byUpdateTimeUpdated: updated.updated,
+      pendingRechecked: pending.listed,
+      pendingResolved: pending.updated,
+      readyToShipRechecked: readyToShip.listed,
+      readyToShipFixed: readyToShip.updated,
+      processedRechecked: processed.listed,
+      processedFixed: processed.updated,
+      errors: todosErros.length,
+    }
     if (
       result.created > 0 ||
       updated.updated > 0 ||
       pending.updated > 0 ||
       readyToShip.updated > 0 ||
       processed.updated > 0 ||
-      errors > 0
+      todosErros.length > 0
     ) {
-      console.log('[shopee-poll] concluído', {
-        listed: result.listed,
-        created: result.created,
-        updated: result.updated,
-        byUpdateTimeListed: updated.listed,
-        byUpdateTimeUpdated: updated.updated,
-        pendingRechecked: pending.listed,
-        pendingResolved: pending.updated,
-        readyToShipRechecked: readyToShip.listed,
-        readyToShipFixed: readyToShip.updated,
-        processedRechecked: processed.listed,
-        processedFixed: processed.updated,
-        errors,
-      })
+      console.log('[shopee-poll] concluído', resumo)
     }
-    await vincularConversasAuto()
+    // Sempre registra, inclusive rodada sem novidade: silêncio no log não pode ser
+    // ambíguo entre "nada mudou" e "o cron parou de rodar".
+    recordAudit({
+      source: 'poll',
+      runId,
+      event: 'poll.fim',
+      level: todosErros.length > 0 ? 'warn' : 'info',
+      detail: { ...resumo, duracaoMs: Date.now() - t0, erros: todosErros },
+    })
+    await vincularConversasAuto(runId)
   } catch (error) {
-    console.warn('[shopee-poll]', error instanceof Error ? error.message : error)
+    const msg = error instanceof Error ? error.message : String(error)
+    console.warn('[shopee-poll]', msg)
+    recordAudit({
+      source: 'poll',
+      runId,
+      event: 'poll.falhou',
+      level: 'error',
+      detail: { erro: msg, duracaoMs: Date.now() - t0 },
+    })
   } finally {
     shopeePollBusy = false
   }
@@ -183,7 +228,7 @@ async function runShopeeRecentPoll(): Promise<void> {
  * Best-effort e um chunk por poll: é uma varredura paginada e cara, e o
  * cursor persiste entre execuções, então cada rodada avança um pedaço.
  */
-async function vincularConversasAuto(): Promise<void> {
+async function vincularConversasAuto(runId?: string): Promise<void> {
   try {
     const r = await linkConversationsScanChunk(SHOPEE_WORKBOOK_ID, {
       nextTimestampNano: loadLinkStartCursor() ?? undefined,
@@ -196,8 +241,21 @@ async function vincularConversasAuto(): Promise<void> {
         conversasVarridas: r.conversationsScanned,
       })
     }
+    recordAudit({
+      source: 'poll',
+      runId,
+      event: 'link_conversas.chunk',
+      detail: {
+        novos: r.linkedThisChunk,
+        total: r.linked,
+        conversasVarridas: r.conversationsScanned,
+        cursor: r.nextTimestampNano ?? null,
+      },
+    })
   } catch (error) {
-    console.warn('[shopee-link-auto]', error instanceof Error ? error.message : error)
+    const msg = error instanceof Error ? error.message : String(error)
+    console.warn('[shopee-link-auto]', msg)
+    recordAudit({ source: 'poll', runId, event: 'link_conversas.falhou', level: 'error', detail: { erro: msg } })
   }
 }
 

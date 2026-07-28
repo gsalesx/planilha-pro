@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import { Router, type Request, type Response } from 'express'
 
+import { newRunId, recordAudit } from '../audit.js'
 import { requireAuth } from '../auth.js'
 import { env } from '../env.js'
 import {
@@ -85,15 +86,28 @@ export function handleShopeePushPost(req: Request, res: Response): void {
         bodyLen: rawBody.length,
         body: rawBody.slice(0, 400),
       })
+      recordAudit({
+        source: 'push',
+        event: 'push.rejeitado',
+        level: 'error',
+        detail: { motivo: 'assinatura inválida', callbackUrl, urlCandidates, bodyLen: rawBody.length, body: rawBody.slice(0, 2000) },
+      })
       res.status(401).end()
       return
     }
   } else if (partnerKeys.length && !authorization) {
     console.warn('[shopee-push] Authorization ausente')
+    recordAudit({
+      source: 'push',
+      event: 'push.rejeitado',
+      level: 'error',
+      detail: { motivo: 'Authorization ausente', callbackUrl, body: rawBody.slice(0, 2000) },
+    })
     res.status(401).end()
     return
   } else {
     console.warn('[shopee-push] SHOPEE_PUSH_PARTNER_KEY não configurada — aceitando sem validar assinatura')
+    recordAudit({ source: 'push', event: 'push.sem_validacao', level: 'warn', detail: { motivo: 'partner key não configurada' } })
   }
 
   const parsed = parsedEarly ?? parseJsonSafe(rawBody)
@@ -107,16 +121,30 @@ export function handleShopeePushPost(req: Request, res: Response): void {
     parsed,
   }
   recordShopeePush(entry)
+  const code = typeof parsed === 'object' && parsed && 'code' in parsed ? (parsed as { code?: unknown }).code : undefined
   console.log('[shopee-push] recebido', {
     id: entry.id,
-    code: typeof parsed === 'object' && parsed && 'code' in parsed ? (parsed as { code?: unknown }).code : undefined,
+    code,
     shop_id: typeof parsed === 'object' && parsed && 'shop_id' in parsed ? (parsed as { shop_id?: unknown }).shop_id : undefined,
+  })
+  // runId amarra a chegada do push ao que ele causou (import, update de linha, vínculo de chat).
+  const runId = newRunId('push')
+  recordAudit({
+    source: 'push',
+    runId,
+    event: 'push.recebido',
+    detail: { pushId: entry.id, code, signatureOk, isVerifyPing, callbackUrl, payload: parsed ?? rawBody.slice(0, 2000) },
   })
 
   // Shopee exige 2xx com corpo vazio — processamento async depois da resposta.
   res.status(200).end()
   if (!isVerifyPing) {
-    void processShopeePush(parsed)
+    // Sem o catch, uma exceção aqui virava unhandled rejection e sumia sem rastro.
+    void processShopeePush(parsed, runId).catch((error) => {
+      const msg = error instanceof Error ? error.message : String(error)
+      console.error('[shopee-push] processamento falhou', msg)
+      recordAudit({ source: 'push', runId, event: 'push.falhou', level: 'error', detail: { erro: msg, payload: parsed } })
+    })
   }
 }
 

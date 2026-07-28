@@ -1,3 +1,4 @@
+import { type AuditSource, recordAudit } from './audit.js'
 import { db, nowMs } from './db.js'
 import {
   assertShopeeOk,
@@ -49,6 +50,16 @@ export interface ShopeeSyncResult {
   created: number
   updated: number
   errors: string[]
+}
+
+/**
+ * Quem disparou a escrita — vai pro audit_log pra dar pra responder "que rotina criou
+ * esta linha, e quando". `rotina` é o nome da função de sync (resyncPendingDateOrders etc).
+ */
+export interface SyncContext {
+  source?: AuditSource
+  runId?: string | null
+  rotina?: string
 }
 
 /**
@@ -160,7 +171,15 @@ function parseOrderList(data: ShopeeApiResponse): ShopeeOrderDetail[] {
   return body.order_list ?? []
 }
 
-/** Mesma regra do XLSX: 1ª linha = id; demais = data__id__ocorrência. */
+/**
+ * Mesma regra do XLSX: 1ª linha = id; demais = data__id__ocorrência.
+ *
+ * ⚠️ A data faz parte da key só por herança do import de planilha — ela NÃO identifica a
+ * linha (o `ship_by_date` muda). Nunca use esta função pra PROCURAR linha existente sem o
+ * fallback de `findOrderBySnOccurrence`: o pedido nasce em "Sem data de envio" e, quando a
+ * Shopee calcula o prazo, a key recalculada deixa de bater com a que está no banco. Era isso
+ * que duplicava a 2ª peça (bug 2026-07-28, casos 24lehsilva/livea.maria123/taty1lima).
+ */
 function shopeeOrderKey(sheetDate: string, orderSn: string, occurrence: number): string {
   if (occurrence === 1) return orderSn
   return `${sheetDate || 'sem-data'}__${orderSn}__${occurrence}`
@@ -189,6 +208,97 @@ function findOrdersBySn(orderSn: string, workbookId: string = SHOPEE_WORKBOOK_ID
     .all(workbookId, orderSn) as ExistingOrderRow[]
 }
 
+/**
+ * Acha a linha desta ocorrência do pedido ignorando o prefixo de data da key — é o que
+ * torna o upsert imune à mudança de `ship_by_date`. A key achada é REUSADA como está
+ * (nunca renomeada): `order_pieces`, `images` e o `_order_keys.json` do pipeline local
+ * referenciam a key, e trocá-la faria a peça ser tratada como nova lá também.
+ */
+function findOrderBySnOccurrence(
+  orderSn: string,
+  occurrence: number,
+  workbookId: string = SHOPEE_WORKBOOK_ID,
+): ExistingOrderRow | undefined {
+  return db
+    .prepare(
+      // ESCAPE '\' é OBRIGATÓRIO aqui: sem a cláusula, o SQLite trata a barra
+      // como caractere LITERAL (não como escape), então o padrão `%\_\_SN\_\_2`
+      // passa a procurar barras de verdade dentro da key e nunca casa — o
+      // fallback vira um no-op silencioso e a duplicação continua acontecendo.
+      `SELECT order_key, row_json, sheet_date, product_image_url FROM orders
+        WHERE workbook_id = ? AND id = ? AND order_key LIKE ? ESCAPE '\\'
+        ORDER BY order_key ASC LIMIT 1`,
+    )
+    .get(workbookId, orderSn, `%\\_\\_${orderSn}\\_\\_${occurrence}`) as ExistingOrderRow | undefined
+}
+
+/**
+ * Posição da linha nova: logo abaixo da última linha já existente do mesmo pedido, empurrando
+ * o resto pra baixo. Antes ia sempre pro fim da planilha (MAX+1), então a 2ª peça de um pedido
+ * importado em dois momentos aparecia dezenas de linhas depois da 1ª, com outros clientes no
+ * meio (caso taty1lima 2026-07-28). Sem irmã no banco, mantém o append no fim.
+ */
+function posicaoParaNovaLinha(orderSn: string, workbookId: string): number {
+  const irma = db
+    .prepare('SELECT MAX(position) AS p FROM orders WHERE workbook_id = ? AND id = ?')
+    .get(workbookId, orderSn) as { p: number | null }
+  if (irma?.p == null) {
+    const fim = db
+      .prepare('SELECT COALESCE(MAX(position), -1) AS m FROM orders WHERE workbook_id = ?')
+      .get(workbookId) as { m: number }
+    return fim.m + 1
+  }
+  const alvo = irma.p + 1
+  db.prepare('UPDATE orders SET position = position + 1 WHERE workbook_id = ? AND position >= ?')
+    .run(workbookId, alvo)
+  return alvo
+}
+
+/**
+ * Junta as linhas de um pedido que ficaram separadas por linhas de OUTROS pedidos, mantendo-as
+ * na posição da primeira. Regra do negócio: um pedido nunca pode ter outro pedido no meio dele.
+ * Só é chamada quando entra linha nova — pedido antigo desalinhado não é remexido.
+ * Devolve quantas linhas mudaram de posição (0 = já estava certo).
+ */
+function reagruparLinhasDoPedido(orderSn: string, workbookId: string): number {
+  const doPedido = db
+    .prepare('SELECT order_key, position FROM orders WHERE workbook_id = ? AND id = ? ORDER BY position')
+    .all(workbookId, orderSn) as Array<{ order_key: string; position: number }>
+  if (doPedido.length < 2) return 0
+  const primeira = doPedido[0].position
+  const ultima = doPedido[doPedido.length - 1].position
+  if (ultima - primeira === doPedido.length - 1) return 0
+
+  const todas = db
+    .prepare('SELECT order_key, id, position FROM orders WHERE workbook_id = ? ORDER BY position')
+    .all(workbookId) as Array<{ order_key: string; id: string; position: number }>
+  const chavesDoPedido = new Set(doPedido.map((l) => l.order_key))
+
+  const novaOrdem: string[] = []
+  let jaInseriu = false
+  for (const linha of todas) {
+    if (chavesDoPedido.has(linha.order_key)) {
+      if (jaInseriu) continue
+      jaInseriu = true
+      for (const l of doPedido) novaOrdem.push(l.order_key)
+      continue
+    }
+    novaOrdem.push(linha.order_key)
+  }
+
+  const atualiza = db.prepare('UPDATE orders SET position = ? WHERE workbook_id = ? AND order_key = ?')
+  let movidas = 0
+  const posAtual = new Map(todas.map((l) => [l.order_key, l.position]))
+  db.transaction(() => {
+    novaOrdem.forEach((key, i) => {
+      if (posAtual.get(key) === i) return
+      atualiza.run(i, workbookId, key)
+      movidas++
+    })
+  })()
+  return movidas
+}
+
 export function shopeeOrderExists(orderSn: string, workbookId: string = SHOPEE_WORKBOOK_ID): boolean {
   return findOrdersBySn(orderSn.trim(), workbookId).length > 0
 }
@@ -202,9 +312,17 @@ export async function importShopeeOrderBySn(
   orderSn: string,
   fallbackStatus?: string,
   workbookId: string = SHOPEE_WORKBOOK_ID,
+  ctx: SyncContext = {},
 ): Promise<'created' | 'updated' | 'unchanged' | 'failed'> {
   const sn = orderSn.trim()
   if (!sn) return 'failed'
+
+  const auditBase = {
+    source: ctx.source ?? ('push' as AuditSource),
+    runId: ctx.runId ?? null,
+    workbookId,
+    orderSn: sn,
+  }
 
   const retryDelaysMs = [0, 3000, 10000]
   for (let attempt = 0; attempt < retryDelaysMs.length; attempt++) {
@@ -215,18 +333,37 @@ export async function importShopeeOrderBySn(
       const order = orders.find((o) => o.order_sn === sn) ?? orders[0]
       if (!order?.order_sn) {
         console.warn(`[shopee-push] get_order_detail vazio (tentativa ${attempt + 1}/${retryDelaysMs.length})`, sn)
+        recordAudit({
+          ...auditBase,
+          event: 'import.detalhe_vazio',
+          level: 'warn',
+          detail: { rotina: ctx.rotina, tentativa: attempt + 1, de: retryDelaysMs.length },
+        })
         continue
       }
       if (fallbackStatus && !order.order_status) order.order_status = fallbackStatus
-      return upsertShopeeOrder(order, workbookId)
+      return upsertShopeeOrder(order, workbookId, ctx)
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
       console.warn(
         `[shopee-push] get_order_detail erro (tentativa ${attempt + 1}/${retryDelaysMs.length})`,
         sn,
-        error instanceof Error ? error.message : error,
+        msg,
       )
+      recordAudit({
+        ...auditBase,
+        event: 'import.erro_api',
+        level: 'warn',
+        detail: { rotina: ctx.rotina, tentativa: attempt + 1, de: retryDelaysMs.length, erro: msg },
+      })
     }
   }
+  recordAudit({
+    ...auditBase,
+    event: 'import.desistiu',
+    level: 'error',
+    detail: { rotina: ctx.rotina, tentativas: retryDelaysMs.length, fallbackStatus },
+  })
   return 'failed'
 }
 
@@ -239,6 +376,7 @@ export async function importShopeeOrderBySn(
 export function upsertShopeeOrder(
   order: ShopeeOrderDetail,
   workbookId: string = SHOPEE_WORKBOOK_ID,
+  ctx: SyncContext = {},
 ): 'created' | 'updated' | 'unchanged' {
   const orderSn = order.order_sn?.trim()
   if (!orderSn) throw new Error('order_sn ausente')
@@ -251,10 +389,12 @@ export function upsertShopeeOrder(
   let anyCreated = false
   let anyChanged = false
 
-  let nextPos =
-    (db
-      .prepare('SELECT COALESCE(MAX(position), -1) AS m FROM orders WHERE workbook_id = ?')
-      .get(workbookId) as { m: number }).m + 1
+  const auditBase = {
+    source: ctx.source ?? ('api' as AuditSource),
+    runId: ctx.runId ?? null,
+    workbookId,
+    orderSn,
+  }
 
   const updateStmt = db.prepare(
     'UPDATE orders SET row_json = ?, sheet_date = ?, product_image_url = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
@@ -271,6 +411,28 @@ export function upsertShopeeOrder(
     if (!existing && occurrence === 1) {
       const legacy = findOrdersBySn(orderSn, workbookId)
       if (legacy.length === 1) existing = legacy[0]
+    }
+    if (!existing && occurrence > 1) {
+      // Key com prefixo de data velho (pedido saiu de "Sem data de envio"). Reusa a linha
+      // que já existe em vez de criar uma nova — ver findOrderBySnOccurrence.
+      existing = findOrderBySnOccurrence(orderSn, occurrence, workbookId)
+      if (existing) {
+        recordAudit({
+          ...auditBase,
+          event: 'order.key_reaproveitada',
+          level: 'warn',
+          orderKey: existing.order_key,
+          detail: {
+            rotina: ctx.rotina,
+            occurrence,
+            keyCalculada: orderKey,
+            keyExistente: existing.order_key,
+            sheetDateAnterior: existing.sheet_date,
+            sheetDateNovo: sheetDate,
+            motivo: 'ship_by_date mudou; sem este fallback viraria linha duplicada',
+          },
+        })
+      }
     }
 
     const row = itemRows[i]
@@ -296,11 +458,27 @@ export function upsertShopeeOrder(
           || nextImageUrl !== existing.product_image_url) {
         updateStmt.run(rowJson, sheetDate, nextImageUrl, now, workbookId, existing.order_key)
         anyChanged = true
+        recordAudit({
+          ...auditBase,
+          event: 'order.atualizada',
+          orderKey: existing.order_key,
+          detail: {
+            rotina: ctx.rotina,
+            occurrence,
+            shopeeStatus,
+            sheetDate: sheetDate !== existing.sheet_date
+              ? { de: existing.sheet_date, para: sheetDate }
+              : sheetDate,
+            rowAntes: JSON.parse(existing.row_json),
+            rowDepois: row,
+          },
+        })
       }
     } else {
       applyInternalStatusFromShopee(row, shopeeStatus)
       anyCreated = true
       anyChanged = true
+      const position = posicaoParaNovaLinha(orderSn, workbookId)
       insertStmt.run(
         workbookId,
         orderKey,
@@ -310,9 +488,66 @@ export function upsertShopeeOrder(
         0,
         sheetDate,
         productImageUrl,
-        nextPos++,
+        position,
         now,
       )
+      const irmas = findOrdersBySn(orderSn, workbookId).length
+      recordAudit({
+        ...auditBase,
+        event: 'order.criada',
+        // Linha nova num pedido que já tinha mais linhas do que itens tem cheiro de
+        // duplicata — deixa em warn pro relatório destacar sem precisar de query.
+        level: irmas > itemRows.length ? 'warn' : 'info',
+        orderKey,
+        detail: {
+          rotina: ctx.rotina,
+          occurrence,
+          itensNoPedido: itemRows.length,
+          linhasDepoisDoInsert: irmas,
+          position,
+          sheetDate,
+          shopeeStatus,
+          row,
+        },
+      })
+    }
+  }
+
+  // As duas conferências abaixo só rodam quando ESTA chamada mexeu em alguma linha. Pedido
+  // antigo que o resync visita e acha idêntico fica intocado de propósito (decisão do user
+  // 2026-07-28: corrigir daqui pra frente, não remexer no que já está publicado). Pra auditar
+  // o passado sem escrever nada, use GET /api/audit/duplicatas.
+  if (anyChanged) {
+    // O detalhe da Shopee é a verdade sobre quantas linhas o pedido deve ter: 1 por item do
+    // carrinho (produtos ou variantes diferentes = itens diferentes; mesmo item repetido só
+    // aumenta a quantidade). Sobra = resíduo de import antigo ou item removido do pedido.
+    // Nunca apaga sozinho — a linha pode já ter foto e arte do cliente.
+    const linhasNoBanco = findOrdersBySn(orderSn, workbookId)
+    if (linhasNoBanco.length > itemRows.length) {
+      recordAudit({
+        ...auditBase,
+        event: 'order.linhas_sobrando',
+        level: 'error',
+        detail: {
+          rotina: ctx.rotina,
+          itensNoPedido: itemRows.length,
+          linhasNoBanco: linhasNoBanco.length,
+          keys: linhasNoBanco.map((l) => l.order_key),
+          acao: 'conferir em /api/audit/duplicatas e decidir manualmente',
+        },
+      })
+    }
+  }
+
+  if (anyCreated) {
+    const movidas = reagruparLinhasDoPedido(orderSn, workbookId)
+    if (movidas > 0) {
+      recordAudit({
+        ...auditBase,
+        event: 'order.linhas_reagrupadas',
+        level: 'warn',
+        detail: { rotina: ctx.rotina, linhasMovidas: movidas, motivo: 'linha nova deixaria outro pedido no meio' },
+      })
     }
   }
 
@@ -396,8 +631,20 @@ async function upsertOrderSnsBatched(
   orderSns: string[],
   preErrors: string[] = [],
   workbookId: string = SHOPEE_WORKBOOK_ID,
+  ctx: SyncContext = {},
 ): Promise<ShopeeSyncResult> {
   const result: ShopeeSyncResult = { listed: orderSns.length, created: 0, updated: 0, errors: [...preErrors] }
+
+  for (const erro of preErrors) {
+    recordAudit({
+      source: ctx.source ?? 'poll',
+      runId: ctx.runId ?? null,
+      workbookId,
+      event: 'sync.erro_listagem',
+      level: 'error',
+      detail: { rotina: ctx.rotina, erro },
+    })
+  }
 
   for (let i = 0; i < orderSns.length; i += 50) {
     const batch = orderSns.slice(i, i + 50)
@@ -406,19 +653,34 @@ async function upsertOrderSnsBatched(
       const orders = parseOrderList(data)
       for (const order of orders) {
         try {
-          const action = upsertShopeeOrder(order, workbookId)
+          const action = upsertShopeeOrder(order, workbookId, ctx)
           if (action === 'created') result.created++
           else if (action === 'updated') result.updated++
         } catch (error) {
-          result.errors.push(
-            `${order.order_sn ?? '?'}: ${error instanceof Error ? error.message : String(error)}`,
-          )
+          const msg = error instanceof Error ? error.message : String(error)
+          result.errors.push(`${order.order_sn ?? '?'}: ${msg}`)
+          recordAudit({
+            source: ctx.source ?? 'poll',
+            runId: ctx.runId ?? null,
+            workbookId,
+            orderSn: order.order_sn ?? null,
+            event: 'sync.erro_pedido',
+            level: 'error',
+            detail: { rotina: ctx.rotina, erro: msg },
+          })
         }
       }
     } catch (error) {
-      result.errors.push(
-        `batch ${Math.floor(i / 50) + 1}: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      const msg = error instanceof Error ? error.message : String(error)
+      result.errors.push(`batch ${Math.floor(i / 50) + 1}: ${msg}`)
+      recordAudit({
+        source: ctx.source ?? 'poll',
+        runId: ctx.runId ?? null,
+        workbookId,
+        event: 'sync.erro_lote',
+        level: 'error',
+        detail: { rotina: ctx.rotina, lote: Math.floor(i / 50) + 1, pedidos: batch, erro: msg },
+      })
     }
   }
 
@@ -428,6 +690,7 @@ async function upsertOrderSnsBatched(
 /** Importa pedidos recentes via API — todos os status (push desativado; poll é a única via). */
 export async function syncRecentShopeeOrders(options: {
   hours?: number
+  ctx?: SyncContext
 } = {}): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
   const hours = Math.min(Math.max(options.hours ?? SHOPEE_POLL_LOOKBACK_HOURS, 1), 168)
@@ -436,7 +699,10 @@ export async function syncRecentShopeeOrders(options: {
 
   const errors: string[] = []
   const orderSns = await collectOrderSns(timeFrom, timeTo, errors)
-  return upsertOrderSnsBatched(orderSns, errors)
+  return upsertOrderSnsBatched(orderSns, errors, SHOPEE_WORKBOOK_ID, {
+    rotina: 'syncRecentShopeeOrders',
+    ...options.ctx,
+  })
 }
 
 /**
@@ -449,6 +715,7 @@ export async function syncRecentShopeeOrders(options: {
  */
 export async function syncRecentlyUpdatedShopeeOrders(options: {
   hours?: number
+  ctx?: SyncContext
 } = {}): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
   const hours = Math.min(Math.max(options.hours ?? SHOPEE_POLL_LOOKBACK_HOURS, 1), 168)
@@ -457,7 +724,10 @@ export async function syncRecentlyUpdatedShopeeOrders(options: {
 
   const errors: string[] = []
   const orderSns = await collectOrderSns(timeFrom, timeTo, errors, 'update_time')
-  return upsertOrderSnsBatched(orderSns, errors)
+  return upsertOrderSnsBatched(orderSns, errors, SHOPEE_WORKBOOK_ID, {
+    rotina: 'syncRecentlyUpdatedShopeeOrders',
+    ...options.ctx,
+  })
 }
 
 function findOrderSnsPendingDate(workbookId: string = SHOPEE_WORKBOOK_ID): string[] {
@@ -476,9 +746,15 @@ function findOrderSnsPendingDate(workbookId: string = SHOPEE_WORKBOOK_ID): strin
  * sai daqui quando a Shopee realmente calcular o ship_by_date, mesmo que demore várias rodadas
  * de 2h em 2h (decisão do usuário 2026-07-15).
  */
-export async function resyncPendingDateOrders(workbookId: string = SHOPEE_WORKBOOK_ID): Promise<ShopeeSyncResult> {
+export async function resyncPendingDateOrders(
+  workbookId: string = SHOPEE_WORKBOOK_ID,
+  ctx: SyncContext = {},
+): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
-  return upsertOrderSnsBatched(findOrderSnsPendingDate(workbookId), [], workbookId)
+  return upsertOrderSnsBatched(findOrderSnsPendingDate(workbookId), [], workbookId, {
+    rotina: 'resyncPendingDateOrders',
+    ...ctx,
+  })
 }
 
 function findOrderSnsByShopeeStatus(
@@ -507,9 +783,15 @@ function findOrderSnsByShopeeStatus(
  * pedidos que vieram com data errada antes do fix do `resolveSheetDate`, e cobre o caso da
  * Shopee às vezes empurrar o ship_by_date +1 dia depois (bug do lado deles) já visto na prática.
  */
-export async function resyncReadyToShipDates(workbookId: string = SHOPEE_WORKBOOK_ID): Promise<ShopeeSyncResult> {
+export async function resyncReadyToShipDates(
+  workbookId: string = SHOPEE_WORKBOOK_ID,
+  ctx: SyncContext = {},
+): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
-  return upsertOrderSnsBatched(findOrderSnsByShopeeStatus(['READY_TO_SHIP'], workbookId), [], workbookId)
+  return upsertOrderSnsBatched(findOrderSnsByShopeeStatus(['READY_TO_SHIP'], workbookId), [], workbookId, {
+    rotina: 'resyncReadyToShipDates',
+    ...ctx,
+  })
 }
 
 /**
@@ -519,9 +801,15 @@ export async function resyncReadyToShipDates(workbookId: string = SHOPEE_WORKBOO
  * "PROCESSED" no banco, mas só 1 realmente PROCESSED na Shopee — o resto já tinha avançado
  * (COMPLETED etc) sem a gente saber. Ver memória `bug-shopee-processed-nunca-resincroniza-2026-07-15`.
  */
-export async function resyncProcessedOrders(workbookId: string = SHOPEE_WORKBOOK_ID): Promise<ShopeeSyncResult> {
+export async function resyncProcessedOrders(
+  workbookId: string = SHOPEE_WORKBOOK_ID,
+  ctx: SyncContext = {},
+): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
-  return upsertOrderSnsBatched(findOrderSnsByShopeeStatus(['PROCESSED'], workbookId), [], workbookId)
+  return upsertOrderSnsBatched(findOrderSnsByShopeeStatus(['PROCESSED'], workbookId), [], workbookId, {
+    rotina: 'resyncProcessedOrders',
+    ...ctx,
+  })
 }
 
 function findAllOrderSns(workbookId: string = SHOPEE_WORKBOOK_ID): string[] {
@@ -538,9 +826,16 @@ function findAllOrderSns(workbookId: string = SHOPEE_WORKBOOK_ID): string[] {
  * querer, teve que reverter) — só busca o order_sn de quem JÁ está no nosso banco, então é
  * impossível esse resync criar pedido novo, só atualizar os existentes.
  */
-export async function resyncAllKnownOrders(workbookId: string = SHOPEE_WORKBOOK_ID): Promise<ShopeeSyncResult> {
+export async function resyncAllKnownOrders(
+  workbookId: string = SHOPEE_WORKBOOK_ID,
+  ctx: SyncContext = {},
+): Promise<ShopeeSyncResult> {
   ensureShopeeWorkbook()
-  return upsertOrderSnsBatched(findAllOrderSns(workbookId), [], workbookId)
+  return upsertOrderSnsBatched(findAllOrderSns(workbookId), [], workbookId, {
+    rotina: 'resyncAllKnownOrders',
+    source: 'manual',
+    ...ctx,
+  })
 }
 
 async function collectAllOrderSns(timeFrom: number, timeTo: number, errors?: string[]): Promise<string[]> {
@@ -560,5 +855,8 @@ export async function syncShopeeWorkbookOrders(options: {
 
   const errors: string[] = []
   const orderSns = await collectAllOrderSns(timeFrom, timeTo, errors)
-  return upsertOrderSnsBatched(orderSns, errors)
+  return upsertOrderSnsBatched(orderSns, errors, SHOPEE_WORKBOOK_ID, {
+    rotina: 'syncShopeeWorkbookOrders',
+    source: 'manual',
+  })
 }

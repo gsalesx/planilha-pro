@@ -2,6 +2,7 @@ import { existsSync, statSync, unlinkSync } from 'node:fs'
 
 import { Router } from 'express'
 
+import { recordAudit } from '../audit.js'
 import { requireAuth } from '../auth.js'
 import { db, nowMs } from '../db.js'
 import { env } from '../env.js'
@@ -216,7 +217,19 @@ router.post('/workbooks/:workbookId/replace', requireAuth, (req, res) => {
       workbookId,
     )
   })
+  const antes = db
+    .prepare('SELECT COUNT(*) AS n FROM orders WHERE workbook_id = ?')
+    .get(workbookId) as { n: number }
   txn()
+  // Replace apaga e reinsere o workbook inteiro (é o autosave da UI): sem registro, uma
+  // linha que muda de data ou some aqui é indistinguível de escrita do sync.
+  recordAudit({
+    source: 'api',
+    event: 'planilha.substituida',
+    level: orders.length < antes.n ? 'warn' : 'info',
+    workbookId,
+    detail: { linhasAntes: antes.n, linhasDepois: orders.length },
+  })
 
   res.json({ ok: true, updatedAt: now, count: orders.length })
 })
@@ -486,10 +499,19 @@ router.patch('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
       for (const existing of matches) {
         const row = JSON.parse(existing.row_json) as unknown[]
         while (row.length <= STATUS_COL) row.push(null)
+        const statusAnterior = row[STATUS_COL]
         row[STATUS_COL] = upd.status
         db.prepare(
           'UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
         ).run(JSON.stringify(row), now, workbookId, existing.order_key)
+        recordAudit({
+          source: 'api',
+          event: 'status.alterado',
+          workbookId,
+          orderKey: existing.order_key,
+          orderSn: id,
+          detail: { de: statusAnterior, para: upd.status, linhasDoPedido: matches.length },
+        })
       }
       results.push({ id, ok: true })
     }
@@ -526,6 +548,9 @@ router.delete('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
 
   const now = nowMs()
   let deletedCount = 0
+  const apagadas = db
+    .prepare('SELECT order_key, id FROM orders WHERE workbook_id = ? AND sheet_date = ?')
+    .all(workbookId, sheetDate) as Array<{ order_key: string; id: string }>
   const txn = db.transaction(() => {
     const result = db
       .prepare('DELETE FROM orders WHERE workbook_id = ? AND sheet_date = ?')
@@ -534,6 +559,13 @@ router.delete('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
     db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
   })
   txn()
+  recordAudit({
+    source: 'api',
+    event: 'pedidos.apagados',
+    level: 'warn',
+    workbookId,
+    detail: { motivo: 'DELETE por data', sheetDate, quantidade: deletedCount, linhas: apagadas },
+  })
 
   for (const row of imagePaths) {
     try {
@@ -570,6 +602,9 @@ router.delete('/workbooks/:workbookId/orders-batch', requireAuth, (req, res) => 
 
   const now = nowMs()
   let deletedCount = 0
+  const apagadas = db
+    .prepare(`SELECT order_key, id, row_json, sheet_date, position FROM orders WHERE workbook_id = ? AND order_key IN (${placeholders})`)
+    .all(workbookId, ...keys) as Array<Record<string, unknown>>
   const txn = db.transaction(() => {
     const result = db
       .prepare(`DELETE FROM orders WHERE workbook_id = ? AND order_key IN (${placeholders})`)
@@ -578,6 +613,14 @@ router.delete('/workbooks/:workbookId/orders-batch', requireAuth, (req, res) => 
     db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
   })
   txn()
+  // Guarda o conteúdo da linha apagada: é a única chance de reconstruir depois.
+  recordAudit({
+    source: 'api',
+    event: 'pedidos.apagados',
+    level: 'warn',
+    workbookId,
+    detail: { motivo: 'DELETE por keys', pedidas: keys, quantidade: deletedCount, linhas: apagadas },
+  })
 
   for (const row of imagePaths) {
     try {

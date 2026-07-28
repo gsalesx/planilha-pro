@@ -1,3 +1,4 @@
+import { newRunId, recordAudit } from './audit.js'
 import { maybeGreetOnReadyToShip } from './shopee-auto-greet.js'
 import { linkBuyerChatFromWebchatMessage } from './shopee-link-conversations.js'
 import { importShopeeOrderBySn, shopeeOrderExists } from './shopee-order-sync.js'
@@ -35,34 +36,62 @@ function extractStatus(data: unknown): string {
  * pedido cai na aba "Sem data de envio" (resolveSheetDate NUNCA usa create_time como fallback) —
  * resyncPendingDateOrders no poll de 2h fica reconferindo até a Shopee calcular de verdade.
  */
-async function handleOrderStatusPush(data: unknown): Promise<void> {
+async function handleOrderStatusPush(data: unknown, runId: string): Promise<void> {
   const orderSn = extractOrderSn(data)
   const status = extractStatus(data)
   if (!orderSn) {
     console.warn('[shopee-push] code 3 sem ordersn')
+    recordAudit({ source: 'push', runId, event: 'push.ignorado', level: 'warn', detail: { code: 3, motivo: 'sem ordersn', data } })
     return
   }
 
-  const action = await importShopeeOrderBySn(orderSn, status, SHOPEE_WORKBOOK_ID)
+  const action = await importShopeeOrderBySn(orderSn, status, SHOPEE_WORKBOOK_ID, {
+    source: 'push',
+    runId,
+    rotina: 'handleOrderStatusPush',
+  })
   if (action === 'failed') {
     console.error('[shopee-push] falha ao importar/atualizar pedido', { orderSn, status })
+    recordAudit({ source: 'push', runId, orderSn, event: 'push.falhou', level: 'error', detail: { code: 3, status } })
     return
   }
   console.log('[shopee-push] pedido atualizado (code 3)', { orderSn, status, action })
+  recordAudit({ source: 'push', runId, orderSn, event: 'push.processado', detail: { code: 3, status, action } })
 }
 
 /** Code 8 — reserved_stock_change_push com action place_order (compra feita, antes do status push). */
-async function handlePlaceOrderPush(data: unknown): Promise<void> {
+async function handlePlaceOrderPush(data: unknown, runId: string): Promise<void> {
   if (!data || typeof data !== 'object') return
   const row = data as { action?: string }
-  if (row.action !== 'place_order') return
+  if (row.action !== 'place_order') {
+    recordAudit({ source: 'push', runId, event: 'push.ignorado', detail: { code: 8, motivo: 'action != place_order', action: row.action } })
+    return
+  }
 
   const orderSn = extractOrderSn(data)
-  if (!orderSn) return
-  if (shopeeOrderExists(orderSn, SHOPEE_WORKBOOK_ID)) return
+  if (!orderSn) {
+    recordAudit({ source: 'push', runId, event: 'push.ignorado', level: 'warn', detail: { code: 8, motivo: 'sem ordersn', data } })
+    return
+  }
+  if (shopeeOrderExists(orderSn, SHOPEE_WORKBOOK_ID)) {
+    recordAudit({ source: 'push', runId, orderSn, event: 'push.ignorado', detail: { code: 8, motivo: 'pedido já existe' } })
+    return
+  }
 
-  const action = await importShopeeOrderBySn(orderSn, 'UNPAID', SHOPEE_WORKBOOK_ID)
+  const action = await importShopeeOrderBySn(orderSn, 'UNPAID', SHOPEE_WORKBOOK_ID, {
+    source: 'push',
+    runId,
+    rotina: 'handlePlaceOrderPush',
+  })
   console.log('[shopee-push] pedido importado (code 8 place_order)', { orderSn, action })
+  recordAudit({
+    source: 'push',
+    runId,
+    orderSn,
+    event: action === 'failed' ? 'push.falhou' : 'push.processado',
+    level: action === 'failed' ? 'error' : 'info',
+    detail: { code: 8, action },
+  })
 }
 
 interface WebchatMessageContent {
@@ -82,23 +111,38 @@ interface WebchatPushEnvelope {
  * conversation_id já vem pronto, sem precisar varrer get_conversation_list. Roda sempre
  * (não depende de PUSH_PROCESSING_ENABLED, que só trata do fluxo de pedidos).
  */
-function handleWebchatMessagePush(data: unknown): void {
+function handleWebchatMessagePush(data: unknown, runId: string): void {
   if (!data || typeof data !== 'object') return
   const envelope = data as WebchatPushEnvelope
-  if (envelope.type !== 'message' || !envelope.content) return
+  if (envelope.type !== 'message' || !envelope.content) {
+    recordAudit({ source: 'push', runId, event: 'push.ignorado', detail: { code: 10, motivo: 'não é mensagem', tipo: envelope.type } })
+    return
+  }
 
   const buyerUserId = Number(envelope.content.from_id) || 0
   const buyerUsername = String(envelope.content.from_user_name ?? '').trim()
   const conversationId = String(envelope.content.conversation_id ?? '').trim()
-  if (!buyerUserId || !buyerUsername || !conversationId) return
+  if (!buyerUserId || !buyerUsername || !conversationId) {
+    recordAudit({
+      source: 'push',
+      runId,
+      event: 'push.ignorado',
+      level: 'warn',
+      detail: { code: 10, motivo: 'campos incompletos', buyerUserId, buyerUsername, conversationId },
+    })
+    return
+  }
 
   try {
     const result = linkBuyerChatFromWebchatMessage({ buyerUserId, buyerUsername, conversationId })
     if (result === 'linked') {
       console.log('[shopee-push] vínculo automático via webchat_push', { buyerUsername, conversationId })
     }
+    recordAudit({ source: 'push', runId, event: 'push.chat_vinculado', detail: { code: 10, buyerUsername, conversationId, result } })
   } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
     console.warn('[shopee-push] falha ao vincular via webchat_push', error)
+    recordAudit({ source: 'push', runId, event: 'push.falhou', level: 'error', detail: { code: 10, buyerUsername, erro: msg } })
   }
 }
 
@@ -115,9 +159,13 @@ function handleWebchatMessagePush(data: unknown): void {
 const PUSH_PROCESSING_ENABLED = true
 
 /** Processa pushes de pedido — chamar após responder 200 à Shopee. */
-export async function processShopeePush(parsed: unknown): Promise<void> {
+export async function processShopeePush(parsed: unknown, runIdIn?: string): Promise<void> {
+  const runId = runIdIn ?? newRunId('push')
   const code = pushCode(parsed)
-  if (code == null) return
+  if (code == null) {
+    recordAudit({ source: 'push', runId, event: 'push.ignorado', level: 'warn', detail: { motivo: 'sem code', parsed } })
+    return
+  }
   if (!parsed || typeof parsed !== 'object') return
   const data = (parsed as { data?: unknown }).data
 
@@ -134,18 +182,21 @@ export async function processShopeePush(parsed: unknown): Promise<void> {
   }
 
   if (code === 10) {
-    handleWebchatMessagePush(data)
+    handleWebchatMessagePush(data, runId)
   }
 
-  if (!PUSH_PROCESSING_ENABLED) return
+  if (!PUSH_PROCESSING_ENABLED) {
+    recordAudit({ source: 'push', runId, event: 'push.ignorado', level: 'warn', detail: { code, motivo: 'PUSH_PROCESSING_ENABLED=false' } })
+    return
+  }
 
   if (code === 3) {
-    await handleOrderStatusPush(data)
+    await handleOrderStatusPush(data, runId)
     await maybeGreetOnReadyToShip(extractOrderSn(data), extractStatus(data))
     return
   }
   if (code === 8) {
-    await handlePlaceOrderPush(data)
+    await handlePlaceOrderPush(data, runId)
   }
 }
 
