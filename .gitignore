@@ -5,3 +5,8 @@ dist
 .env
 .env.*
 !.env.example
+
+# Artefatos de compilação do tsc — o código-fonte do cliente é .ts e o build
+# é feito pelo Vite. Um .js gerado ao lado do .ts faz o import resolver a versão
+# velha compilada em vez do fonte.
+src/*.js
