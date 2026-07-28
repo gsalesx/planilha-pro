@@ -493,9 +493,16 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     function slotHtml(slot: 1 | 2): string {
       const has = piece.photos[slot]
       const pendingUrl = piece.pendingUrls[slot]
-      const src = pendingUrl ? escapeHtml(pendingUrl) : `/api/pieces/${piece.id}/photo/${slot}`
+      const ajustadoEm = piece.compostas?.[slot] ?? null
+      // Já ajustado no picker → miniatura mostra o RESULTADO (o timestamp
+      // evita cache velho depois de re-salvar). Senão, a foto crua.
+      const src = ajustadoEm
+        ? `/api/pieces/${piece.id}/photo/${slot}/composta?v=${ajustadoEm}`
+        : pendingUrl
+          ? escapeHtml(pendingUrl)
+          : `/api/pieces/${piece.id}/photo/${slot}`
       const thumb = has
-        ? `<img class="shopee-chat-piece-thumb" src="${src}" alt="Foto ${slot}" referrerpolicy="no-referrer" />`
+        ? `<img class="shopee-chat-piece-thumb${ajustadoEm ? ' is-ajustada' : ''}" src="${src}" alt="Foto ${slot}" referrerpolicy="no-referrer" />`
         : `<div class="shopee-chat-piece-thumb shopee-chat-piece-thumb--empty">Foto ${slot}</div>`
       const removeBtn = has
         ? `<button type="button" class="shopee-chat-piece-photo-remove" data-piece-id="${piece.id}" data-slot="${slot}" title="Remover">×</button>`

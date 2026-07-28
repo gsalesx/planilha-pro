@@ -524,6 +524,9 @@ export interface OrderPiece {
   /** URL do CDN Shopee pra foto escolhida mas ainda não confirmada/baixada (hotlink
    * direto pro preview) — null quando já foi confirmada ou quando não tem foto. */
   pendingUrls: { 1: string | null; 2: string | null }
+  /** Slot já ajustado no picker web → timestamp da composta (cache-buster da
+   *  miniatura, que passa a mostrar o resultado). null = ainda não ajustado. */
+  compostas?: { 1: number | null; 2: number | null }
 }
 
 export async function getOrderPieces(

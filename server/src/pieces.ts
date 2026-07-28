@@ -45,18 +45,30 @@ export interface PieceWithPhotos extends OrderPieceRow {
   /** URL do CDN Shopee pra foto escolhida mas AINDA NÃO baixada (hotlink direto —
    * ver piece_pending_photos). null = já confirmada/baixada, ou sem foto. */
   pendingUrls: { 1: string | null; 2: string | null }
+  /** Slot já ajustado no picker web → timestamp da composta (serve de
+   *  cache-buster na miniatura). null = ainda não ajustado. */
+  compostas: { 1: number | null; 2: number | null }
 }
 
 function attachPhotos(piece: OrderPieceRow): PieceWithPhotos {
-  const confirmed = db.prepare('SELECT slot, crop FROM piece_images WHERE piece_id = ?').all(piece.id) as Array<{
-    slot: number
-    crop: string
-  }>
+  const confirmed = db
+    .prepare('SELECT slot, crop, composta_path, updated_at FROM piece_images WHERE piece_id = ?')
+    .all(piece.id) as Array<{
+      slot: number
+      crop: string
+      composta_path: string
+      updated_at: number
+    }>
   const pending = db
     .prepare('SELECT slot, url, crop FROM piece_pending_photos WHERE piece_id = ?')
     .all(piece.id) as Array<{ slot: number; url: string; crop: string }>
   const confirmedBySlot = new Map(confirmed.map((r) => [r.slot, r.crop as PhotoCrop]))
   const pendingBySlot = new Map(pending.map((r) => [r.slot, r]))
+  // Slot já ajustado no picker web: a miniatura passa a mostrar o RESULTADO
+  // (composta 900×900), não a foto crua — senão parecia que salvar não fez nada.
+  const ajustadoBySlot = new Map(
+    confirmed.filter((r) => r.composta_path).map((r) => [r.slot, r.updated_at]),
+  )
 
   const slot1 = pendingBySlot.get(1)
   const slot2 = pendingBySlot.get(2)
@@ -68,6 +80,7 @@ function attachPhotos(piece: OrderPieceRow): PieceWithPhotos {
       2: (slot2?.crop as PhotoCrop | undefined) ?? confirmedBySlot.get(2) ?? null,
     },
     pendingUrls: { 1: slot1?.url ?? null, 2: slot2?.url ?? null },
+    compostas: { 1: ajustadoBySlot.get(1) ?? null, 2: ajustadoBySlot.get(2) ?? null },
   }
 }
 

@@ -75,7 +75,8 @@ function tamanhoRotacionado(w: number, h: number, graus: number): { w: number; h
 function carregarImagem(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image()
-    img.crossOrigin = 'anonymous'
+    // SEM crossOrigin: as rotas são same-origin e exigem sessão. `anonymous`
+    // faz o navegador OMITIR o cookie → 401 → a imagem nunca carrega.
     img.onload = () => resolve(img)
     img.onerror = () => reject(new Error(`falha ao carregar ${url}`))
     img.src = url
@@ -123,7 +124,16 @@ export async function abrirPickerEditor(
 
       <div class="picker-editor-body">
         <div class="picker-editor-palco">
-          <canvas class="picker-editor-canvas" width="${CANVAS}" height="${CANVAS}"></canvas>
+          <div class="picker-editor-duplo">
+            <figure>
+              <figcaption>Foto — arraste pra posicionar</figcaption>
+              <canvas class="picker-editor-canvas" width="${CANVAS}" height="${CANVAS}"></canvas>
+            </figure>
+            <figure>
+              <figcaption>Resultado</figcaption>
+              <canvas class="picker-editor-canvas picker-editor-canvas--saida" width="${CANVAS}" height="${CANVAS}"></canvas>
+            </figure>
+          </div>
           <div class="picker-editor-dica">arraste: mover · roda: zoom · shift+roda: girar</div>
         </div>
 
@@ -179,6 +189,8 @@ export async function abrirPickerEditor(
   const q = <T extends HTMLElement>(sel: string): T => overlay.querySelector<T>(sel)!
   const canvas = q<HTMLCanvasElement>('.picker-editor-canvas')
   const ctx = canvas.getContext('2d')!
+  const saida = q<HTMLCanvasElement>('.picker-editor-canvas--saida')
+  const ctxSaida = saida.getContext('2d')!
   const status = q('.picker-editor-status')
   const inZoom = q<HTMLInputElement>('.in-zoom')
   const inUWidth = q<HTMLInputElement>('.in-uwidth')
@@ -191,7 +203,14 @@ export async function abrirPickerEditor(
 
   /* ---------------- carregamento das imagens ---------------- */
   let fonte: HTMLImageElement | null = null
-  const heart = await carregarImagem('/api/picker/mask/heart')
+  // Falha aqui NÃO pode abortar a montagem do editor (era o que deixava os
+  // botões sem efeito): sem a máscara, cai no contorno desenhado à mão.
+  let heart: HTMLImageElement | null = null
+  try {
+    heart = await carregarImagem('/api/picker/mask/heart')
+  } catch {
+    heart = null
+  }
 
   /** Camada onde a borracha pinta (mesma resolução da foto sem fundo). */
   let apagador: HTMLCanvasElement | null = null
@@ -211,7 +230,10 @@ export async function abrirPickerEditor(
     } catch {
       fonte = null
       if (modo === 'recorte') {
-        setStatus('Clique em "Remover fundo" para começar o recorte.', true)
+        // Sem foto sem-fundo ainda: 404 é o estado normal na 1ª vez. Destaca
+        // o botão em vez de só escrever a instrução.
+        setStatus('O recorte precisa da foto sem fundo — clique em "Remover fundo" (botão abaixo).', true)
+        q<HTMLButtonElement>('.in-removebg').classList.add('destaque')
       } else {
         setStatus('Não consegui carregar a foto.', true)
       }
@@ -220,42 +242,63 @@ export async function abrirPickerEditor(
   }
 
   /* ---------------- desenho do preview ---------------- */
-  function desenhar(): void {
-    ctx.clearRect(0, 0, CANVAS, CANVAS)
-    if (fonte) {
-      const rot = tamanhoRotacionado(fonte.naturalWidth, fonte.naturalHeight, ajuste.rotation)
-      const escala = (ajuste.width || rot.w) / rot.w
-      const dw = fonte.naturalWidth * escala
-      const dh = fonte.naturalHeight * escala
+  /** Carimba a foto com o enquadramento atual no contexto dado. */
+  function desenharFoto(c: CanvasRenderingContext2D): void {
+    if (!fonte) return
+    const rot = tamanhoRotacionado(fonte.naturalWidth, fonte.naturalHeight, ajuste.rotation)
+    const escala = (ajuste.width || rot.w) / rot.w
+    const dw = fonte.naturalWidth * escala
+    const dh = fonte.naturalHeight * escala
+    c.save()
+    c.translate(CANVAS / 2 + ajuste.dx, CANVAS / 2 + ajuste.dy)
+    c.rotate((ajuste.rotation * Math.PI) / 180)
+    c.imageSmoothingQuality = 'high'
+    c.drawImage(fonte, -dw / 2, -dh / 2, dw, dh)
+    if (apagador) c.drawImage(apagador, -dw / 2, -dh / 2, dw, dh)
+    c.restore()
+  }
 
-      ctx.save()
-      ctx.translate(CANVAS / 2 + ajuste.dx, CANVAS / 2 + ajuste.dy)
-      ctx.rotate((ajuste.rotation * Math.PI) / 180)
-      ctx.imageSmoothingQuality = 'high'
-      ctx.drawImage(fonte, -dw / 2, -dh / 2, dw, dh)
-      if (apagador) ctx.drawImage(apagador, -dw / 2, -dh / 2, dw, dh)
-      ctx.restore()
-    }
-
-    // Recorta na máscara do formato escolhido.
-    ctx.globalCompositeOperation = 'destination-in'
-    if (modo === 'coracao') {
-      ctx.drawImage(heart, 0, 0, CANVAS, CANVAS)
-    } else {
-      desenharCapsula(ctx, uWidth)
-    }
-    ctx.globalCompositeOperation = 'source-over'
-
-    // Contorno de guia, pra enxergar o limite mesmo sem foto.
-    ctx.save()
-    ctx.strokeStyle = 'rgba(148,163,184,.9)'
-    ctx.setLineDash([12, 10])
-    ctx.lineWidth = 3
+  /** Contorno do formato — é a "mascaração" que mostra onde vai cortar. */
+  function desenharGuia(c: CanvasRenderingContext2D): void {
+    c.save()
+    c.strokeStyle = 'rgba(15,23,42,.85)'
+    c.lineWidth = 4
+    c.setLineDash([14, 10])
     if (modo === 'recorte') {
-      caminhoCapsula(ctx, uWidth)
-      ctx.stroke()
+      caminhoCapsula(c, uWidth)
+      c.stroke()
+    } else if (heart) {
+      // Sem path do coração no cliente: escurece TUDO menos a máscara, então
+      // o que fica claro é exatamente o que a arte vai aproveitar.
+      const fora = document.createElement('canvas')
+      fora.width = CANVAS
+      fora.height = CANVAS
+      const fc = fora.getContext('2d')!
+      fc.fillStyle = 'rgba(15,23,42,.55)'
+      fc.fillRect(0, 0, CANVAS, CANVAS)
+      fc.globalCompositeOperation = 'destination-out'
+      fc.drawImage(heart, 0, 0, CANVAS, CANVAS)
+      c.drawImage(fora, 0, 0)
     }
-    ctx.restore()
+    c.restore()
+  }
+
+  function desenhar(): void {
+    // ESQUERDA: foto inteira + guia do formato (é onde se arrasta).
+    ctx.clearRect(0, 0, CANVAS, CANVAS)
+    desenharFoto(ctx)
+    desenharGuia(ctx)
+
+    // DIREITA: o resultado, já recortado no formato.
+    ctxSaida.clearRect(0, 0, CANVAS, CANVAS)
+    desenharFoto(ctxSaida)
+    ctxSaida.globalCompositeOperation = 'destination-in'
+    if (modo === 'coracao') {
+      if (heart) ctxSaida.drawImage(heart, 0, 0, CANVAS, CANVAS)
+    } else {
+      desenharCapsula(ctxSaida, uWidth)
+    }
+    ctxSaida.globalCompositeOperation = 'source-over'
   }
 
   /** Cápsula do recorte: extensão vertical fixa (36–864), largura variável. */
@@ -435,6 +478,7 @@ export async function abrirPickerEditor(
     try {
       await api(`${base}/remove-bg`, { method: 'POST' })
       setStatus('Fundo removido.')
+      btn.classList.remove('destaque')
       await carregarFonte()
     } catch (e) {
       setStatus((e as Error).message, true)
