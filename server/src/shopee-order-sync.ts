@@ -260,7 +260,7 @@ function posicaoParaNovaLinha(orderSn: string, workbookId: string): number {
  * Só é chamada quando entra linha nova — pedido antigo desalinhado não é remexido.
  * Devolve quantas linhas mudaram de posição (0 = já estava certo).
  */
-function reagruparLinhasDoPedido(orderSn: string, workbookId: string): number {
+export function reagruparLinhasDoPedido(orderSn: string, workbookId: string): number {
   const doPedido = db
     .prepare('SELECT order_key, position FROM orders WHERE workbook_id = ? AND id = ? ORDER BY position')
     .all(workbookId, orderSn) as Array<{ order_key: string; position: number }>
