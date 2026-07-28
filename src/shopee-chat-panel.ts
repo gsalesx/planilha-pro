@@ -26,7 +26,7 @@ import {
 import { openConfirmDialog } from './dialog'
 import { STATUS_COLUMN_INDEX } from './status'
 import { openImageLightbox } from './lightbox'
-import { abrirPickerEditor } from './picker-editor'
+import { abrirPickerEditor, abrirPickerFila, type ItemFila } from './picker-editor'
 
 export interface ShopeeChatOrderInfo {
   workbookId: string
@@ -408,6 +408,8 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       <div class="shopee-chat-pieces-overlay" id="shopee-chat-pieces-overlay">
         <header class="shopee-chat-pieces-overlay-header">
           <span>🧩 Peças da arte</span>
+          <button type="button" class="shopee-chat-ajustar-todas" id="shopee-chat-ajustar-todas" hidden
+                  title="Passa por todas as fotos deste pedido, uma a uma, pra ajustar o enquadramento">✎ Ajustar todas</button>
           <button type="button" class="shopee-chat-pieces-close" id="shopee-chat-pieces-close" aria-label="Fechar">×</button>
         </header>
         <div class="shopee-chat-pieces-overlay-body" id="shopee-chat-pieces">
@@ -922,6 +924,29 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     })
   }
 
+  /**
+   * "Ajustar todas": monta a fila com TODAS as fotos do pedido (peça a peça,
+   * slot a slot) e passa uma por uma — mesmo ritmo do picker local, em vez de
+   * abrir cada foto na mão.
+   */
+  function montarFilaAjuste(pieces: OrderPiece[]): void {
+    const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-ajustar-todas')
+    if (!btn) return
+    const fila: ItemFila[] = []
+    for (const p of pieces) {
+      for (const slot of [1, 2] as const) {
+        if (p.photos[slot]) {
+          fila.push({ pieceId: p.id, slot, titulo: `${p.molde} — Foto ${slot}` })
+        }
+      }
+    }
+    btn.hidden = fila.length === 0
+    btn.textContent = `✎ Ajustar todas (${fila.length})`
+    btn.onclick = () => {
+      void abrirPickerFila(fila, () => void loadPieces())
+    }
+  }
+
   async function loadPieces(): Promise<void> {
     try {
       const data = await getOrderPieces(order.workbookId, order.orderKey)
@@ -946,6 +971,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       bindConfirmBar(data.pieces)
       renderPieceButtons()
       updatePiecesToggleLabel(data)
+      montarFilaAjuste(data.pieces)
     } catch (error) {
       piecesEl.innerHTML = `<div class="shopee-chat-error-inline">Falha ao carregar peças: ${escapeHtml((error as Error).message)}</div>`
       piecesToggleLabel.textContent = 'Peças da arte'

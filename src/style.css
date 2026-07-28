@@ -3885,3 +3885,40 @@ table.sheet tbody th.row-num.is-active {
   .picker-editor-body { flex-direction: column; }
   .picker-editor-controles { width: auto; }
 }
+
+/* "Ajustar todas" — fila do picker web no painel de peças */
+.shopee-chat-ajustar-todas {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid #0f172a;
+  background: #0f172a;
+  color: #fff;
+  cursor: pointer;
+}
+.shopee-chat-ajustar-todas:hover { background: #1e293b; }
+.picker-editor-fila {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  background: #f1f5f9;
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+/* botão discreto de ajustar por foto */
+.shopee-chat-piece-ajustar {
+  width: 100%;
+  margin-top: 4px;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+}
+.shopee-chat-piece-ajustar:hover { background: #f1f5f9; }

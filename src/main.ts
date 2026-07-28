@@ -11,7 +11,6 @@ import {
   patchOrderDelta,
   replaceWorkbook,
   serverWorkbookToLocal,
-  syncShopeeNow,
   linkShopeeConversationsScanChunk,
   fetchLinkedBuyerUsernames,
   fetchShopeeLinkStatus,
@@ -109,8 +108,11 @@ function buildShell() {
           <button type="button" class="btn btn-primary" id="shopee-link-conversations-btn" hidden title="Cruza username da col E com to_name do chat Shopee e grava conversation_id (não altera a planilha)">
             💬 Vincular conversas Shopee
           </button>
-          <button type="button" class="btn" id="shopee-sync-now-btn" hidden title="Roda agora a mesma sincronização que acontece sozinha a cada 2h (sem esperar)">
-            🔄 Sincronizar agora
+          <button type="button" class="btn" id="baixar-aprovados-data-btn" hidden title="Gera e baixa as artes dos pedidos Aprovado da data selecionada">
+            ⬇ Baixar aprovados (data)
+          </button>
+          <button type="button" class="btn" id="baixar-aprovados-todos-btn" hidden title="Gera e baixa as artes de TODOS os pedidos Aprovado, de todas as datas (substitui a Remessa manual)">
+            ⬇ Baixar todos aprovados
           </button>
           <button class="btn" id="logout-btn" title="Sair">Sair</button>
         </div>
@@ -1822,39 +1824,63 @@ function bindShopeeLinkConversations() {
   })
 }
 
-function bindShopeeSyncNow() {
-  const btn = document.querySelector<HTMLButtonElement>('#shopee-sync-now-btn')
-  if (!btn) return
-  btn.addEventListener('click', async () => {
-    if (!currentWorkbookId || !isShopeeWorkbookId(currentWorkbookId)) return
+/**
+ * Baixa as artes dos pedidos Aprovado — substitui a Remessa manual (varrer
+ * aprovados, copiar arte por arte pra uma pasta). As artes são montadas na
+ * hora no servidor e vêm num zip; o status NÃO muda, então dá pra baixar só
+ * pra conferir.
+ */
+function bindBaixarAprovados() {
+  const porData = document.querySelector<HTMLButtonElement>('#baixar-aprovados-data-btn')
+  const todos = document.querySelector<HTMLButtonElement>('#baixar-aprovados-todos-btn')
+
+  async function baixar(btn: HTMLButtonElement, sheetDate: string | null) {
+    const rotulo = btn.textContent
     btn.disabled = true
-    const prevLabel = btn.textContent
-    btn.textContent = '🔄 Sincronizando…'
-    setStatusText('Sincronizando pedidos Shopee…')
+    btn.textContent = '⏳ Gerando artes…'
+    setStatusText(
+      sheetDate
+        ? `Gerando artes dos aprovados de ${sheetDate}…`
+        : 'Gerando artes de todos os aprovados… (pode levar alguns minutos)',
+    )
     try {
-      const result = await syncShopeeNow()
-      await refreshFromServer({ force: true })
-      const rechecked = result.pendingRechecked + result.readyToShipRechecked
-      setStatusText(
-        `Sincronização concluída — ${result.created} novos, ${result.updated} atualizados` +
-          (rechecked > 0 ? ` (${rechecked} reconferidos: data pendente/READY_TO_SHIP)` : ''),
-      )
-      if (result.errors.length) {
-        alert(`${result.errors.length} erro(s) na sincronização — veja o console`)
-        console.warn('[shopee-sync-now]', result.errors)
+      const qs = sheetDate ? `?sheetDate=${encodeURIComponent(sheetDate)}` : ''
+      const r = await fetch(`/api/picker/artes-aprovadas.zip${qs}`, { credentials: 'include' })
+      if (!r.ok) {
+        const detalhe = (await r.json().catch(() => ({}))) as { error?: string }
+        throw new Error(detalhe.error ?? `HTTP ${r.status}`)
       }
+      const blob = await r.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = sheetDate ? `aprovados ${sheetDate}.zip` : 'aprovados (todas as datas).zip'
+      a.click()
+      URL.revokeObjectURL(url)
+      setStatusText(`Download pronto (${(blob.size / 1024 / 1024).toFixed(1)}MB).`)
     } catch (error) {
-      setStatusText(`Erro na sincronização: ${(error as Error).message}`)
+      setStatusText(`Falha ao gerar artes: ${(error as Error).message}`)
     } finally {
       btn.disabled = false
-      btn.textContent = prevLabel
+      btn.textContent = rotulo
     }
+  }
+
+  porData?.addEventListener('click', () => {
+    const data = document.querySelector<HTMLSelectElement>('#date-select')?.value ?? ''
+    if (!data) {
+      setStatusText('Selecione uma data primeiro.')
+      return
+    }
+    void baixar(porData, data)
   })
+  todos?.addEventListener('click', () => void baixar(todos, null))
 }
 
 function applyShopeeWorkbookToolbar(workbookId: string) {
   const isShopee = isShopeeWorkbookId(workbookId)
-  setToolbarBtnVisible(document.querySelector('#shopee-sync-now-btn'), isShopee)
+  setToolbarBtnVisible(document.querySelector('#baixar-aprovados-data-btn'), isShopee)
+  setToolbarBtnVisible(document.querySelector('#baixar-aprovados-todos-btn'), isShopee)
   setToolbarBtnVisible(document.querySelector('#shopee-link-conversations-btn'), true)
   setToolbarBtnVisible(document.querySelector('#xlsx-update-label'), !isShopee)
   setToolbarBtnVisible(document.querySelector('#xlsx-photos-label'), !isShopee)
@@ -1903,7 +1929,7 @@ async function enterWorkbook(workbookId: string) {
   bindZoomControls()
   bindPendingMutationsButton()
   applyShopeeWorkbookToolbar(workbookId)
-  bindShopeeSyncNow()
+  bindBaixarAprovados()
   bindShopeeLinkConversations()
   try {
     await refreshFromServer({ force: true })

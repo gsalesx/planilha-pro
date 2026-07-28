@@ -14,12 +14,14 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import path from 'node:path'
 
 import { Router } from 'express'
+import JSZip from 'jszip'
 import multer from 'multer'
 
 import { requireAuth } from '../auth.js'
 import { db, nowMs } from '../db.js'
 import { env } from '../env.js'
 import { removerFundo } from '../picwish.js'
+import { fetchShopeeCdn } from './pieces.js'
 import {
   CANVAS_POR_MOLDE,
   labelDoMolde,
@@ -73,6 +75,41 @@ function foto(pieceId: number, slot: number): LinhaFoto | undefined {
          FROM piece_images WHERE piece_id = ? AND slot = ?`,
     )
     .get(pieceId, slot) as LinhaFoto | undefined
+}
+
+/**
+ * Garante que a foto exista EM DISCO antes de editar.
+ *
+ * Foto escolhida no chat entra como PENDENTE (`piece_pending_photos`: só a URL
+ * do CDN) e só vira arquivo no "Confirmar pedido". O picker precisa dos bytes,
+ * então baixa sob demanda — assim dá pra ajustar antes de confirmar o pedido,
+ * que é a ordem natural de trabalho (ajusta e só então confirma).
+ */
+async function garantirFoto(pieceId: number, slot: number): Promise<LinhaFoto | undefined> {
+  const atual = foto(pieceId, slot)
+  if (atual && existsSync(atual.storage_path)) return atual
+
+  const pendente = db
+    .prepare('SELECT url, crop FROM piece_pending_photos WHERE piece_id = ? AND slot = ?')
+    .get(pieceId, slot) as { url: string; crop: string } | undefined
+  if (!pendente?.url) return atual // nada pendente: devolve o que houver (ou undefined)
+
+  const resp = await fetchShopeeCdn(pendente.url)
+  const bytes = Buffer.from(await resp.arrayBuffer())
+  const mime = resp.headers.get('content-type') ?? 'image/jpeg'
+  const ext = mime.includes('png') ? '.png' : '.jpg'
+  const destino = caminhoNovo('foto', pieceId, slot, ext)
+  writeFileSync(destino, bytes)
+
+  db.prepare(
+    `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, crop, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(piece_id, slot) DO UPDATE SET
+       file_name = excluded.file_name, mime = excluded.mime,
+       storage_path = excluded.storage_path, updated_at = excluded.updated_at`,
+  ).run(pieceId, slot, path.basename(destino), mime, destino, pendente.crop || 'rosto', nowMs())
+
+  return foto(pieceId, slot)
 }
 
 function modoDa(l: LinhaFoto): Modo {
@@ -283,15 +320,23 @@ router.put('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
 })
 
 /** Estado atual do ajuste (o editor abre já no que foi salvo). */
-router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, (req, res) => {
+router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
   const ids = parseIds(req)
   if (!ids) {
     res.status(400).json({ error: 'piece/slot inválido' })
     return
   }
-  const l = foto(ids.pieceId, ids.slot)
+  // Baixa a foto pendente aqui: é a primeira chamada que o editor faz, então
+  // o download acontece uma vez só, antes de qualquer preview.
+  let l: LinhaFoto | undefined
+  try {
+    l = await garantirFoto(ids.pieceId, ids.slot)
+  } catch (e) {
+    res.status(502).json({ error: `falha ao baixar a foto do chat: ${(e as Error).message}` })
+    return
+  }
   if (!l) {
-    res.status(404).json({ error: 'foto não encontrada' })
+    res.status(404).json({ error: 'nenhuma foto escolhida nesse slot' })
     return
   }
   res.json({
@@ -374,6 +419,91 @@ function caminhoEmoji(nome: string): string | null {
   }
   return null
 }
+
+/**
+ * Download em massa dos APROVADOS — substitui o Processo G (Remessa), que era
+ * feito à mão: varrer aprovados, copiar as artes pra uma pasta, marcar
+ * "Em produção".
+ *
+ *   ?sheetDate=DD-MM-AAAA  → só os aprovados daquela data
+ *   (sem sheetDate)        → aprovados de TODAS as datas
+ *
+ * As artes não são armazenadas: cada uma é montada aqui e vai direto pro zip.
+ * O status NÃO é alterado — marcar "Em produção" é passo separado e explícito
+ * (assim baixar só pra conferir não muda nada).
+ */
+router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
+  const sheetDate = typeof req.query.sheetDate === 'string' ? req.query.sheetDate : null
+  const STATUS_COL = 5
+  const APROVADO = 'Aprovado'
+
+  const where = ["json_extract(row_json, '$[" + STATUS_COL + "]') = ?"]
+  const params: unknown[] = [APROVADO]
+  if (sheetDate) {
+    where.push('sheet_date = ?')
+    params.push(sheetDate)
+  }
+  const pedidos = db
+    .prepare(
+      `SELECT order_key, id, sheet_date, row_json FROM orders
+        WHERE ${where.join(' AND ')} ORDER BY sheet_date, position`,
+    )
+    .all(...params) as Array<{ order_key: string; id: string; sheet_date: string; row_json: string }>
+
+  if (pedidos.length === 0) {
+    res.status(404).json({ error: sheetDate ? `nenhum aprovado em ${sheetDate}` : 'nenhum pedido aprovado' })
+    return
+  }
+
+  const zip = new JSZip()
+  const falhas: string[] = []
+  let geradas = 0
+
+  for (const pedido of pedidos) {
+    const cliente = (JSON.parse(pedido.row_json)[4] as string) || pedido.id
+    const pecas = db
+      .prepare('SELECT id FROM order_pieces WHERE order_key = ? ORDER BY seq')
+      .all(pedido.order_key) as Array<{ id: number }>
+    for (const peca of pecas) {
+      try {
+        const { nome, jpg } = await gerarArteDaPeca(peca.id)
+        // nome do arquivo espelha o do pipeline: "{cliente} {molde}.jpg"
+        zip.file(`${cliente} ${nome}`, jpg)
+        geradas++
+      } catch (e) {
+        falhas.push(`${cliente}/peça ${peca.id}: ${(e as Error).message}`)
+      }
+    }
+  }
+
+  if (geradas === 0) {
+    res.status(422).json({ error: 'nenhuma arte pôde ser gerada', detalhes: falhas.slice(0, 20) })
+    return
+  }
+  if (falhas.length) zip.file('_FALHAS.txt', falhas.join('\n'))
+
+  const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' })
+  const rotulo = sheetDate ? `aprovados ${sheetDate}` : 'aprovados (todas as datas)'
+  res.setHeader('content-type', 'application/zip')
+  res.setHeader('content-disposition', `attachment; filename="${rotulo}.zip"`)
+  res.send(buf)
+})
+
+/** Quantos aprovados existem — o botão mostra o número antes de baixar. */
+router.get('/picker/artes-aprovadas/contagem', requireAuth, (req, res) => {
+  const sheetDate = typeof req.query.sheetDate === 'string' ? req.query.sheetDate : null
+  const STATUS_COL = 5
+  const where = ["json_extract(row_json, '$[" + STATUS_COL + "]') = 'Aprovado'"]
+  const params: unknown[] = []
+  if (sheetDate) {
+    where.push('sheet_date = ?')
+    params.push(sheetDate)
+  }
+  const r = db
+    .prepare(`SELECT COUNT(*) AS n FROM orders WHERE ${where.join(' AND ')}`)
+    .get(...params) as { n: number }
+  res.json({ pedidos: r.n })
+})
 
 router.get('/pieces/:id/arte', requireAuth, async (req, res) => {
   const pieceId = Number(req.params.id)

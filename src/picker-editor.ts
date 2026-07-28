@@ -32,8 +32,36 @@ export interface PickerEditorOpts {
   slot: 1 | 2
   /** Rótulo mostrado no topo (ex. "G MASCULINO — Foto 1"). */
   titulo?: string
+  /** Posição na fila do "Ajustar todas" — só pra mostrar "3 de 8". */
+  fila?: { indice: number; total: number }
   /** Chamado após salvar, pra a tela de trás atualizar a miniatura. */
   onSalvo?: () => void
+}
+
+/** Item da fila do "Ajustar todas". */
+export interface ItemFila {
+  pieceId: number
+  slot: 1 | 2
+  titulo: string
+}
+
+/**
+ * Percorre várias fotos em sequência — equivalente ao picker local, que passa
+ * de slot em slot. Salvar avança pra próxima; fechar (Esc/×) interrompe a fila.
+ */
+export async function abrirPickerFila(
+  itens: ItemFila[],
+  onSalvo?: () => void,
+): Promise<void> {
+  for (let i = 0; i < itens.length; i++) {
+    const item = itens[i]
+    const r = await abrirPickerEditor({
+      ...item,
+      fila: { indice: i + 1, total: itens.length },
+      onSalvo,
+    })
+    if (r === 'cancelado') return // operador fechou: não segue a fila
+  }
 }
 
 /** Tamanho da foto rotacionada-expandida — precisa bater com o `expand` do PIL. */
@@ -62,7 +90,10 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return body
 }
 
-export async function abrirPickerEditor(opts: PickerEditorOpts): Promise<void> {
+/** Resolve quando o editor fecha: 'salvo' segue a fila, 'cancelado' interrompe. */
+export async function abrirPickerEditor(
+  opts: PickerEditorOpts,
+): Promise<'salvo' | 'cancelado'> {
   const { pieceId, slot } = opts
   const base = `/api/pieces/${pieceId}/photo/${slot}`
 
@@ -82,6 +113,11 @@ export async function abrirPickerEditor(opts: PickerEditorOpts): Promise<void> {
     <section class="picker-editor" role="dialog" aria-label="Ajustar foto">
       <header class="picker-editor-header">
         <h2>${opts.titulo ? escapeHtml(opts.titulo) : `Foto ${slot}`}</h2>
+        ${
+          opts.fila
+            ? `<span class="picker-editor-fila">${opts.fila.indice} de ${opts.fila.total}</span>`
+            : ''
+        }
         <button type="button" class="picker-editor-close" aria-label="Fechar">×</button>
       </header>
 
@@ -448,7 +484,7 @@ export async function abrirPickerEditor(opts: PickerEditorOpts): Promise<void> {
       })
       setStatus('Salvo.')
       opts.onSalvo?.()
-      fechar()
+      fechar('salvo')
     } catch (e) {
       setStatus((e as Error).message, true)
     } finally {
@@ -457,15 +493,22 @@ export async function abrirPickerEditor(opts: PickerEditorOpts): Promise<void> {
   })
 
   /* ---------------- ciclo de vida ---------------- */
-  function fechar(): void {
+  let resolver: ((r: 'salvo' | 'cancelado') => void) | null = null
+  const fim = new Promise<'salvo' | 'cancelado'>((res) => {
+    resolver = res
+  })
+
+  function fechar(resultado: 'salvo' | 'cancelado' = 'cancelado'): void {
     overlay.remove()
     document.removeEventListener('keydown', onKey)
+    resolver?.(resultado)
+    resolver = null
   }
   function onKey(ev: KeyboardEvent): void {
     if (ev.key === 'Escape') fechar()
   }
   document.addEventListener('keydown', onKey)
-  q<HTMLButtonElement>('.picker-editor-close').addEventListener('click', fechar)
+  q<HTMLButtonElement>('.picker-editor-close').addEventListener('click', () => fechar())
   overlay.addEventListener('mousedown', (ev) => {
     if (ev.target === overlay) fechar()
   })
@@ -474,6 +517,7 @@ export async function abrirPickerEditor(opts: PickerEditorOpts): Promise<void> {
   sincronizarControles()
   await carregarFonte()
   sincronizarControles()
+  return fim
 }
 
 function escapeHtml(s: string): string {

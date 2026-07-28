@@ -47,7 +47,7 @@ function sleep(ms: number): Promise<void> {
  * o "Confirmar pedido" baixa várias originais em sequência. Respeita Retry-After
  * quando a Shopee manda; senão backoff 0.8s → 2s → 5s.
  */
-async function fetchShopeeCdn(url: string): Promise<Response> {
+export async function fetchShopeeCdn(url: string): Promise<Response> {
   const delaysMs = [0, 800, 2000, 5000]
   let lastError: Error | null = null
   for (let i = 0; i < delaysMs.length; i++) {
