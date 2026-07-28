@@ -26,6 +26,7 @@ import {
 import { openConfirmDialog } from './dialog'
 import { STATUS_COLUMN_INDEX } from './status'
 import { openImageLightbox } from './lightbox'
+import { abrirPickerEditor } from './picker-editor'
 
 export interface ShopeeChatOrderInfo {
   workbookId: string
@@ -508,6 +509,11 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
             </label>
           </div>
           ${has ? cropToggleHtml(slot) : ''}
+          ${
+            has
+              ? `<button type="button" class="shopee-chat-piece-ajustar" data-piece-id="${piece.id}" data-slot="${slot}" data-molde="${escapeHtml(piece.molde)}" title="Ajustar enquadramento (coração/recorte)">✎ Ajustar</button>`
+              : ''
+          }
           ${removeBtn}
         </div>
       `
@@ -649,6 +655,16 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       btn.addEventListener('click', async () => {
         await removePiecePhoto(Number(btn.dataset.pieceId), Number(btn.dataset.slot) as 1 | 2)
         void loadPieces()
+      })
+    })
+    piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-ajustar').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        void abrirPickerEditor({
+          pieceId: Number(btn.dataset.pieceId),
+          slot: Number(btn.dataset.slot) as 1 | 2,
+          titulo: `${btn.dataset.molde ?? ''} — Foto ${btn.dataset.slot}`,
+          onSalvo: () => void loadPieces(),
+        })
       })
     })
     piecesEl.querySelectorAll<HTMLInputElement>('.shopee-chat-piece-crop input[type=radio]').forEach((radio) => {

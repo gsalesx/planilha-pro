@@ -405,6 +405,26 @@ db.exec(`
   }
 }
 
+/**
+ * Migration idempotente — estado do PICKER WEB por foto (server/src/render-foto.ts).
+ * Guarda o ajuste manual (posição/zoom/rotação) em vez da arte pronta: regerar é
+ * barato (~0,3s) e a arte final pesa ~4MB, então ela é efêmera (gerada no download).
+ *  - ajuste_json:  {dx, dy, rotation, width} escolhidos no editor
+ *  - u_width:      largura da cápsula, só no modo recorte
+ *  - sem_fundo_path: cache do PicWish (chamada externa, cara — não repetir)
+ *  - composta_path:  PNG 900×900 já com máscara/borda, pronto pro carimbo
+ */
+{
+  const cols = db.prepare('PRAGMA table_info(piece_images)').all() as Array<{ name: string }>
+  const add = (nome: string, ddl: string) => {
+    if (!cols.some((c) => c.name === nome)) db.exec(`ALTER TABLE piece_images ADD COLUMN ${ddl}`)
+  }
+  add('ajuste_json', "ajuste_json TEXT NOT NULL DEFAULT ''")
+  add('u_width', 'u_width INTEGER')
+  add('sem_fundo_path', "sem_fundo_path TEXT NOT NULL DEFAULT ''")
+  add('composta_path', "composta_path TEXT NOT NULL DEFAULT ''")
+}
+
 /** Status legado "Em produção" → "Em produção 1" (coluna F, índice 5 do row_json). */
 {
   const STATUS_COL = 5

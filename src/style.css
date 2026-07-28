@@ -3744,3 +3744,144 @@ table.sheet tbody th.row-num.is-active {
   font-size: 11px;
   padding: 4px 8px;
 }
+
+/* ===========================================================
+   Picker web — editor de foto (src/picker-editor.ts)
+   Substitui o EditorWin (Tkinter) do picker_coracao.py.
+   =========================================================== */
+.picker-editor-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(15, 23, 42, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.picker-editor {
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+  width: min(1040px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.picker-editor-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.picker-editor-header h2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+  flex: 1;
+}
+.picker-editor-close {
+  border: 0;
+  background: transparent;
+  font-size: 24px;
+  line-height: 1;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.picker-editor-close:hover { color: #0f172a; }
+
+.picker-editor-body {
+  display: flex;
+  gap: 18px;
+  padding: 18px;
+  overflow: auto;
+}
+.picker-editor-palco { flex: 1; min-width: 0; }
+.picker-editor-canvas {
+  width: 100%;
+  max-width: 520px;
+  aspect-ratio: 1;
+  display: block;
+  margin: 0 auto;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  /* xadrez discreto: deixa a transparência visível */
+  background-color: #f8fafc;
+  background-image:
+    linear-gradient(45deg, #eef2f7 25%, transparent 25%),
+    linear-gradient(-45deg, #eef2f7 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #eef2f7 75%),
+    linear-gradient(-45deg, transparent 75%, #eef2f7 75%);
+  background-size: 22px 22px;
+  background-position: 0 0, 0 11px, 11px -11px, -11px 0;
+  touch-action: none;
+}
+.picker-editor-dica {
+  text-align: center;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 8px;
+}
+
+.picker-editor-controles {
+  width: 250px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.picker-editor-grupo { display: flex; flex-direction: column; gap: 7px; }
+.picker-editor-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+  font-weight: 700;
+}
+.picker-editor-label b { color: #334155; font-weight: 700; }
+
+.picker-editor-modos,
+.picker-editor-rot,
+.picker-editor-borracha { display: flex; gap: 6px; }
+.picker-editor-modos button,
+.picker-editor-rot button,
+.picker-editor-borracha button {
+  flex: 1;
+  padding: 7px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+}
+.picker-editor-modos button:hover,
+.picker-editor-rot button:hover,
+.picker-editor-borracha button:hover { background: #f1f5f9; }
+.picker-editor-modos button.ativo,
+.picker-editor-borracha button.ativo {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+}
+.picker-editor-borracha input[type='range'] { flex: 1; }
+.picker-editor-controles input[type='range'] { width: 100%; }
+
+.picker-editor-acoes { display: flex; gap: 8px; margin-top: auto; }
+.picker-editor-acoes .btn { flex: 1; }
+.picker-editor-status {
+  font-size: 12px;
+  color: #475569;
+  min-height: 16px;
+}
+.picker-editor-status.erro { color: #b91c1c; }
+
+@media (max-width: 860px) {
+  .picker-editor-body { flex-direction: column; }
+  .picker-editor-controles { width: auto; }
+}

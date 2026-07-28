@@ -53,6 +53,13 @@ export const env = {
    * Cursor next_timestamp_nano para warm-cursor (pág. 285). Fallback em código: 1781192143549324413
    */
   shopeeLinkStartTimestampNano: envTrim('SHOPEE_LINK_START_TIMESTAMP_NANO'),
+  /**
+   * PicWish — remoção de fundo das fotos no picker web (modo recorte).
+   * Sem fallback embutido de propósito: chave não entra em repositório.
+   * Configurar no Dokploy (mesma chave usada por scripts/picwish.py no
+   * pipeline local). Sem ela, só o modo coração funciona.
+   */
+  picwishApiKey: envTrim('PICWISH_API_KEY'),
 }
 
 export const isProd = env.nodeEnv === 'production'

@@ -23,7 +23,10 @@ RUN npm run build
 # ----- Stage 3: runtime -----
 FROM node:22-alpine AS runtime
 WORKDIR /app
-RUN apk add --no-cache tini libstdc++ libgcc tar gzip curl rclone
+# fontconfig + ttf-dejavu: o render da arte (server/src/render-molde.ts) desenha
+# o texto do molde ("M MASC", "G VEST"…) via SVG no sharp, e sem fonte instalada
+# o texto sai errado ou nem aparece.
+RUN apk add --no-cache tini libstdc++ libgcc tar gzip curl rclone fontconfig ttf-dejavu
 
 # Production server deps (better-sqlite3 needs native build)
 COPY server/package.json server/package-lock.json* ./
