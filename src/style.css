@@ -4074,7 +4074,7 @@ table.sheet tbody tr.row-filha:hover td {
    especificidade — sem ele, selecionar ou passar o mouse apagaria a moldura. */
 table.sheet tbody tr.row-grupo td,
 table.sheet tbody tr.row-grupo th {
-  background: #faf5ff !important;
+  background: #f1e4ff !important;
 }
 table.sheet tbody tr.row-grupo:hover td,
 table.sheet tbody tr.row-grupo:hover th {
