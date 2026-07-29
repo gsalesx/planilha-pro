@@ -19,6 +19,8 @@ interface OrderRow {
   product_image_url: string
   position: number
   updated_at: number
+  /** null = linha do pedido; preenchido = unidade seguinte, filha da key indicada. */
+  parent_key: string | null
 }
 
 interface ImageRow {
@@ -105,7 +107,7 @@ function buildWorkbookPayload(workbookId: string, since?: number) {
 
   const orders = db
     .prepare(
-      'SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, product_image_url, position, updated_at FROM orders WHERE workbook_id = ? ORDER BY position ASC',
+      'SELECT order_key, id, row_json, styles_json, disappeared, sheet_date, product_image_url, position, updated_at, parent_key FROM orders WHERE workbook_id = ? ORDER BY position ASC',
     )
     .all(workbookId) as OrderRow[]
 
@@ -132,6 +134,9 @@ function buildWorkbookPayload(workbookId: string, since?: number) {
       disappeared: o.disappeared === 1,
       sheetDate: o.sheet_date || '',
       productImageUrl: o.product_image_url || '',
+      // null = linha do pedido (contável); preenchido = unidade seguinte, desenhada
+      // como filha (`↳`) presa a esta key.
+      parentKey: o.parent_key || null,
       position: o.position,
       updatedAt: o.updated_at,
       images: (imagesByOrder.get(o.order_key) ?? []).map((i) => ({

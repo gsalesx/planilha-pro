@@ -143,6 +143,43 @@ export function mapShopeeOrderToRow(order: ShopeeOrderDetail): string[] {
   return row
 }
 
+/**
+ * 1 linha por UNIDADE comprada — quantidade explodida (2026-07-28).
+ *
+ * "5× M MASCULINO" era uma linha com Qnt=5, mas são 5 artes pra imprimir: a planilha
+ * contava 1 e a produção precisava de 5. Agora cada unidade é uma linha com Qnt=1, e
+ * cada uma tem sua própria arte e prévia. A 1ª unidade é a linha do pedido; as demais
+ * entram como filhas (ver `parent_key`).
+ *
+ * Devolve também, por linha, o índice do item de origem — a foto do anúncio tem que vir
+ * do item que a unidade realmente representa, nunca de outro item do mesmo carrinho.
+ */
+export function mapShopeeOrderToUnitRows(
+  order: ShopeeOrderDetail,
+): Array<{ row: string[]; itemIndex: number }> {
+  const items = order.item_list ?? []
+  if (items.length === 0) return [{ row: mapShopeeOrderToRow(order), itemIndex: 0 }]
+
+  const saida: Array<{ row: string[]; itemIndex: number }> = []
+  items.forEach((item, itemIndex) => {
+    // Quantidade ausente/zero ainda gera 1 linha: pedido sem unidade nenhuma não existe,
+    // e sumir com a linha seria pior que mostrar uma a mais.
+    const qtd = Math.max(1, Number(item.model_quantity_purchased ?? 1) || 1)
+    for (let u = 0; u < qtd; u++) {
+      const row = emptyShopeeRow()
+      row[SHOPEE_COL_ORDER_ID] = order.order_sn ?? ''
+      row[SHOPEE_COL_PRODUCT] = itemSku(item)
+      row[SHOPEE_COL_MODEL] = item.model_name ?? ''
+      row[SHOPEE_COL_QTY] = '1'
+      row[SHOPEE_COL_USERNAME] = order.buyer_username ?? ''
+      row[SHOPEE_COL_RECIPIENT] = order.recipient_address?.name ?? ''
+      row[SHOPEE_COL_SHOPEE_STATUS] = order.order_status ?? ''
+      saida.push({ row, itemIndex })
+    }
+  })
+  return saida
+}
+
 /** 1 linha por item (export Shopee / planilha manual). */
 export function mapShopeeOrderToItemRows(order: ShopeeOrderDetail): string[][] {
   const items = order.item_list ?? []
@@ -382,7 +419,18 @@ export function upsertShopeeOrder(
   if (!orderSn) throw new Error('order_sn ausente')
 
   const sheetDate = resolveSheetDate(order)
-  const itemRows = mapShopeeOrderToItemRows(order)
+
+  /**
+   * Pedido que JÁ tem linha no banco continua no formato antigo (1 linha por item, sem
+   * explodir quantidade). Trocar o formato de um pedido publicado faria um "5× M MASC"
+   * que hoje é 1 linha virar 5 de uma hora pra outra, mexendo em coisa já entregue —
+   * decisão do user: corrigir daqui pra frente, nunca remexer no que já está publicado.
+   */
+  const jaExiste = findOrdersBySn(orderSn, workbookId).length > 0
+  const unidades = jaExiste
+    ? mapShopeeOrderToItemRows(order).map((row, itemIndex) => ({ row, itemIndex }))
+    : mapShopeeOrderToUnitRows(order)
+  const itemRows = unidades.map((u) => u.row)
   const shopeeStatus = order.order_status ?? ''
   const recipient = order.recipient_address?.name ?? ''
   const now = nowMs()
@@ -400,9 +448,11 @@ export function upsertShopeeOrder(
     'UPDATE orders SET row_json = ?, sheet_date = ?, product_image_url = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
   )
   const insertStmt = db.prepare(
-    `INSERT INTO orders (workbook_id, order_key, id, row_json, styles_json, disappeared, sheet_date, product_image_url, position, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO orders (workbook_id, order_key, id, row_json, styles_json, disappeared, sheet_date, product_image_url, position, updated_at, parent_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
+  /** Key da linha-pai: a 1ª ocorrência é sempre o próprio orderSn. */
+  const keyDoPai = orderSn
 
   for (let i = 0; i < itemRows.length; i++) {
     const occurrence = i + 1
@@ -439,8 +489,9 @@ export function upsertShopeeOrder(
     row[SHOPEE_COL_RECIPIENT] = recipient
     row[SHOPEE_COL_SHOPEE_STATUS] = shopeeStatus
     // Só a foto de fato do item comprado — nunca "adivinhar" de outro item da mesma
-    // ordem (occurrence != i seria a peça errada).
-    const productImageUrl = itemImageUrl(order.item_list?.[i])
+    // ordem. Com a quantidade explodida, várias unidades apontam pro MESMO item, então
+    // o índice vem do mapeamento, não da posição da linha.
+    const productImageUrl = itemImageUrl(order.item_list?.[unidades[i].itemIndex])
 
     if (existing) {
       const prev = JSON.parse(existing.row_json) as string[]
@@ -479,6 +530,8 @@ export function upsertShopeeOrder(
       anyCreated = true
       anyChanged = true
       const position = posicaoParaNovaLinha(orderSn, workbookId)
+      // 1ª unidade = linha do pedido (a contável); as demais penduram nela como filhas.
+      const parentKey = occurrence === 1 ? null : keyDoPai
       insertStmt.run(
         workbookId,
         orderKey,
@@ -490,6 +543,7 @@ export function upsertShopeeOrder(
         productImageUrl,
         position,
         now,
+        parentKey,
       )
       const irmas = findOrdersBySn(orderSn, workbookId).length
       recordAudit({

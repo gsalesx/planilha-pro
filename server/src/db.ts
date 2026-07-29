@@ -235,6 +235,24 @@ db.exec(`
   }
 }
 
+/**
+ * Agrupamento pai/filha (2026-07-28). Um pedido passa a ocupar UMA linha contável na
+ * planilha; as unidades seguintes viram linhas-filhas (`↳`), que existem de verdade —
+ * cada uma tem sua arte e sua prévia — mas não contam como pedido.
+ *
+ * `parent_key` NULL = linha do pedido (a 1ª unidade). Preenchido = filha, apontando pra
+ * key da linha-pai. Não há FK: a limpeza é feita junto do pedido, e uma FK com CASCADE
+ * apagaria as filhas silenciosamente num delete manual da linha-pai.
+ */
+{
+  const cols = db.prepare('PRAGMA table_info(orders)').all() as Array<{ name: string }>
+  if (!cols.some((c) => c.name === 'parent_key')) {
+    db.exec('ALTER TABLE orders ADD COLUMN parent_key TEXT')
+    db.exec('CREATE INDEX IF NOT EXISTS idx_orders_parent ON orders (workbook_id, parent_key)')
+    console.log('[migration] orders.parent_key criada')
+  }
+}
+
 // Mapa comprador Shopee → chat (fora da planilha; usado para envio de prévias etc.)
 db.exec(`
   CREATE TABLE IF NOT EXISTS shopee_buyer_chats (
