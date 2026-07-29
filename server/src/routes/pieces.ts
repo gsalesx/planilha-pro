@@ -46,7 +46,16 @@ function sleep(ms: number): Promise<void> {
  * Download do CDN Shopee com retry — 429/503 e falha de rede são comuns quando
  * o "Confirmar pedido" baixa várias originais em sequência. Respeita Retry-After
  * quando a Shopee manda; senão backoff 0.8s → 2s → 5s.
+ *
+ * ⚠️ `fetch()` sem `signal` não tinha NENHUM teto de tempo — se a Shopee travasse a
+ * conexão (sem responder, sem fechar), o Node ficava esperando indefinidamente ANTES
+ * de sequer tentar de novo. Isso acontece dentro de `garantirFoto`, chamada de forma
+ * síncrona logo ao ABRIR o editor (GET .../ajuste) — travava o picker inteiro pra
+ * qualquer foto ainda pendente. `AbortSignal.timeout` limita cada tentativa a 10s;
+ * pior caso agora é ~4×10s + backoff, nunca mais um hang sem fim (2026-07-29).
  */
+const CDN_TIMEOUT_MS = 10_000
+
 export async function fetchShopeeCdn(url: string): Promise<Response> {
   const delaysMs = [0, 800, 2000, 5000]
   let lastError: Error | null = null
@@ -60,6 +69,7 @@ export async function fetchShopeeCdn(url: string): Promise<Response> {
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         },
         redirect: 'follow',
+        signal: AbortSignal.timeout(CDN_TIMEOUT_MS),
       })
       if (response.status === 429 || response.status === 503) {
         lastError = new Error(`HTTP ${response.status}`)

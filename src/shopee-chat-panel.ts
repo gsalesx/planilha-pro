@@ -26,7 +26,7 @@ import {
   type ShopeeQuotedMessage,
 } from './api'
 import { openConfirmDialog, openPreviewPickerDialog } from './dialog'
-import { STATUS_COLUMN_INDEX } from './status'
+import { PREVIEW_SENT_STATUS, STATUS_COLUMN_INDEX } from './status'
 import { openImageLightbox } from './lightbox'
 import { abrirPickerEditor, abrirPickerFila, type ItemFila } from './picker-editor'
 import { carregarImagem, cortarPrintCanvas, labelDoMolde, montarArteCanvas } from './render-molde-client'
@@ -1103,6 +1103,10 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           }
         }
         if (previas.length === 0) throw new Error(falhas[0] ?? 'nenhuma prévia pôde ser gerada')
+        // Falha PARCIAL (algumas peças geraram, outras não) ficava silenciosa — só
+        // dava erro visível se TODAS falhassem, então "sumia" 1 peça sem explicação
+        // nenhuma (esse foi exatamente o sintoma reportado: "só aparece a última").
+        if (falhas.length > 0) alert(`Atenção: ${falhas.length} peça(s) não geraram prévia:\n${falhas.join('\n')}`)
 
         const cacheBuster = Date.now() // a imagem acabou de ser trocada — evita servir a antiga do cache do navegador
         openPreviewPickerDialog({
@@ -1120,6 +1124,15 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
               orderKey: item.orderKey ?? order.orderKey,
               col: item.col,
             })
+            // sendShopeePreview só manda a imagem — marcar "Prévia" é responsabilidade
+            // de quem chama (mesmo padrão de sendPreviewForRow em main.ts). Faltava
+            // aqui: o envio funcionava, mas o status ficava parado em "Pronto".
+            await patchOrderDelta(order.workbookId, item.orderKey ?? order.orderKey, {
+              cells: [{ col: STATUS_COLUMN_INDEX, value: PREVIEW_SENT_STATUS }],
+            })
+            if ((item.orderKey ?? order.orderKey) === order.orderKey) {
+              order.status = PREVIEW_SENT_STATUS
+            }
           },
         })
       }),
