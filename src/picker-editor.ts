@@ -788,10 +788,18 @@ export async function abrirPickerEditor(
 
   canvas.style.cursor = 'grab'
   sincronizarControles()
-  // Recorte sem foto sem-fundo ainda (e sem o operador ter escolhido "foto original"
-  // de propósito) — remove o fundo sozinho ao abrir, em vez de esperar o clique em
-  // "✂ Remover fundo". `removerFundo()` já checa cache antes de chamar o PicWish.
-  if (modo === 'recorte' && fonteRecorte !== 'original' && !temSemFundo) {
+  // Recorte sem foto sem-fundo ainda — remove o fundo sozinho ao abrir, em vez de
+  // esperar o clique em "✂ Remover fundo". `removerFundo()` já checa cache antes de
+  // chamar o PicWish.
+  //
+  // ⚠️ Peça NUNCA editada devolve fonteRecorte='original' como PADRÃO do servidor
+  // (parseFonteRecorte: sem ajuste_json salvo, cai em 'sem_fundo'/'original' conforme
+  // já existir sem-fundo) — não é uma escolha do operador, e checar só `fonteRecorte
+  // !== 'original'` bloqueava o auto-disparo bem no caso mais comum (peça fresca).
+  // `ajuste.width > 0` é o sinal de que ESTE piece já foi salvo antes — só aí a
+  // escolha 'original' é de verdade deliberada e deve ser respeitada.
+  const jaEditadoAntes = ajuste.width > 0
+  if (modo === 'recorte' && !temSemFundo && (!jaEditadoAntes || fonteRecorte !== 'original')) {
     await removerFundo()
   } else {
     await carregarFonte()

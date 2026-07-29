@@ -49,11 +49,18 @@ export function labelDoMolde(molde: string): string {
 
 /** Tamanho da folha por molde — mesma tabela do servidor (render-molde.ts). */
 export const CANVAS_POR_MOLDE: Record<string, { w: number; h: number }> = {
+  'P MASCULINO': { w: 9145, h: 5784 },
   'M MASCULINO': { w: 9145, h: 5784 },
-  'P FEMININO': { w: 8859, h: 4963 },
   'G MASCULINO': { w: 9259, h: 6140 },
   'GG MASCULINO': { w: 9277, h: 6382 },
+  'P FEMININO': { w: 8859, h: 4963 },
+  'M FEMININO': { w: 8859, h: 4963 },
+  'G FEMININO': { w: 9089, h: 5433 },
+  'GG FEMININO': { w: 9682, h: 5549 },
+  'P CAMISOLA': { w: 7324, h: 8269 },
+  'M CAMISOLA': { w: 7324, h: 8269 },
   'G CAMISOLA': { w: 7560, h: 8505 },
+  'GG CAMISOLA': { w: 7678, h: 8741 },
 }
 
 interface Item {
