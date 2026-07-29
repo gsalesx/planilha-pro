@@ -174,6 +174,51 @@ router.patch('/pieces/:id', requireAuth, (req, res) => {
   res.json({ ok: true, piece: updated })
 })
 
+/**
+ * PATCH /api/pieces/:id/mover — muda a peça de linha (order_key), preservando a foto e o
+ * ajuste (piece_images referencia piece_id, não order_key — não precisa tocar nela).
+ *
+ * Existe pra corrigir o caso em que a linha já tinha peças adicionadas na mão ANTES de
+ * `/audit/explodir-quantidade` rodar: a explosão cria linhas novas vazias, mas não sabe
+ * mover peça já ajustada — sem isso, a peça com foto real fica presa na linha-pai e a
+ * linha nova nasce com uma peça vazia duplicada (caso adrielegiyuri, 2026-07-29).
+ */
+router.patch('/pieces/:id/mover', requireAuth, (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isFinite(id) || id <= 0) {
+    res.status(400).json({ error: 'id inválido' })
+    return
+  }
+  const destino = typeof (req.body as { orderKey?: unknown }).orderKey === 'string'
+    ? (req.body as { orderKey: string }).orderKey
+    : ''
+  if (!destino) {
+    res.status(400).json({ error: 'orderKey (destino) obrigatório' })
+    return
+  }
+  const peca = db.prepare('SELECT workbook_id, order_key FROM order_pieces WHERE id = ?').get(id) as
+    | { workbook_id: string; order_key: string }
+    | undefined
+  if (!peca) {
+    res.status(404).json({ error: 'Peça não encontrada' })
+    return
+  }
+  const linhaDestino = db
+    .prepare('SELECT 1 FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(peca.workbook_id, destino)
+  if (!linhaDestino) {
+    res.status(404).json({ error: `Linha destino "${destino}" não existe` })
+    return
+  }
+  const proximoSeq = (
+    db.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM order_pieces WHERE workbook_id = ? AND order_key = ?')
+      .get(peca.workbook_id, destino) as { m: number }
+  ).m + 1
+  db.prepare('UPDATE order_pieces SET order_key = ?, seq = ?, updated_at = ? WHERE id = ?')
+    .run(destino, proximoSeq, nowMs(), id)
+  res.json({ ok: true, de: peca.order_key, para: destino, seq: proximoSeq })
+})
+
 /** DELETE /api/pieces/:id */
 router.delete('/pieces/:id', requireAuth, (req, res) => {
   const id = Number(req.params.id)

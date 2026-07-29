@@ -621,6 +621,9 @@ router.post('/audit/explodir-quantidade', requireAuth, (req, res) => {
     quantidade: number
     novasLinhas: string[]
     status: string
+    /** Peças já existentes na linha (de antes da explosão) que serão MOVIDAS pras
+     *  linhas novas, 1 por peça — preserva foto/ajuste já feitos. */
+    pecasRedistribuidas: Array<{ pieceId: number; para: string }>
   }> = []
 
   for (const l of todas) {
@@ -639,6 +642,25 @@ router.post('/audit/explodir-quantidade', requireAuth, (req, res) => {
     const novas: string[] = []
     for (let i = 1; i < qtd; i++) novas.push(`${l.id}#${proxima++}`)
 
+    /**
+     * A linha pode já ter peças cadastradas de ANTES da explosão existir — era o jeito
+     * de controlar cada unidade dentro de uma linha só (adicionar peça na mão pra cada
+     * uma das N compradas). Se a contagem bate exato com a quantidade, cada peça extra
+     * (a partir da 2ª) é MOVIDA pra uma linha nova — preserva a foto/ajuste já feito.
+     * Se não bater, não mexe: cada linha nova auto-deriva sozinha ao abrir o picker
+     * (comportamento de sempre), e o operador ajusta cada uma do zero.
+     * Caso real que expôs isso: adrielegiyuri, 5 peças com foto na linha única —
+     * sem isso, a explosão deixava as 5 presas na linha-pai e cada filha nascia com
+     * uma peça VAZIA duplicada (2026-07-29).
+     */
+    const pecasExistentes = db
+      .prepare('SELECT id FROM order_pieces WHERE workbook_id = ? AND order_key = ? ORDER BY seq')
+      .all(workbookId, l.order_key) as Array<{ id: number }>
+    const pecasRedistribuidas =
+      pecasExistentes.length === qtd
+        ? pecasExistentes.slice(1).map((p, i) => ({ pieceId: p.id, para: novas[i] }))
+        : []
+
     planos.push({
       orderSn: l.id,
       cliente: row[4] ?? '',
@@ -646,6 +668,7 @@ router.post('/audit/explodir-quantidade', requireAuth, (req, res) => {
       quantidade: qtd,
       novasLinhas: novas,
       status,
+      pecasRedistribuidas,
     })
   }
 
@@ -686,6 +709,11 @@ router.post('/audit/explodir-quantidade', requireAuth, (req, res) => {
             chavePai,
           )
         })
+
+        for (const r of p.pecasRedistribuidas) {
+          db.prepare('UPDATE order_pieces SET order_key = ?, seq = 1, updated_at = ? WHERE id = ?')
+            .run(r.para, now, r.pieceId)
+        }
       }
       db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
     })()
