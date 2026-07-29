@@ -342,6 +342,17 @@ export async function renderRecorte(
  * limita e recentraliza no 900×900 — faz o recorte manual sair
  * geometricamente igual ao automático. Paridade com `recorte_render.reframe`
  * / `recorte_silhueta._reframe_final`.
+ *
+ * ⚠️ Testado (2026-07-29) escalar por LARGURA-alvo em vez de max(pw,ph), pra
+ * padronizar o footprint visual do recorte com o do coração. Revertido: pra
+ * fotos verticais (o caso comum), a altura da CÁPSULA (fixa em 828px) satura
+ * antes da largura — o teto de altura sempre domina, e o resultado sai
+ * idêntico ao de hoje (medido com a peça real 316/slot2, adriellylara165:
+ * 632×860 nos dois algoritmos). A largura final de um recorte é limitada pela
+ * LARGURA DA CÁPSULA escolhida (uWidth) ANTES do reframe rodar — não tem como
+ * o reframe inventar largura que a máscara já cortou fora sem esticar a
+ * pessoa (distorcer). Se o objetivo é aproximar do footprint do coração, o
+ * lugar certo é revisar o uWidth padrão/escolhido, não esta função.
  */
 export async function reframe(rgba: Buffer, margem = MARGEM_BORDA): Promise<Buffer> {
   const { data, info } = await sharp(rgba)

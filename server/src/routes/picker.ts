@@ -435,10 +435,25 @@ interface LinhaPeca {
   emoji2: string
 }
 
-export async function gerarArteDaPeca(pieceId: number): Promise<{ nome: string; jpg: Buffer }> {
+/** Nome do JPG exportado: "{cliente} {molde}.jpg" — mesmo padrão do pipeline local
+ *  (`{cliente} {tamanho}.jpg`). Sem o cliente, o arquivo baixado vira só "G MASC.jpg"
+ *  e não dá pra saber de quem é fora do contexto da tela. */
+function nomeArteFinal(molde: string, orderKey: string, workbookId: string): string {
+  const linha = db
+    .prepare('SELECT id FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(workbookId, orderKey) as { id: string } | undefined
+  const row = linha
+    ? (db.prepare('SELECT row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
+        .get(workbookId, orderKey) as { row_json: string })
+    : null
+  const cliente = row ? String((JSON.parse(row.row_json) as string[])[4] ?? '').trim() : ''
+  return cliente ? `${cliente} ${labelDoMolde(molde)}.jpg` : `${labelDoMolde(molde)}.jpg`
+}
+
+export async function gerarArteDaPeca(pieceId: number, workbookId: string = SHOPEE_WORKBOOK_ID): Promise<{ nome: string; jpg: Buffer }> {
   const peca = db
-    .prepare('SELECT id, molde, cor, emoji1, emoji2 FROM order_pieces WHERE id = ?')
-    .get(pieceId) as LinhaPeca | undefined
+    .prepare('SELECT id, order_key, molde, cor, emoji1, emoji2 FROM order_pieces WHERE id = ?')
+    .get(pieceId) as (LinhaPeca & { order_key: string }) | undefined
   if (!peca) throw new Error('peça não encontrada')
 
   const molde = (peca.molde || '').trim().toUpperCase()
@@ -465,7 +480,7 @@ export async function gerarArteDaPeca(pieceId: number): Promise<{ nome: string; 
     fotos,
     emojis,
   })
-  return { nome: `${labelDoMolde(molde)}.jpg`, jpg }
+  return { nome: nomeArteFinal(molde, peca.order_key, workbookId), jpg }
 }
 
 /** 10 dias — teto de guarda mesmo se o pedido nunca chegar a "Concluído" na Shopee. */
@@ -492,21 +507,24 @@ function chaveCacheArte(pieceId: number): string | null {
  * mudou desde então — é o que permite "gerar todas as artes" rodar em lote e o download
  * (individual, do pedido, ou o zip de aprovados) ser praticamente instantâneo depois.
  */
-export async function gerarArteDaPecaCache(pieceId: number): Promise<{ nome: string; jpg: Buffer }> {
+export async function gerarArteDaPecaCache(pieceId: number, workbookId: string = SHOPEE_WORKBOOK_ID): Promise<{ nome: string; jpg: Buffer }> {
   const chave = chaveCacheArte(pieceId)
   if (chave) {
     const cache = db
       .prepare('SELECT cache_key, jpg_path FROM piece_arte_cache WHERE piece_id = ?')
       .get(pieceId) as { cache_key: string; jpg_path: string } | undefined
     if (cache && cache.cache_key === chave && existsSync(cache.jpg_path)) {
-      const molde = (
-        db.prepare('SELECT molde FROM order_pieces WHERE id = ?').get(pieceId) as { molde: string }
-      ).molde
-      return { nome: `${labelDoMolde(molde.trim().toUpperCase())}.jpg`, jpg: readFileSync(cache.jpg_path) }
+      const peca = db
+        .prepare('SELECT molde, order_key FROM order_pieces WHERE id = ?')
+        .get(pieceId) as { molde: string; order_key: string }
+      return {
+        nome: nomeArteFinal(peca.molde.trim().toUpperCase(), peca.order_key, workbookId),
+        jpg: readFileSync(cache.jpg_path),
+      }
     }
   }
 
-  const { nome, jpg } = await gerarArteDaPeca(pieceId)
+  const { nome, jpg } = await gerarArteDaPeca(pieceId, workbookId)
   if (chave) {
     const destino = path.join(imagesDir, `arte_${pieceId}_${crypto.randomBytes(4).toString('hex')}.jpg`)
     const now = nowMs()
@@ -626,9 +644,9 @@ router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
       .all(pedido.order_key) as Array<{ id: number }>
     for (const peca of pecas) {
       try {
+        // nome já vem como "{cliente} {molde}.jpg" (nomeArteFinal) — não prefixar de novo.
         const { nome, jpg } = await gerarArteDaPecaCache(peca.id)
-        // nome do arquivo espelha o do pipeline: "{cliente} {molde}.jpg"
-        zip.file(`${cliente} ${nome}`, jpg)
+        zip.file(nome, jpg)
         geradas++
       } catch (e) {
         falhas.push(`${cliente}/peça ${peca.id}: ${(e as Error).message}`)
@@ -719,7 +737,7 @@ router.get('/workbooks/:wb/orders/:orderKey/artes', requireAuth, async (req, res
   const falhas: string[] = []
   for (const p of pecas) {
     try {
-      geradas.push(await gerarArteDaPecaCache(p.id))
+      geradas.push(await gerarArteDaPecaCache(p.id, wb))
     } catch (e) {
       falhas.push(`peça ${p.id}: ${(e as Error).message}`)
     }
@@ -840,7 +858,7 @@ async function gerarEGuardarPrint(pieceId: number, workbookId: string): Promise<
     .get(workbookId, peca.order_key) as { id: string } | undefined
   if (!linha) throw new Error('linha do pedido não encontrada')
 
-  const { jpg } = await gerarArteDaPecaCache(pieceId)
+  const { jpg } = await gerarArteDaPecaCache(pieceId, workbookId)
   // nFotos = quantas fotos a arte usa; define a largura da unidade do padrão.
   const nFotos = [1, 2].filter((slot) => {
     const l = foto(pieceId, slot)

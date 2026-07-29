@@ -101,21 +101,35 @@ export function layoutLinha(nFotos: number): { itens: Item[]; unitW: number } {
   return { itens, unitW: dx } // unitW = nFotos * 1652
 }
 
-/** Quantas repetições do padrão o print 4×4 mostra. 3 é o que o pipeline local usa. */
+/** Quantas repetições do padrão o print 4×4 mostra (base do enquadramento, antes do
+ *  fator de afastamento — ver `PRINT_ZOOM_FATOR`). 3 é o que o pipeline local usa. */
 export const PRINT_REPETICOES = 3
-/** Lado do print entregue (px). O original tem ~2850 e pesa demais pra uma prévia. */
-export const PRINT_LADO = 1500
+/** Proporção 10:7 (paisagem) — escolhida pelo user em teste local 2026-07-29,
+ *  comparando lado a lado contra o quadrado 1500×1500 usado antes. */
+export const PRINT_LARGURA = 2000
+export const PRINT_ALTURA = 1400
+/** "Afasta um pouco pra pegar mais imagens" (pedido do user) — multiplica o crop
+ *  base em 30%, mantendo a proporção 10:7. Comparado contra 1.6x/2.0x em teste
+ *  local; 1.3x foi o escolhido. */
+export const PRINT_ZOOM_FATOR = 1.3
+/** Desloca o centro do recorte pro lado em vez de ficar exatamente centralizado —
+ *  pedido do user ("fazer o print um pouco pro lado do que pega hoje"), escolhido
+ *  entre 300/600/900px em teste local. */
+export const PRINT_DESLOCAMENTO_X = 600
 
 /**
- * Print 4×4 — a prévia que aparece na planilha e vai pro chat do cliente.
+ * Print — a prévia que aparece na planilha e vai pro chat do cliente.
  *
  * É um RECORTE da arte já montada, nunca uma miniatura remontada do zero: tentar
  * sintetizar o padrão deu resultado visualmente errado no pipeline local, porque a folha
  * real é um "tijolo" (linhas alternadas deslocadas), não um grid alinhado. Recortando a
  * arte de verdade, o que o cliente vê é exatamente o que vai ser impresso.
  *
- * O tamanho do recorte vem da geometria real do molde: `PRINT_REPETICOES` repetições da
- * unidade horizontal e da altura de linha. Quadrado, pegando do centro.
+ * O tamanho-base do recorte vem da geometria real do molde (repetições da unidade
+ * horizontal e da altura de linha), depois ampliado por `PRINT_ZOOM_FATOR` e deslocado
+ * lateralmente por `PRINT_DESLOCAMENTO_X` — os três valores vieram de comparação visual
+ * direta em `_test/testes sem psd/teste previa/` (arquivos G_deslocado_600px_2000x1400
+ * em diante), não são chute.
  */
 export async function gerarPrint4x4(arteJpg: Buffer, nFotos: number): Promise<Buffer> {
   const { unitW } = layoutLinha(Math.max(1, nFotos))
@@ -124,15 +138,20 @@ export async function gerarPrint4x4(arteJpg: Buffer, nFotos: number): Promise<Bu
   const H = meta.height ?? 0
   if (!W || !H) throw new Error('print: arte sem dimensões')
 
-  // Quadrado: o menor entre as duas geometrias, limitado pela arte (molde pequeno pode
-  // ser menor que 3 repetições — aí o print é a arte inteira, sem esticar).
-  const lado = Math.min(PRINT_REPETICOES * unitW, PRINT_REPETICOES * ROW_PITCH, W, H)
-  const left = Math.max(0, Math.round((W - lado) / 2))
-  const top = Math.max(0, Math.round((H - lado) / 2))
+  // Altura-base = a mesma lógica de antes (quadrado limitado pelas duas geometrias),
+  // multiplicada pelo fator de afastamento; largura vem da PROPORÇÃO alvo (não mais
+  // igual à altura) — é o que torna o crop 10:7 em vez de quadrado.
+  const alturaBase = Math.min(PRINT_REPETICOES * unitW, PRINT_REPETICOES * ROW_PITCH, W, H)
+  const cropH = Math.min(Math.round(alturaBase * PRINT_ZOOM_FATOR), H)
+  const cropW = Math.min(Math.round(cropH * (PRINT_LARGURA / PRINT_ALTURA)), W)
+
+  const centroX = Math.round((W - cropW) / 2)
+  const left = Math.max(0, Math.min(centroX + PRINT_DESLOCAMENTO_X, W - cropW))
+  const top = Math.max(0, Math.round((H - cropH) / 2))
 
   return sharp(arteJpg)
-    .extract({ left, top, width: lado, height: lado })
-    .resize(PRINT_LADO, PRINT_LADO, { fit: 'fill' })
+    .extract({ left, top, width: cropW, height: cropH })
+    .resize(PRINT_LARGURA, PRINT_ALTURA, { fit: 'fill' })
     .jpeg({ quality: 86 })
     .toBuffer()
 }
