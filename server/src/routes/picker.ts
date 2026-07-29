@@ -748,16 +748,16 @@ router.post('/workbooks/:wb/orders/:orderKey/gerar-previas', requireAuth, async 
     ).map((f) => f.order_key),
   ]
 
-  const feitas: Array<{ pieceId: number; col: number }> = []
+  const feitas: Array<{ pieceId: number; col: number; orderKey: string; molde: string }> = []
   const falhas: Array<{ pieceId: number; erro: string }> = []
   for (const chave of chaves) {
     const pecas = db
-      .prepare('SELECT id FROM order_pieces WHERE workbook_id = ? AND order_key = ? ORDER BY seq')
-      .all(wb, chave) as Array<{ id: number }>
+      .prepare('SELECT id, molde FROM order_pieces WHERE workbook_id = ? AND order_key = ? ORDER BY seq')
+      .all(wb, chave) as Array<{ id: number; molde: string }>
     for (const p of pecas) {
       try {
         const r = await gerarEGuardarPrint(p.id, wb)
-        feitas.push({ pieceId: p.id, col: r.col })
+        feitas.push({ pieceId: p.id, col: r.col, orderKey: r.orderKey, molde: p.molde })
       } catch (e) {
         falhas.push({ pieceId: p.id, erro: (e as Error).message })
       }
@@ -768,7 +768,14 @@ router.post('/workbooks/:wb/orders/:orderKey/gerar-previas', requireAuth, async 
     return
   }
   const pronto = marcarProntoSeCompleto(wb, linha.id)
-  res.json({ ok: true, previasGeradas: feitas.length, falhas, marcadoPronto: pronto })
+  res.json({
+    ok: true,
+    previasGeradas: feitas.length,
+    // Pro operador escolher qual prévia mandar no chat, sem ter que ir até o grid.
+    previas: feitas.map((f) => ({ orderKey: f.orderKey, col: f.col, label: f.molde })),
+    falhas,
+    marcadoPronto: pronto,
+  })
 })
 
 /**

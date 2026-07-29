@@ -892,7 +892,7 @@ function handlePreviewRequest(row: number, col: number) {
       const header = String(sheet.headers[photoCol] ?? '').trim() || `Coluna ${photoCol + 1}`
       return { col: photoCol, label: header, imageUrl: img.url ?? '' }
     }).filter((item) => item.imageUrl),
-    onSend: (photoCol) => sendPreviewForRow(row, photoCol),
+    onSend: (item) => sendPreviewForRow(row, item.col),
   })
 }
 

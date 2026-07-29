@@ -11,6 +11,7 @@ import {
   patchOrderDelta,
   removePiecePhoto,
   sendShopeeChatMessage,
+  sendShopeePreview,
   setPiecePhotoCrop,
   updateEmojiAliases,
   updateOrderPiece,
@@ -24,7 +25,7 @@ import {
   type ShopeeChatMessage,
   type ShopeeQuotedMessage,
 } from './api'
-import { openConfirmDialog } from './dialog'
+import { openConfirmDialog, openPreviewPickerDialog } from './dialog'
 import { STATUS_COLUMN_INDEX } from './status'
 import { openImageLightbox } from './lightbox'
 import { abrirPickerEditor, abrirPickerFila, type ItemFila } from './picker-editor'
@@ -1004,7 +1005,12 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     )
   }
 
-  /** Gera a prévia (print 4×4) do pedido inteiro e grava na coluna de foto de cada linha. */
+  /**
+   * Gera a prévia (print 4×4) do pedido inteiro, grava na coluna de foto de cada linha
+   * (substituindo a anterior — guardarPrint no servidor já apaga o arquivo velho antes
+   * de salvar o novo) e abre o MESMO popup de "Enviar prévia" que já existe no grid,
+   * pro operador escolher ali mesmo qual(is) mandar no chat sem precisar sair do painel.
+   */
   function bindGerarPrevia(): void {
     const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-gerar-previa')
     if (!btn) return
@@ -1014,9 +1020,33 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           `/api/workbooks/${encodeURIComponent(order.workbookId)}/orders/${encodeURIComponent(order.orderKey)}/gerar-previas`,
           { method: 'POST', credentials: 'include' },
         )
-        const body = (await r.json().catch(() => ({}))) as { error?: string; previasGeradas?: number }
+        const body = (await r.json().catch(() => ({}))) as {
+          error?: string
+          previasGeradas?: number
+          previas?: Array<{ orderKey: string; col: number; label: string }>
+        }
         if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
-        alert(`${body.previasGeradas ?? 0} prévia(s) gerada(s).`)
+
+        const previas = body.previas ?? []
+        if (previas.length === 0) return
+        const cacheBuster = Date.now() // a imagem acabou de ser trocada — evita servir a antiga do cache do navegador
+        openPreviewPickerDialog({
+          title: 'Enviar prévia',
+          items: previas.map((p) => ({
+            col: p.col,
+            orderKey: p.orderKey,
+            label: p.label,
+            imageUrl: `/api/workbooks/${encodeURIComponent(order.workbookId)}/images/${encodeURIComponent(p.orderKey)}/${p.col}?t=${cacheBuster}`,
+          })),
+          onSend: async (item) => {
+            await sendShopeePreview({
+              username: order.buyerUsername,
+              workbookId: order.workbookId,
+              orderKey: item.orderKey ?? order.orderKey,
+              col: item.col,
+            })
+          },
+        })
       }),
     )
   }

@@ -374,8 +374,11 @@ export function openCalendarPickerDialog(opts: {
 
 export function openPreviewPickerDialog(opts: {
   title: string
-  items: Array<{ col: number; label: string; imageUrl: string }>
-  onSend: (col: number) => Promise<void>
+  /** `orderKey` é opcional — quando ausente, todos os itens são da MESMA linha (fluxo
+   *  antigo: 1 pedido, N colunas de foto). Quando presente, cada item pode ser de uma
+   *  linha diferente (pedido pai+filha, cada peça com sua própria prévia). */
+  items: Array<{ col: number; label: string; imageUrl: string; orderKey?: string }>
+  onSend: (item: { col: number; orderKey?: string }) => Promise<void>
 }): void {
   const overlay = document.createElement('div')
   overlay.className = 'modal-overlay'
@@ -414,7 +417,7 @@ export function openPreviewPickerDialog(opts: {
       btn.disabled = true
       btn.textContent = 'Enviando...'
       try {
-        await opts.onSend(item.col)
+        await opts.onSend({ col: item.col, orderKey: item.orderKey })
         close()
       } catch {
         btn.disabled = false
