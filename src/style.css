@@ -1904,7 +1904,6 @@ body.shopee-chat-open {
 .shopee-chat-pieces-overlay-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   padding: 16px;
   border-bottom: 1px solid #e2e8f0;
@@ -1912,6 +1911,12 @@ body.shopee-chat-open {
   font-size: 15px;
   color: #0f172a;
   flex-shrink: 0;
+}
+/* Título ocupa o espaço sobrando — empurra os botões (Adicionar/Ajustar/Fechar) pra
+   direita, mantendo os dois primeiros colados um no outro. */
+.shopee-chat-pieces-overlay-header > span {
+  flex: 1;
+  min-width: 0;
 }
 .shopee-chat-pieces-close {
   width: 34px;
@@ -1942,23 +1947,20 @@ body.shopee-chat-open {
   padding: 8px 0;
 }
 
-.shopee-chat-pieces-header {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.shopee-chat-piece-add {
+/* No header do overlay, junto do "Ajustar todas" (#0f172a/escuro) — cor diferente
+   (verde) porque a AÇÃO é diferente: cria peça nova, não ajusta as existentes. */
+.shopee-chat-pieces-overlay-header .shopee-chat-piece-add {
   font-size: 12px;
+  font-weight: 600;
   padding: 5px 10px;
-  background: #334155;
+  border-radius: 8px;
+  background: #16a34a;
   color: #fff;
-  border: 1px solid #334155;
+  border: 1px solid #16a34a;
+  cursor: pointer;
 }
-.shopee-chat-piece-add:hover {
-  background: #1e293b;
+.shopee-chat-pieces-overlay-header .shopee-chat-piece-add:hover {
+  background: #15803d;
 }
 
 .shopee-chat-piece-bottom-row {
@@ -2013,6 +2015,8 @@ body.shopee-chat-open {
 .shopee-chat-pieces-confirm-bar {
   position: sticky;
   bottom: 0;
+  display: flex;
+  gap: 8px;
   margin-top: 12px;
   padding-top: 10px;
   border-top: 1px solid #e2e8f0;
@@ -2020,13 +2024,29 @@ body.shopee-chat-open {
 }
 
 .shopee-chat-confirm-order {
-  width: 100%;
+  flex: 1;
   font-size: 13px;
   font-weight: 700;
   padding: 10px;
 }
 
+/* Baixa a(s) arte(s) na hora, sem esperar "Aprovado" — cor neutra de propósito, não
+   compete visualmente com o "Confirmar pedido" (a ação principal da barra). */
+.shopee-chat-baixar-artes {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 14px;
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+.shopee-chat-baixar-artes:hover {
+  background: #e2e8f0;
+}
+
 .shopee-chat-pieces-confirmed {
+  flex: 1;
   text-align: center;
   font-size: 13px;
   font-weight: 700;

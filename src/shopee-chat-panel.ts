@@ -435,7 +435,8 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       </footer>
       <div class="shopee-chat-pieces-overlay" id="shopee-chat-pieces-overlay">
         <header class="shopee-chat-pieces-overlay-header">
-          <span>🧩 Peças da arte</span>
+          <span>🧩 Criação da arte</span>
+          <button type="button" class="btn shopee-chat-piece-add" id="shopee-chat-piece-add">+ Adicionar peça</button>
           <button type="button" class="shopee-chat-ajustar-todas" id="shopee-chat-ajustar-todas" hidden
                   title="Passa por todas as fotos deste pedido, uma a uma, pra ajustar o enquadramento">✎ Ajustar todas</button>
           <button type="button" class="shopee-chat-pieces-close" id="shopee-chat-pieces-close" aria-label="Fechar">×</button>
@@ -457,10 +458,18 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   const piecesToggleBtn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-pieces-toggle')!
   const piecesToggleLabel = overlay.querySelector<HTMLElement>('#shopee-chat-pieces-toggle-label')!
   const piecesCloseBtn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-pieces-close')!
+  const piecesAddBtn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-piece-add')!
   const productPhotoBtn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-product-photo')
 
   productPhotoBtn?.addEventListener('click', () => {
     if (order.productImageUrl) openImageLightbox(order.productImageUrl, `Anúncio — ${order.product || order.orderId}`)
+  })
+
+  // Fixo no header do overlay (junto do "Ajustar todas") — ligado 1x aqui, não a cada
+  // loadPieces(), já que o botão não é recriado a cada render da lista.
+  piecesAddBtn.addEventListener('click', async () => {
+    await addOrderPiece(order.workbookId, order.orderKey)
+    void loadPieces()
   })
 
   piecesToggleBtn.addEventListener('click', () => piecesOverlayEl.classList.add('open'))
@@ -910,20 +919,69 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     }
   }
 
+  function baixarArtesBtnHtml(pieces: OrderPiece[]): string {
+    return `
+      <button type="button" class="btn shopee-chat-baixar-artes" id="shopee-chat-baixar-artes"
+              ${pieces.length === 0 ? 'disabled' : ''}
+              title="Monta e baixa a(s) arte(s) deste pedido agora, sem esperar virar Aprovado">⬇ Baixar arte(s)</button>
+    `
+  }
+
   function confirmBarHtml(pieces: OrderPiece[]): string {
     if (order.status === CONFIRMED_STATUS) {
-      return `<div class="shopee-chat-pieces-confirmed">✓ Pedido confirmado — status "Separado"</div>`
+      return `
+        <div class="shopee-chat-pieces-confirmed">✓ Pedido confirmado — status "Separado"</div>
+        ${baixarArtesBtnHtml(pieces)}
+      `
     }
     const missing = pieces.filter((p) => !p.photos[1]).length
     const label = missing > 0 ? `✅ Confirmar pedido (${missing} peça(s) sem foto)` : '✅ Confirmar pedido'
     return `
       <button type="button" class="btn btn-primary shopee-chat-confirm-order" id="shopee-chat-confirm-order"
               ${pieces.length === 0 ? 'disabled' : ''}>${label}</button>
+      ${baixarArtesBtnHtml(pieces)}
     `
+  }
+
+  /** Baixa a(s) arte(s) do pedido inteiro — monta na hora, sem esperar "Aprovado". */
+  function bindBaixarArtes(): void {
+    const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-baixar-artes')
+    if (!btn) return
+    btn.addEventListener('click', async () => {
+      const rotulo = btn.textContent
+      btn.disabled = true
+      btn.textContent = '⏳ Montando…'
+      try {
+        const r = await fetch(
+          `/api/workbooks/${encodeURIComponent(order.workbookId)}/orders/${encodeURIComponent(order.orderKey)}/artes`,
+          { credentials: 'include' },
+        )
+        if (!r.ok) {
+          const detalhe = (await r.json().catch(() => ({}))) as { error?: string }
+          throw new Error(detalhe.error ?? `HTTP ${r.status}`)
+        }
+        const blob = await r.blob()
+        const disposition = r.headers.get('content-disposition') ?? ''
+        const nomeMatch = /filename="([^"]+)"/.exec(disposition)
+        const nome = nomeMatch?.[1] ?? `${order.orderId}.jpg`
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = nome
+        a.click()
+        URL.revokeObjectURL(url)
+      } catch (error) {
+        alert(`Falha ao baixar: ${(error as Error).message}`)
+      } finally {
+        btn.disabled = false
+        btn.textContent = rotulo
+      }
+    })
   }
 
   function bindConfirmBar(pieces: OrderPiece[]): void {
     const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-confirm-order')
+    bindBaixarArtes()
     if (!btn) return
     btn.addEventListener('click', () => {
       const missing = pieces.filter((p) => !p.photos[1]).length
@@ -1028,17 +1086,12 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         ? `<p class="shopee-chat-pieces-hint">Não deu pra montar a peça sozinho pelo SKU (${escapeHtml(data.autoFailed)}). Adicione na mão:</p>`
         : ''
       piecesEl.innerHTML = `
-        <div class="shopee-chat-pieces-header">
-          <button type="button" class="btn shopee-chat-piece-add" id="shopee-chat-piece-add">+ Adicionar peça</button>
-        </div>
         ${failedHint}
         <div class="shopee-chat-pieces-list">${cards}</div>
         <div class="shopee-chat-pieces-confirm-bar">${confirmBarHtml(data.pieces)}</div>
       `
-      overlay.querySelector('#shopee-chat-piece-add')!.addEventListener('click', async () => {
-        await addOrderPiece(order.workbookId, order.orderKey)
-        void loadPieces()
-      })
+      // "+ Adicionar peça" mora no HEADER do overlay (fixo, junto do "Ajustar todas") —
+      // não é recriado a cada loadPieces(), então o listener é ligado 1x só, fora daqui.
       bindPieceCards()
       bindConfirmBar(data.pieces)
       renderPieceButtons()

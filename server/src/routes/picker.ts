@@ -524,6 +524,70 @@ router.get('/pieces/:id/arte', requireAuth, async (req, res) => {
   }
 })
 
+/**
+ * GET /workbooks/:wb/orders/:orderKey/artes — baixa a(s) arte(s) do PEDIDO INTEIRO
+ * (linha + filhas, todas as peças de cada uma) direto do painel do chat, sem esperar
+ * o pedido virar "Aprovado" — pedido do user: conferir/entregar uma arte pontual sem
+ * passar pelo fluxo de remessa em massa.
+ *
+ * 1 peça só → devolve o JPG direto. 2+ → zip (mesmo padrão de artes-aprovadas.zip).
+ */
+router.get('/workbooks/:wb/orders/:orderKey/artes', requireAuth, async (req, res) => {
+  const { wb, orderKey } = req.params
+  const linha = db
+    .prepare('SELECT order_key, id, parent_key FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(wb, orderKey) as { order_key: string; id: string; parent_key: string | null } | undefined
+  if (!linha) {
+    res.status(404).json({ error: 'Pedido não encontrado' })
+    return
+  }
+  const chavePai = linha.parent_key ?? linha.order_key
+  const chaves = [
+    chavePai,
+    ...(
+      db.prepare('SELECT order_key FROM orders WHERE workbook_id = ? AND parent_key = ? ORDER BY position')
+        .all(wb, chavePai) as Array<{ order_key: string }>
+    ).map((f) => f.order_key),
+  ]
+
+  const pecas = chaves.flatMap(
+    (k) => db.prepare('SELECT id FROM order_pieces WHERE workbook_id = ? AND order_key = ? ORDER BY seq').all(wb, k) as Array<{ id: number }>,
+  )
+  if (pecas.length === 0) {
+    res.status(404).json({ error: 'Nenhuma peça montada ainda pra este pedido' })
+    return
+  }
+
+  const geradas: Array<{ nome: string; jpg: Buffer }> = []
+  const falhas: string[] = []
+  for (const p of pecas) {
+    try {
+      geradas.push(await gerarArteDaPeca(p.id))
+    } catch (e) {
+      falhas.push(`peça ${p.id}: ${(e as Error).message}`)
+    }
+  }
+  if (geradas.length === 0) {
+    res.status(422).json({ error: 'Nenhuma arte pôde ser gerada', detalhes: falhas })
+    return
+  }
+
+  if (geradas.length === 1 && falhas.length === 0) {
+    res.setHeader('content-type', 'image/jpeg')
+    res.setHeader('content-disposition', `attachment; filename="${geradas[0].nome}"`)
+    res.send(geradas[0].jpg)
+    return
+  }
+
+  const zip = new JSZip()
+  geradas.forEach((g, i) => zip.file(`${linha.id} ${i + 1} - ${g.nome}`, g.jpg))
+  if (falhas.length) zip.file('_FALHAS.txt', falhas.join('\n'))
+  const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' })
+  res.setHeader('content-type', 'application/zip')
+  res.setHeader('content-disposition', `attachment; filename="${linha.id}.zip"`)
+  res.send(buf)
+})
+
 /* ===========================================================
    Print 4×4 — a prévia que vai pra planilha e pro chat
    =========================================================== */
