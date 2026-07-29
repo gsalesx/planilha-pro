@@ -1125,12 +1125,20 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
               col: item.col,
             })
             // sendShopeePreview só manda a imagem — marcar "Prévia" é responsabilidade
-            // de quem chama (mesmo padrão de sendPreviewForRow em main.ts). Faltava
-            // aqui: o envio funcionava, mas o status ficava parado em "Pronto".
-            await patchOrderDelta(order.workbookId, item.orderKey ?? order.orderKey, {
+            // de quem chama (mesmo padrão de sendPreviewForRow em main.ts).
+            //
+            // ⚠️ Marcar a PEÇA ESPECÍFICA que foi enviada (item.orderKey) só propaga
+            // pras outras linhas quando essa peça É a linha-pai — o painel do chat
+            // pode abrir a partir de QUALQUER linha (inclusive uma filha), e nesse
+            // caso patchar a filha não propaga nada (server só cascade de pai pra
+            // filha, nunca o contrário). Pedido do user: mandar a prévia de 1 peça
+            // já marca o PEDIDO INTEIRO como Prévia — então patcheia sempre a
+            // linha-pai (pieces[0].orderKey), nunca a peça específica enviada.
+            const chavePai = pieces[0]?.orderKey ?? order.orderKey
+            await patchOrderDelta(order.workbookId, chavePai, {
               cells: [{ col: STATUS_COLUMN_INDEX, value: PREVIEW_SENT_STATUS }],
             })
-            if ((item.orderKey ?? order.orderKey) === order.orderKey) {
+            if (chavePai === order.orderKey) {
               order.status = PREVIEW_SENT_STATUS
             }
           },
