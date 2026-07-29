@@ -2026,6 +2026,33 @@ body.shopee-chat-open {
   gap: 8px;
 }
 
+/* Separador entre unidades compradas — mesma cor da moldura de grupo do grid
+   (#c084fc, "Conjuntos"), pra marcar visualmente onde uma unidade termina e a
+   próxima começa (ex.: 1º SHORT sozinho, 2º CAMISOLA + SHORT como combo). */
+.shopee-chat-piece-separador {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 -2px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #faf5ff;
+  border-left: 3px solid #c084fc;
+}
+.shopee-chat-piece-separador:first-child {
+  margin-top: 0;
+}
+.shopee-chat-piece-separador-num {
+  font-size: 11px;
+  font-weight: 700;
+  color: #9333ea;
+}
+.shopee-chat-piece-separador-nome {
+  font-size: 12px;
+  font-weight: 600;
+  color: #581c87;
+}
+
 .shopee-chat-piece-head {
   display: flex;
   align-items: center;

@@ -462,7 +462,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     })
   }
 
-  function pieceCardHtml(piece: OrderPiece, firstPieceId: number | null): string {
+  function pieceCardHtml(piece: OrderPiece, firstPieceId: number | null, rotuloLocal?: string): string {
     const showGenero = piece.tipo !== 'CAMISOLA'
     const generoOpts = (['MASCULINO', 'FEMININO'] as PecaGenero[])
       .map((g) => `<option value="${g}"${piece.genero === g ? ' selected' : ''}>${g === 'MASCULINO' ? 'Masculino' : 'Feminino'}</option>`)
@@ -531,7 +531,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     return `
       <article class="shopee-chat-piece-card" data-piece-id="${piece.id}">
         <header class="shopee-chat-piece-head">
-          <span class="shopee-chat-piece-seq" title="A prévia desta peça vai pra linha dela na planilha">${escapeHtml(piece.rotulo ?? `Peça ${piece.seq}`)}</span>
+          <span class="shopee-chat-piece-seq" title="A prévia desta peça vai pra linha dela na planilha">${escapeHtml(rotuloLocal ?? piece.rotulo ?? `Peça ${piece.seq}`)}</span>
           <span class="shopee-chat-piece-molde">${escapeHtml(piece.molde)}</span>
           ${
             firstPieceId != null
@@ -954,11 +954,48 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     }
   }
 
+  /**
+   * Agrupa as peças por UNIDADE comprada (mesmo orderKey — mesma linha da planilha) e
+   * antepõe um separador com o "nome" da unidade (SKU dela) antes do 1º card do grupo.
+   * Pedido do user: uma unidade só (ex. SHORT) vs. um combo (ex. CAMISOLA + SHORT) ficavam
+   * misturados numa sequência solta ("Peça 1 de 4", "Peça 2 de 4"…) sem indicar onde uma
+   * unidade termina e a próxima começa — o header marca essa fronteira.
+   */
+  function cardsComSeparadores(pieces: OrderPiece[], firstPieceId: number | null): string {
+    const grupos = new Map<string, OrderPiece[]>()
+    for (const p of pieces) {
+      const chave = p.orderKey ?? String(p.id)
+      const g = grupos.get(chave) ?? []
+      g.push(p)
+      grupos.set(chave, g)
+    }
+    const partes: string[] = []
+    let indiceGrupo = 0
+    for (const [, grupo] of grupos) {
+      indiceGrupo++
+      const nomeUnidade = grupo.map((p) => p.molde).join(' + ')
+      partes.push(`
+        <div class="shopee-chat-piece-separador">
+          <span class="shopee-chat-piece-separador-num">${indiceGrupo}º</span>
+          <span class="shopee-chat-piece-separador-nome">${escapeHtml(nomeUnidade)}</span>
+        </div>
+      `)
+      // Rótulo LOCAL ao grupo — "Peça 1 de 1" pra unidade simples, "Peça 1 de 2"/"2 de 2"
+      // dentro do combo. O piece.rotulo do servidor é global ao pedido inteiro (útil só
+      // pra saber a ordem geral); aqui o que importa é a posição dentro da COMPRA.
+      grupo.forEach((p, i) => {
+        const rotuloLocal = `Peça ${i + 1} de ${grupo.length}`
+        partes.push(pieceCardHtml(p, p.id === firstPieceId ? null : firstPieceId, rotuloLocal))
+      })
+    }
+    return partes.join('')
+  }
+
   async function loadPieces(): Promise<void> {
     try {
       const data = await getOrderPieces(order.workbookId, order.orderKey)
       const firstId = data.pieces[0]?.id ?? null
-      const cards = data.pieces.map((p, i) => pieceCardHtml(p, i === 0 ? null : firstId)).join('')
+      const cards = cardsComSeparadores(data.pieces, firstId)
       const failedHint = data.autoFailed
         ? `<p class="shopee-chat-pieces-hint">Não deu pra montar a peça sozinho pelo SKU (${escapeHtml(data.autoFailed)}). Adicione na mão:</p>`
         : ''
