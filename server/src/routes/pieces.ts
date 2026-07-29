@@ -283,33 +283,67 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
     const pendingSlots = new Set(sourcePending.map((p) => p.slot))
 
     // confirmadas (já baixadas) — só pro slot que não ganhou uma pendente acima.
+    //
+    // ⚠️ Copiava só a foto ORIGINAL crua (storage_path) — o ajuste (dx/dy/rotation/
+    // width, u_width), o sem-fundo já removido (PicWish, chamada paga) e a composta
+    // pronta pro carimbo ficavam pra trás. O destino tinha que reajustar do zero e
+    // remover o fundo de novo — o oposto do que "copiar do 1º" deveria economizar.
+    // Cada arquivo em disco (não só a linha do banco) precisa da sua PRÓPRIA cópia:
+    // os dois pieces guardam paths diferentes, e um DELETE futuro num dos dois não
+    // pode apagar o arquivo que o outro ainda usa.
     const sourceImages = db
-      .prepare('SELECT slot, mime, storage_path, crop FROM piece_images WHERE piece_id = ?')
-      .all(sourceId) as Array<{ slot: number; mime: string; storage_path: string; crop: string }>
+      .prepare(
+        'SELECT slot, mime, storage_path, crop, sem_fundo_path, composta_path, ajuste_json, u_width FROM piece_images WHERE piece_id = ?',
+      )
+      .all(sourceId) as Array<{
+        slot: number
+        mime: string
+        storage_path: string
+        crop: string
+        sem_fundo_path: string
+        composta_path: string
+        ajuste_json: string
+        u_width: number | null
+      }>
+    const copiarArquivo = (origem: string, sufixo: string): string => {
+      if (!origem || !existsSync(origem)) return ''
+      const ext = path.extname(origem) || '.png'
+      const destino = path.join(imagesDir, `${sufixo}_${targetId}_${crypto.randomBytes(4).toString('hex')}${ext}`)
+      copyFileSync(origem, destino)
+      return destino
+    }
     for (const img of sourceImages) {
       if (pendingSlots.has(img.slot) || !existsSync(img.storage_path)) continue
-      const ext = path.extname(img.storage_path) || '.jpg'
-      const fileName = `piece_${targetId}_s${img.slot}_${crypto.randomBytes(4).toString('hex')}${ext}`
-      const newPath = path.join(imagesDir, fileName)
-      copyFileSync(img.storage_path, newPath)
+      const fileName = path.basename(img.storage_path)
+      const newPath = copiarArquivo(img.storage_path, `piece_${img.slot}`)
+      const newSemFundo = copiarArquivo(img.sem_fundo_path, `semfundo_${img.slot}`)
+      const newComposta = copiarArquivo(img.composta_path, `composta_${img.slot}`)
 
       const existingTarget = db
-        .prepare('SELECT storage_path FROM piece_images WHERE piece_id = ? AND slot = ?')
-        .get(targetId, img.slot) as { storage_path: string } | undefined
+        .prepare('SELECT storage_path, sem_fundo_path, composta_path FROM piece_images WHERE piece_id = ? AND slot = ?')
+        .get(targetId, img.slot) as { storage_path: string; sem_fundo_path: string; composta_path: string } | undefined
       if (existingTarget) {
-        try {
-          unlinkSync(existingTarget.storage_path)
-        } catch {
-          // ignore
+        for (const antigo of [existingTarget.storage_path, existingTarget.sem_fundo_path, existingTarget.composta_path]) {
+          if (!antigo) continue
+          try {
+            unlinkSync(antigo)
+          } catch {
+            // ignore
+          }
         }
       }
       db.prepare(
-        `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, crop, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO piece_images
+           (piece_id, slot, file_name, mime, storage_path, crop, sem_fundo_path, composta_path, ajuste_json, u_width, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(piece_id, slot) DO UPDATE SET
-           file_name = excluded.file_name, mime = excluded.mime,
-           storage_path = excluded.storage_path, crop = excluded.crop, updated_at = excluded.updated_at`,
-      ).run(targetId, img.slot, fileName, img.mime, newPath, img.crop, now)
+           file_name = excluded.file_name, mime = excluded.mime, storage_path = excluded.storage_path,
+           crop = excluded.crop, sem_fundo_path = excluded.sem_fundo_path, composta_path = excluded.composta_path,
+           ajuste_json = excluded.ajuste_json, u_width = excluded.u_width, updated_at = excluded.updated_at`,
+      ).run(
+        targetId, img.slot, fileName, img.mime, newPath, img.crop,
+        newSemFundo, newComposta, img.ajuste_json, img.u_width, now,
+      )
     }
   })
   txn()

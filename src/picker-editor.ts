@@ -535,7 +535,13 @@ export async function abrirPickerEditor(
       if (ev.shiftKey) {
         ajuste.rotation += ev.deltaY < 0 ? 1 : -1
       } else if (fonte) {
-        const fator = ev.deltaY < 0 ? 1.05 : 1 / 1.05
+        // Passo PROPORCIONAL ao deltaY (limitado), não fixo — antes 1.05x por evento
+        // dava passo grande demais e ainda IGUAL pra qualquer mouse/trackpad; alguns
+        // disparam deltaY bem maior por "clique" de scroll, fazendo aproximar/afastar
+        // demais e precisar compensar voltando. Limitar o deltaY e escalar o passo a
+        // partir dele deixa o zoom fino e consistente entre dispositivos.
+        const passo = Math.max(-40, Math.min(40, ev.deltaY))
+        const fator = 1 - (passo / 40) * 0.03
         ajuste.width = Math.max(50, Math.round((ajuste.width || CANVAS) * fator))
       }
       sincronizarControles()
@@ -800,7 +806,14 @@ export async function abrirPickerEditor(
   // escolha 'original' é de verdade deliberada e deve ser respeitada.
   const jaEditadoAntes = ajuste.width > 0
   if (modo === 'recorte' && !temSemFundo && (!jaEditadoAntes || fonteRecorte !== 'original')) {
-    await removerFundo()
+    // Mostra a foto ORIGINAL na hora (não trava esperando o PicWish) — o operador já
+    // pode arrastar/dar zoom enquanto o fundo é removido em segundo plano. Quando
+    // terminar, `removerFundo()` troca a fonte pro sem-fundo sozinho — e como
+    // `ajuste.width` já foi setado neste carregarFonte(), a troca preserva o
+    // posicionamento em andamento em vez de resetar.
+    fonteRecorte = 'original'
+    await carregarFonte()
+    void removerFundo()
   } else {
     await carregarFonte()
   }
