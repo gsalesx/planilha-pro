@@ -32,6 +32,9 @@ interface EstadoServidor {
   temSemFundo: boolean
   temComposta: boolean
   fonteRecorte: FonteRecorte
+  /** Foto ainda não baixada pro servidor — URL do CDN pro NAVEGADOR carregar
+   *  direto (evita o servidor precisar baixar só pra mostrar o preview). */
+  pendingUrl: string | null
 }
 
 export interface PickerEditorOpts {
@@ -116,6 +119,12 @@ export async function abrirPickerEditor(
   }
   let fonteRecorte: FonteRecorte = estado.fonteRecorte
   let temSemFundo = estado.temSemFundo
+  // Foto ainda não baixada pro servidor — o NAVEGADOR busca a URL do CDN direto
+  // (mesmo caminho que qualquer navegador usa), sem esperar o servidor baixar só
+  // pra mostrar o preview. `carregarFonte()` usa isso enquanto existir; assim que
+  // Salvar/Remover fundo baixam de vez no servidor (garantirFoto), zeramos aqui
+  // pra próxima carga usar a cópia já persistida.
+  let pendingUrl = estado.pendingUrl
 
   const overlay = document.createElement('div')
   overlay.className = 'picker-editor-backdrop'
@@ -297,9 +306,13 @@ export async function abrirPickerEditor(
   let cursor: { x: number; y: number } | null = null
 
   async function carregarFonte(): Promise<void> {
+    // Sem-fundo NUNCA vem da URL pendente (é derivado no servidor a partir da
+    // original) — só a foto ORIGINAL (coração, ou recorte antes de remover fundo)
+    // pode vir direto do CDN enquanto o servidor ainda não tiver a própria cópia.
+    const original = pendingUrl ?? `${base}?t=${Date.now()}`
     const url = modo === 'recorte'
-      ? (fonteRecorte === 'original' ? `${base}?t=${Date.now()}` : `${base}/sem-fundo`)
-      : `${base}?t=${Date.now()}`
+      ? (fonteRecorte === 'original' ? original : `${base}/sem-fundo`)
+      : original
     try {
       fonte = await carregarImagem(url)
       // Sem `width` salvo: começa com a foto cobrindo o canvas inteiro.

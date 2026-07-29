@@ -192,7 +192,15 @@ router.post('/pieces/:id/photo/:slot/remove-bg', requireAuth, async (req, res) =
     res.status(400).json({ error: 'piece/slot inválido' })
     return
   }
-  const l = foto(ids.pieceId, ids.slot)
+  // Só baixa do CDN aqui (não mais em GET /ajuste) — remover fundo é o momento em
+  // que os bytes de verdade passam a ser necessários no servidor.
+  let l: LinhaFoto | undefined
+  try {
+    l = await garantirFoto(ids.pieceId, ids.slot)
+  } catch (e) {
+    res.status(502).json({ error: `falha ao baixar a foto do chat: ${(e as Error).message}` })
+    return
+  }
   if (!l || !existsSync(l.storage_path)) {
     res.status(404).json({ error: 'foto não encontrada' })
     return
@@ -337,7 +345,15 @@ router.put('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'piece/slot inválido' })
     return
   }
-  const l = foto(ids.pieceId, ids.slot)
+  // Só baixa aqui (não mais em GET /ajuste) — salvar é o momento em que os bytes de
+  // verdade passam a ser necessários no servidor (compor coração/recorte).
+  let l: LinhaFoto | undefined
+  try {
+    l = await garantirFoto(ids.pieceId, ids.slot)
+  } catch (e) {
+    res.status(502).json({ error: `falha ao baixar a foto do chat: ${(e as Error).message}` })
+    return
+  }
   if (!l) {
     res.status(404).json({ error: 'foto não encontrada' })
     return
@@ -377,34 +393,61 @@ router.put('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
   }
 })
 
-/** Estado atual do ajuste (o editor abre já no que foi salvo). */
-router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
+/**
+ * Estado atual do ajuste (o editor abre já no que foi salvo).
+ *
+ * ⚠️ Antes chamava `garantirFoto` aqui — baixava a foto do CDN da Shopee de forma
+ * SÍNCRONA, bloqueando a resposta (e o editor inteiro) até terminar. Quando a Shopee
+ * demorava/travava pro servidor (visto em produção: URL válida — funciona na hora
+ * testada de outra rede —, mas falha/expira repetido só a partir do container), o
+ * picker simplesmente NÃO ABRIA. Como o NAVEGADOR de quem está operando consegue
+ * buscar a mesma URL direto (é o caminho que qualquer navegador usa normalmente,
+ * sem o gargalo específico do servidor), essa rota agora só LÊ o banco — se a foto
+ * ainda não foi baixada, devolve a URL pendente pro cliente carregar direto, sem
+ * nenhum download aqui. O download de verdade só acontece em PUT /ajuste (salvar) e
+ * POST /remove-bg — os dois momentos que realmente precisam dos bytes no servidor.
+ */
+router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, (req, res) => {
   const ids = parseIds(req)
   if (!ids) {
     res.status(400).json({ error: 'piece/slot inválido' })
     return
   }
-  // Baixa a foto pendente aqui: é a primeira chamada que o editor faz, então
-  // o download acontece uma vez só, antes de qualquer preview.
-  let l: LinhaFoto | undefined
-  try {
-    l = await garantirFoto(ids.pieceId, ids.slot)
-  } catch (e) {
-    res.status(502).json({ error: `falha ao baixar a foto do chat: ${(e as Error).message}` })
+  const l = foto(ids.pieceId, ids.slot)
+  if (l && existsSync(l.storage_path)) {
+    const temSemFundo = Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path))
+    res.json({
+      modo: modoDa(l),
+      ajuste: parseAjuste(l.ajuste_json),
+      uWidth: l.u_width ?? 600,
+      temSemFundo,
+      temComposta: Boolean(l.composta_path && existsSync(l.composta_path)),
+      fonteRecorte: parseFonteRecorte(l.ajuste_json, temSemFundo),
+      pendingUrl: null,
+    })
     return
   }
-  if (!l) {
+
+  // Ainda não baixada — devolve a URL do CDN pro NAVEGADOR carregar direto (evita
+  // o gargalo do servidor) em vez de 502 esperando um download que pode nem
+  // terminar. `l` pode existir aqui (peça já composta antes, mas o arquivo sumiu
+  // do disco) — nesse caso o crop salvo prevalece sobre o da foto pendente.
+  const pendente = db
+    .prepare('SELECT url, crop FROM piece_pending_photos WHERE piece_id = ? AND slot = ?')
+    .get(ids.pieceId, ids.slot) as { url: string; crop: string } | undefined
+  if (!pendente?.url) {
     res.status(404).json({ error: 'nenhuma foto escolhida nesse slot' })
     return
   }
-  const temSemFundo = Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path))
+  const crop = l?.crop ?? pendente.crop
   res.json({
-    modo: modoDa(l),
-    ajuste: parseAjuste(l.ajuste_json),
-    uWidth: l.u_width ?? 600,
-    temSemFundo,
-    temComposta: Boolean(l.composta_path && existsSync(l.composta_path)),
-    fonteRecorte: parseFonteRecorte(l.ajuste_json, temSemFundo),
+    modo: crop === 'coracao' ? 'coracao' : 'recorte',
+    ajuste: parseAjuste(l?.ajuste_json ?? ''),
+    uWidth: l?.u_width ?? 600,
+    temSemFundo: false,
+    temComposta: false,
+    fonteRecorte: 'original',
+    pendingUrl: pendente.url,
   })
 })
 
