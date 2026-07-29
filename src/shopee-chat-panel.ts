@@ -531,7 +531,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     return `
       <article class="shopee-chat-piece-card" data-piece-id="${piece.id}">
         <header class="shopee-chat-piece-head">
-          <span class="shopee-chat-piece-seq">Peça ${piece.seq}</span>
+          <span class="shopee-chat-piece-seq" title="A prévia desta peça vai pra linha dela na planilha">${escapeHtml(piece.rotulo ?? `Peça ${piece.seq}`)}</span>
           <span class="shopee-chat-piece-molde">${escapeHtml(piece.molde)}</span>
           ${
             firstPieceId != null

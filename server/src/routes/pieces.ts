@@ -104,11 +104,44 @@ function parsePiecePatch(body: unknown): PiecePatch {
   return patch
 }
 
-/** GET /api/workbooks/:wb/pieces/:orderKey — auto-deriva (1ª vez) ou retorna peças salvas. */
+/**
+ * Linhas que compõem o pedido da key dada, na ordem da planilha: a linha do pedido
+ * primeiro, depois as filhas. Abrir o painel numa filha sobe pro pai — o operador enxerga
+ * o pedido inteiro, não o pedaço em que clicou.
+ */
+function linhasDoPedido(wb: string, orderKey: string): string[] {
+  const linha = db
+    .prepare('SELECT order_key, parent_key FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(wb, orderKey) as { order_key: string; parent_key: string | null } | undefined
+  if (!linha) return [orderKey]
+  const chavePai = linha.parent_key ?? linha.order_key
+  const filhas = db
+    .prepare('SELECT order_key FROM orders WHERE workbook_id = ? AND parent_key = ? ORDER BY position')
+    .all(wb, chavePai) as Array<{ order_key: string }>
+  return [chavePai, ...filhas.map((f) => f.order_key)]
+}
+
+/**
+ * GET /api/workbooks/:wb/pieces/:orderKey — auto-deriva (1ª vez) ou retorna peças salvas.
+ *
+ * Devolve as peças do PEDIDO INTEIRO (linha do pedido + filhas), numeradas "Peça 1, 2, 3…".
+ * Um pedido de 5 unidades iguais aparece como 5 peças ajustáveis separadamente, e a prévia
+ * de cada uma é gravada na SUA linha — por isso cada peça carrega o `orderKey` de origem.
+ */
 router.get('/workbooks/:wb/pieces/:orderKey', requireAuth, (req, res) => {
   const { wb, orderKey } = req.params
-  const result = ensurePieces(wb, orderKey)
-  res.json({ ok: true, ...result })
+  const chaves = linhasDoPedido(wb, orderKey)
+
+  const primeiro = ensurePieces(wb, chaves[0])
+  const pieces = primeiro.pieces.map((p) => ({ ...p, orderKey: chaves[0] }))
+  for (const chave of chaves.slice(1)) {
+    for (const p of ensurePieces(wb, chave).pieces) {
+      pieces.push({ ...p, orderKey: chave })
+    }
+  }
+  const numeradas = pieces.map((p, i) => ({ ...p, rotulo: `Peça ${i + 1} de ${pieces.length}` }))
+
+  res.json({ ...primeiro, ok: true, pieces: numeradas, chavesDoPedido: chaves })
 })
 
 /** POST /api/workbooks/:wb/pieces/:orderKey — adiciona 1 peça manual (tipo SHORT M por padrão). */

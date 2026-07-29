@@ -362,4 +362,114 @@ router.post('/audit/reparar', requireAuth, (req, res) => {
   })
 })
 
+/**
+ * POST /api/audit/renomear-keys — tira a data de dentro da identidade da linha.
+ *
+ * `{data}__{pedido}__{N}` → `{pedido}#{N}`. A data ali dentro nunca identificou nada: quem
+ * filtra por data é a coluna `sheet_date`. Ela só congelava o valor de quando a linha
+ * nasceu e, ao mudar, fazia o upsert não reconhecer a linha e criar uma duplicata.
+ *
+ * A key é referenciada em `order_pieces`, `images` e `parse_issues` — renomear só em
+ * `orders` órfanaria as peças e as fotos do picker. Tudo é atualizado na mesma transação,
+ * e um `foreign_key_check` no fim prova que não sobrou referência quebrada.
+ *
+ * DRY-RUN por padrão; executa com `?aplicar=1`.
+ */
+router.post('/audit/renomear-keys', requireAuth, (req, res) => {
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
+  const aplicar = req.query.aplicar === '1' || req.query.aplicar === 'true'
+
+  // ESCAPE '\' é OBRIGATÓRIO: sem ele o SQLite trata a barra como caractere literal e o
+  // padrão vira "procure barras de verdade na key" — não casa com nada e a migração vira
+  // um no-op silencioso. Mesma armadilha que deixou o fix da duplicação inerte.
+  const linhas = db
+    .prepare("SELECT order_key, id FROM orders WHERE workbook_id = ? AND order_key LIKE ? ESCAPE '\\'")
+    .all(workbookId, '%\\_\\_%') as Array<{ order_key: string; id: string }>
+
+  const planos: Array<{ de: string; para: string; pecas: number; fotos: number; issues: number }> = []
+  const colisoes: Array<{ de: string; para: string }> = []
+
+  for (const l of linhas) {
+    const occ = occurrenceDaKey(l.order_key, l.id)
+    if (occ == null || occ === 1) continue // key fora do padrão: não é da migração
+    const nova = `${l.id}#${occ}`
+    if (nova === l.order_key) continue
+
+    const ocupada = db
+      .prepare('SELECT 1 FROM orders WHERE workbook_id = ? AND order_key = ?')
+      .get(workbookId, nova)
+    if (ocupada) {
+      // Duas linhas cairiam no mesmo nome — é duplicata não resolvida. Renomear aqui
+      // perderia uma delas; o reparo (/audit/reparar) tem que rodar antes.
+      colisoes.push({ de: l.order_key, para: nova })
+      continue
+    }
+
+    const conta = (sql: string, ...p: unknown[]) =>
+      (db.prepare(sql).get(...p) as { n: number }).n
+    planos.push({
+      de: l.order_key,
+      para: nova,
+      pecas: conta('SELECT COUNT(*) AS n FROM order_pieces WHERE workbook_id = ? AND order_key = ?', workbookId, l.order_key),
+      fotos: conta(
+        `SELECT COUNT(*) AS n FROM piece_images pi
+           INNER JOIN order_pieces p ON p.id = pi.piece_id
+          WHERE p.workbook_id = ? AND p.order_key = ?`,
+        workbookId,
+        l.order_key,
+      ),
+      issues: conta('SELECT COUNT(*) AS n FROM parse_issues WHERE workbook_id = ? AND order_key = ?', workbookId, l.order_key),
+    })
+  }
+
+  let integridade: unknown[] = []
+  if (aplicar && planos.length > 0) {
+    // A FK images→orders(order_key) é ON DELETE CASCADE e não tem ON UPDATE: com as FKs
+    // ligadas, renomear o pai seria recusado. Desliga só durante a transação (mesmo
+    // recurso já usado na migração de schema) e confere a integridade logo depois.
+    db.pragma('foreign_keys = OFF')
+    try {
+      db.transaction(() => {
+        for (const p of planos) {
+          db.prepare('UPDATE orders SET order_key = ? WHERE workbook_id = ? AND order_key = ?')
+            .run(p.para, workbookId, p.de)
+          db.prepare('UPDATE orders SET parent_key = ? WHERE workbook_id = ? AND parent_key = ?')
+            .run(p.para, workbookId, p.de)
+          db.prepare('UPDATE order_pieces SET order_key = ? WHERE workbook_id = ? AND order_key = ?')
+            .run(p.para, workbookId, p.de)
+          db.prepare('UPDATE images SET order_id = ? WHERE workbook_id = ? AND order_id = ?')
+            .run(p.para, workbookId, p.de)
+          db.prepare('UPDATE parse_issues SET order_key = ? WHERE workbook_id = ? AND order_key = ?')
+            .run(p.para, workbookId, p.de)
+        }
+      })()
+    } finally {
+      db.pragma('foreign_keys = ON')
+    }
+    integridade = db.pragma('foreign_key_check') as unknown[]
+    recordAudit({
+      source: 'api',
+      event: 'keys.renomeadas',
+      level: 'warn',
+      workbookId,
+      detail: { total: planos.length, planos, integridadeQuebrada: integridade },
+    })
+  }
+
+  res.json({
+    ok: true,
+    aplicado: aplicar,
+    totalRenomear: planos.length,
+    planos,
+    colisoes,
+    // Vazio = nenhuma referência ficou apontando pra key que não existe mais.
+    integridade,
+    aviso: colisoes.length
+      ? 'Há keys que colidiriam: rode POST /audit/reparar antes.'
+      : aplicar
+        ? undefined
+        : 'DRY-RUN — nada foi alterado. Repita com ?aplicar=1 pra executar.',
+  })
+})
+
 export default router

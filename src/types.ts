@@ -39,6 +39,9 @@ export type CellValue = string | number | null
 export interface RowFlags {
   /** pedido desapareceu do XLSX mais recente — manter linha mas sinalizar */
   disappeared?: boolean
+  /** unidade seguinte do MESMO pedido: desenhada como filha (`↳`), sem repetir
+   * pedido/cliente e sem contar como linha na numeração. */
+  filha?: boolean
 }
 
 export interface SheetData {

@@ -26,6 +26,8 @@ export interface ServerOrder {
   productImageUrl?: string
   position: number
   updatedAt: number
+  /** null = linha do pedido; preenchido = unidade seguinte, filha desta key. */
+  parentKey?: string | null
   images: Array<{ col: number; url: string; fileName: string; mime: string; size?: number; updatedAt?: number }>
 }
 
@@ -509,6 +511,11 @@ export type PhotoCrop = 'rosto' | 'coracao'
 export interface OrderPiece {
   id: number
   seq: number
+  /** Linha da planilha a que esta peça pertence — a prévia dela é gravada NESSA linha.
+   *  Um pedido de 5 unidades tem 5 peças, cada uma na sua linha (pai + filhas). */
+  orderKey?: string
+  /** "Peça 2 de 5" — numeração contínua no pedido inteiro, não dentro da linha. */
+  rotulo?: string
   tipo: PecaTipo
   genero: PecaGenero | null
   tamanho: PecaTamanho
@@ -687,7 +694,7 @@ export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook
   const rowProductImages: string[] = []
   const images: Record<string, { url: string; fileName: string; updatedAt?: number }> = {}
   const cellStyles: Record<string, CellStyle> = {}
-  const rowFlags: Record<number, { disappeared?: boolean }> = {}
+  const rowFlags: Record<number, { disappeared?: boolean; filha?: boolean }> = {}
 
   server.orders.forEach((order, idx) => {
     rows.push(order.row)
@@ -697,7 +704,12 @@ export function serverWorkbookToLocal(workbookId: string, server: ServerWorkbook
     for (const [colKey, style] of Object.entries(order.styles ?? {})) {
       cellStyles[`${idx}:${colKey}`] = style
     }
-    if (order.disappeared) rowFlags[idx] = { disappeared: true }
+    if (order.disappeared || order.parentKey) {
+      rowFlags[idx] = {
+        ...(order.disappeared ? { disappeared: true } : {}),
+        ...(order.parentKey ? { filha: true } : {}),
+      }
+    }
     for (const img of order.images) {
       images[`${idx}:${img.col}`] = { url: img.url, fileName: img.fileName, updatedAt: img.updatedAt }
     }

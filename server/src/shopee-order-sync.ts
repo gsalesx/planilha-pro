@@ -209,17 +209,20 @@ function parseOrderList(data: ShopeeApiResponse): ShopeeOrderDetail[] {
 }
 
 /**
- * Mesma regra do XLSX: 1ª linha = id; demais = data__id__ocorrência.
+ * Identidade da linha: 1ª unidade = o próprio pedido; demais = `pedido#N`.
  *
- * ⚠️ A data faz parte da key só por herança do import de planilha — ela NÃO identifica a
- * linha (o `ship_by_date` muda). Nunca use esta função pra PROCURAR linha existente sem o
- * fallback de `findOrderBySnOccurrence`: o pedido nasce em "Sem data de envio" e, quando a
- * Shopee calcula o prazo, a key recalculada deixa de bater com a que está no banco. Era isso
- * que duplicava a 2ª peça (bug 2026-07-28, casos 24lehsilva/livea.maria123/taty1lima).
+ * ⚠️ NADA MUTÁVEL PODE ENTRAR AQUI. O formato antigo era `{data}__{pedido}__{N}`, herdado do
+ * import de XLSX — e como o `ship_by_date` muda (o pedido nasce em "Sem data de envio" e
+ * ganha prazo horas depois), a key recalculada deixava de bater com a persistida: o lookup
+ * falhava e o upsert inseria uma linha nova pra uma peça que já existia. Foi o que duplicou
+ * a 2ª peça em 2026-07-28 (24lehsilva, livea.maria123, taty1lima, dudaahcotta, karolinetayra).
+ *
+ * Keys no formato antigo continuam sendo reconhecidas por `findOrderBySnOccurrence` (linhas
+ * que já existiam), mas nenhuma nova é gerada assim.
  */
-function shopeeOrderKey(sheetDate: string, orderSn: string, occurrence: number): string {
+function shopeeOrderKey(orderSn: string, occurrence: number): string {
   if (occurrence === 1) return orderSn
-  return `${sheetDate || 'sem-data'}__${orderSn}__${occurrence}`
+  return `${orderSn}#${occurrence}`
 }
 
 interface ExistingOrderRow {
@@ -246,10 +249,14 @@ function findOrdersBySn(orderSn: string, workbookId: string = SHOPEE_WORKBOOK_ID
 }
 
 /**
- * Acha a linha desta ocorrência do pedido ignorando o prefixo de data da key — é o que
- * torna o upsert imune à mudança de `ship_by_date`. A key achada é REUSADA como está
- * (nunca renomeada): `order_pieces`, `images` e o `_order_keys.json` do pipeline local
- * referenciam a key, e trocá-la faria a peça ser tratada como nova lá também.
+ * Acha a linha desta ocorrência do pedido ignorando o prefixo de data da key.
+ *
+ * Só serve pro formato ANTIGO (`{data}__{pedido}__{N}`): as keys novas não têm data, então
+ * o lookup exato já resolve. Continua aqui enquanto existirem linhas não migradas — e como
+ * rede de segurança, já que uma linha antiga que escapasse da migração voltaria a duplicar.
+ * A key achada é REUSADA como está (nunca renomeada aqui): `order_pieces`, `images` e o
+ * `_order_keys.json` do pipeline local referenciam a key, e trocá-la fora da migração
+ * (que atualiza todos eles junto) faria a peça ser tratada como nova.
  */
 function findOrderBySnOccurrence(
   orderSn: string,
@@ -456,7 +463,7 @@ export function upsertShopeeOrder(
 
   for (let i = 0; i < itemRows.length; i++) {
     const occurrence = i + 1
-    const orderKey = shopeeOrderKey(sheetDate, orderSn, occurrence)
+    const orderKey = shopeeOrderKey(orderSn, occurrence)
     let existing = findOrderByKey(orderKey, workbookId)
     if (!existing && occurrence === 1) {
       const legacy = findOrdersBySn(orderSn, workbookId)

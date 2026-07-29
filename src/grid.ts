@@ -10,6 +10,12 @@ export const RECIPIENT_COLUMN_INDEX = 6 // coluna G (Nome do destinatário)
 export const PHOTO_COLUMN_INDEX = 7
 export const PHOTO_COLUMN_INDICES = Array.from({ length: 10 }, (_, i) => PHOTO_COLUMN_INDEX + i)
 const FILTERABLE_COLS = new Set<number>([MODEL_COLUMN_INDEX, STATUS_COLUMN_INDEX]) // C (Modelo) e F (Status)
+/**
+ * Colunas que a linha-filha não redesenha: são do PEDIDO, não da peça, e repeti-las faz
+ * duas unidades da mesma compra parecerem dois clientes diferentes. Só o desenho muda —
+ * o valor continua na linha, porque fila/prévias/remessa leem linha a linha.
+ */
+const REPETIDAS_NA_FILHA = new Set<number>([ID_COLUMN_INDEX, USER_COLUMN_INDEX, RECIPIENT_COLUMN_INDEX])
 const SORTABLE_COL = RECIPIENT_COLUMN_INDEX // coluna G (Nome do destinatário)
 const MIN_COLUMN_COUNT = 17 // até coluna Q — Foto 1 até Foto 10
 const DEFAULT_COL_WIDTH = 110
@@ -701,8 +707,16 @@ export class GridView {
   private buildBody(sheet: SheetData, columnCount: number, _rowCount: number): HTMLTableSectionElement {
     const tbody = document.createElement('tbody')
     const selectedRows = this.selection ? new Set(this.getSelectedRows()) : new Set<number>()
-    this.visibleOrder.forEach((r, visibleIndex) => {
-      tbody.appendChild(this.buildDataRow(sheet, r, visibleIndex, columnCount, selectedRows))
+    // A numeração conta PEDIDOS, não linhas: a unidade seguinte do mesmo pedido é filha e
+    // recebe `↳` no lugar do número. Sem isso, "quantos pedidos tem hoje" ficaria inflado
+    // por pedido de 2+ peças.
+    let numeroDoPedido = 0
+    this.visibleOrder.forEach((r) => {
+      const filha = !!sheet.rowFlags?.[r]?.filha
+      if (!filha) numeroDoPedido++
+      tbody.appendChild(
+        this.buildDataRow(sheet, r, filha ? null : numeroDoPedido, columnCount, selectedRows),
+      )
     })
     return tbody
   }
@@ -710,7 +724,8 @@ export class GridView {
   private buildDataRow(
     sheet: SheetData,
     r: number,
-    visibleIndex: number,
+    /** Número do pedido, ou null quando a linha é filha (aí vai `↳`). */
+    numeroDoPedido: number | null,
     columnCount: number,
     selectedRows: Set<number>,
   ): HTMLTableRowElement {
@@ -718,11 +733,18 @@ export class GridView {
     tr.dataset.row = String(r)
     tr.style.height = `${DEFAULT_ROW_HEIGHT}px`
     if (sheet.rowFlags?.[r]?.disappeared) tr.classList.add('row-disappeared')
+    if (numeroDoPedido === null) tr.classList.add('row-filha')
     if (selectedRows.has(r)) tr.classList.add('row-selected')
 
     const rowNum = document.createElement('th')
     rowNum.className = 'row-num'
-    rowNum.textContent = String(visibleIndex + 1)
+    if (numeroDoPedido === null) {
+      rowNum.classList.add('row-num-filha')
+      rowNum.textContent = '↳'
+      rowNum.title = 'Mesma compra da linha de cima'
+    } else {
+      rowNum.textContent = String(numeroDoPedido)
+    }
     if (selectedRows.has(r)) rowNum.classList.add('is-active')
     tr.appendChild(rowNum)
 
@@ -748,8 +770,27 @@ export class GridView {
       td.classList.add('has-bg')
     }
 
+    // Linha filha não repete o que já está na linha do pedido — é o que dá a leitura de
+    // "isto é a mesma compra". O dado continua na linha (fila, prévias e remessa leem
+    // linha a linha); só não é redesenhado.
+    const ehFilha = !!sheet.rowFlags?.[row]?.filha
+    if (ehFilha && !isEditing && REPETIDAS_NA_FILHA.has(col)) {
+      td.classList.add('cell-filha-repetida')
+      if (col === ID_COLUMN_INDEX) {
+        const seta = document.createElement('span')
+        seta.className = 'cell-filha-seta'
+        seta.textContent = '↳'
+        seta.title = 'Mesma compra da linha de cima'
+        td.appendChild(seta)
+      }
+      return td
+    }
+
     if (col === STATUS_COLUMN_INDEX) {
       td.classList.add('status-cell')
+      // O status é gerenciado na linha do pedido e desce pras filhas; aqui ele aparece
+      // esmaecido pra deixar claro qual linha manda, sem esconder o valor real.
+      if (ehFilha) td.classList.add('status-cell-filha')
       td.appendChild(this.buildStatusPill(value, row, col))
     } else if (col === USER_COLUMN_INDEX && value != null && String(value).trim() !== '' && !isEditing) {
       td.classList.add('cell-user')

@@ -3998,3 +3998,32 @@ table.sheet tbody th.row-num.is-active {
   outline-offset: 1px;
   background: #f8fafc;
 }
+
+/* ── Linha-filha: unidade seguinte do MESMO pedido (parent_key no servidor) ──────────
+   Desenhada recuada e sem repetir pedido/cliente/destinatário, pra bater o olho e ver
+   que é a mesma compra. O dado continua na linha — só o desenho muda. */
+.row-filha > td {
+  background: #fbfcfe;
+}
+.row-filha:hover > td {
+  background: #f4f7fb;
+}
+.row-num-filha {
+  color: #94a3b8;
+  font-weight: 600;
+}
+.cell-filha-repetida {
+  color: #cbd5e1;
+}
+.cell-filha-seta {
+  display: inline-block;
+  padding-left: 10px;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1;
+}
+/* Status vive na linha do pedido e desce pras filhas: aqui aparece esmaecido, deixando
+   claro qual linha manda — sem esconder o valor real, que é o que os fluxos leem. */
+.status-cell-filha {
+  opacity: 0.45;
+}

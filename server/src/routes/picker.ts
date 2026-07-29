@@ -24,9 +24,12 @@ import { removerFundo } from '../picwish.js'
 import { fetchShopeeCdn } from './pieces.js'
 import {
   CANVAS_POR_MOLDE,
+  gerarPrint4x4,
   labelDoMolde,
   renderMolde,
 } from '../render-molde.js'
+import { SHOPEE_COL_INTERNAL_STATUS, SHOPEE_PHOTO_COL_START, SHOPEE_PHOTO_COUNT } from '../shopee-columns.js'
+import { SHOPEE_WORKBOOK_ID } from '../shopee-workbook.js'
 import {
   type ParamsEnquadramento,
   renderCoracao,
@@ -519,6 +522,206 @@ router.get('/pieces/:id/arte', requireAuth, async (req, res) => {
   } catch (e) {
     res.status(400).json({ error: (e as Error).message })
   }
+})
+
+/* ===========================================================
+   Print 4×4 — a prévia que vai pra planilha e pro chat
+   =========================================================== */
+
+const STATUS_PRONTO = 'Pronto'
+
+/**
+ * Coluna de foto da peça. Normalmente a linha é a peça, então tudo cai na primeira
+ * coluna; quando várias peças dividem a mesma linha (SKU combo tipo CAMISOLA+SHORT, e
+ * pedidos antigos ainda no formato 1-linha-por-item), elas ocupam colunas seguidas.
+ */
+function colunaDaPeca(seq: number): number {
+  const offset = Math.max(0, Math.min(SHOPEE_PHOTO_COUNT - 1, seq - 1))
+  return SHOPEE_PHOTO_COL_START + offset
+}
+
+/** Grava o print na coluna de foto da linha, substituindo o anterior (arquivo incluso). */
+function guardarPrint(workbookId: string, orderKey: string, col: number, jpg: Buffer): void {
+  const fileName = `print_${orderKey.replace(/[^A-Za-z0-9_-]/g, '_')}_c${col}_${crypto.randomBytes(4).toString('hex')}.jpg`
+  const storagePath = path.join(imagesDir, fileName)
+  writeFileSync(storagePath, jpg)
+  const now = nowMs()
+  db.transaction(() => {
+    const anterior = db
+      .prepare('SELECT storage_path FROM images WHERE workbook_id = ? AND order_id = ? AND col = ?')
+      .get(workbookId, orderKey, col) as { storage_path: string } | undefined
+    if (anterior) {
+      try {
+        unlinkSync(anterior.storage_path)
+      } catch {
+        // arquivo já sumiu — o registro no banco é o que importa
+      }
+    }
+    db.prepare(
+      `INSERT INTO images (workbook_id, order_id, col, file_name, mime, storage_path, updated_at)
+       VALUES (?, ?, ?, ?, 'image/jpeg', ?, ?)
+       ON CONFLICT(workbook_id, order_id, col) DO UPDATE SET
+         file_name = excluded.file_name, mime = excluded.mime,
+         storage_path = excluded.storage_path, updated_at = excluded.updated_at`,
+    ).run(workbookId, orderKey, col, fileName, storagePath, now)
+    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
+  })()
+}
+
+/**
+ * Marca "Pronto" em TODAS as linhas do pedido — mas só quando todas as peças dele já têm
+ * print. Um pedido com 2 peças e só 1 prévia não está pronto: marcar cedo faria a prévia
+ * ser disparada pro cliente faltando peça.
+ */
+function marcarProntoSeCompleto(workbookId: string, orderSn: string): boolean {
+  const linhas = db
+    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ? AND id = ?')
+    .all(workbookId, orderSn) as Array<{ order_key: string; row_json: string }>
+  if (linhas.length === 0) return false
+
+  for (const l of linhas) {
+    const pecas = db
+      .prepare('SELECT seq FROM order_pieces WHERE workbook_id = ? AND order_key = ?')
+      .all(workbookId, l.order_key) as Array<{ seq: number }>
+    if (pecas.length === 0) return false // linha sem peça: pedido ainda não montado
+    for (const p of pecas) {
+      const tem = db
+        .prepare('SELECT 1 FROM images WHERE workbook_id = ? AND order_id = ? AND col = ?')
+        .get(workbookId, l.order_key, colunaDaPeca(p.seq))
+      if (!tem) return false
+    }
+  }
+
+  const now = nowMs()
+  const upd = db.prepare('UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?')
+  db.transaction(() => {
+    for (const l of linhas) {
+      const row = JSON.parse(l.row_json || '[]') as unknown[]
+      while (row.length <= SHOPEE_COL_INTERNAL_STATUS) row.push('')
+      if (String(row[SHOPEE_COL_INTERNAL_STATUS] ?? '') === STATUS_PRONTO) continue
+      row[SHOPEE_COL_INTERNAL_STATUS] = STATUS_PRONTO
+      upd.run(JSON.stringify(row), now, workbookId, l.order_key)
+    }
+    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
+  })()
+  return true
+}
+
+/** Monta a arte da peça, recorta o print e grava na coluna. Devolve a coluna usada. */
+async function gerarEGuardarPrint(pieceId: number, workbookId: string): Promise<{ col: number; orderKey: string; orderSn: string }> {
+  const peca = db
+    .prepare('SELECT order_key, seq FROM order_pieces WHERE id = ? AND workbook_id = ?')
+    .get(pieceId, workbookId) as { order_key: string; seq: number } | undefined
+  if (!peca) throw new Error('peça não encontrada')
+
+  const linha = db
+    .prepare('SELECT id FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(workbookId, peca.order_key) as { id: string } | undefined
+  if (!linha) throw new Error('linha do pedido não encontrada')
+
+  const { jpg } = await gerarArteDaPeca(pieceId)
+  // nFotos = quantas fotos a arte usa; define a largura da unidade do padrão.
+  const nFotos = [1, 2].filter((slot) => {
+    const l = foto(pieceId, slot)
+    return !!l?.composta_path && existsSync(l.composta_path)
+  }).length
+  const print = await gerarPrint4x4(jpg, Math.max(1, nFotos))
+
+  const col = colunaDaPeca(peca.seq)
+  guardarPrint(workbookId, peca.order_key, col, print)
+  return { col, orderKey: peca.order_key, orderSn: linha.id }
+}
+
+/** POST /pieces/:id/print — gera a prévia de UMA peça e grava na planilha. */
+router.post('/pieces/:id/print', requireAuth, async (req, res) => {
+  const pieceId = Number(req.params.id)
+  if (!Number.isInteger(pieceId)) {
+    res.status(400).json({ error: 'peça inválida' })
+    return
+  }
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
+  try {
+    const r = await gerarEGuardarPrint(pieceId, workbookId)
+    const pronto = marcarProntoSeCompleto(workbookId, r.orderSn)
+    res.json({
+      ok: true,
+      col: r.col,
+      orderSn: r.orderSn,
+      marcadoPronto: pronto,
+      url: `/api/workbooks/${encodeURIComponent(workbookId)}/images/${encodeURIComponent(r.orderKey)}/${r.col}`,
+    })
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
+})
+
+/**
+ * POST /picker/prints?sheetDate=DD-MM-AAAA — prévias em massa do dia.
+ *
+ * Substitui `gerar_prints_4x4.py` + `planilha_upload_previews.py` do pipeline local, que
+ * dependiam do staging em disco (`_test/{data}/…`) — inexistente pros pedidos montados no
+ * picker web. `?status=` filtra a fila (default: todos menos os já Prontos/entregues);
+ * `?forcar=1` refaz a prévia de quem já tem.
+ */
+router.post('/picker/prints', requireAuth, async (req, res) => {
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
+  const sheetDate = typeof req.query.sheetDate === 'string' ? req.query.sheetDate.trim() : ''
+  const forcar = req.query.forcar === '1' || req.query.forcar === 'true'
+  if (!sheetDate) {
+    res.status(400).json({ error: 'sheetDate (DD-MM-AAAA) obrigatório' })
+    return
+  }
+
+  const linhas = db
+    .prepare('SELECT order_key, id FROM orders WHERE workbook_id = ? AND sheet_date = ? ORDER BY position')
+    .all(workbookId, sheetDate) as Array<{ order_key: string; id: string }>
+
+  const feitas: Array<{ orderSn: string; pieceId: number; col: number }> = []
+  const puladas: Array<{ orderSn: string; pieceId: number; motivo: string }> = []
+  const falhas: Array<{ orderSn: string; pieceId: number; erro: string }> = []
+  const pedidosTocados = new Set<string>()
+
+  for (const l of linhas) {
+    const pecas = db
+      .prepare('SELECT id, seq FROM order_pieces WHERE workbook_id = ? AND order_key = ? ORDER BY seq')
+      .all(workbookId, l.order_key) as Array<{ id: number; seq: number }>
+    for (const p of pecas) {
+      const col = colunaDaPeca(p.seq)
+      if (!forcar) {
+        const jaTem = db
+          .prepare('SELECT 1 FROM images WHERE workbook_id = ? AND order_id = ? AND col = ?')
+          .get(workbookId, l.order_key, col)
+        if (jaTem) {
+          puladas.push({ orderSn: l.id, pieceId: p.id, motivo: 'já tem prévia' })
+          continue
+        }
+      }
+      try {
+        const r = await gerarEGuardarPrint(p.id, workbookId)
+        feitas.push({ orderSn: l.id, pieceId: p.id, col: r.col })
+        pedidosTocados.add(l.id)
+      } catch (e) {
+        // Peça sem foto ajustada ainda é o caso NORMAL no meio do dia — não é erro do
+        // sistema, e não pode derrubar o lote inteiro.
+        falhas.push({ orderSn: l.id, pieceId: p.id, erro: (e as Error).message })
+      }
+    }
+  }
+
+  const prontos: string[] = []
+  for (const sn of pedidosTocados) {
+    if (marcarProntoSeCompleto(workbookId, sn)) prontos.push(sn)
+  }
+
+  res.json({
+    ok: true,
+    sheetDate,
+    previasGeradas: feitas.length,
+    pedidosMarcadosPronto: prontos.length,
+    prontos,
+    puladas: puladas.length,
+    falhas,
+  })
 })
 
 export default router

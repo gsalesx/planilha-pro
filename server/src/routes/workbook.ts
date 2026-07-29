@@ -239,6 +239,43 @@ router.post('/workbooks/:workbookId/replace', requireAuth, (req, res) => {
   res.json({ ok: true, updatedAt: now, count: orders.length })
 })
 
+/**
+ * O status é gerenciado numa linha só — a do pedido — mas TUDO que consome status lê linha
+ * a linha (fila de "Separado", upload de prévias, remessa de "Aprovado"). Se a filha ficasse
+ * com o status velho, a peça dela sumiria desses fluxos e o cliente receberia o pedido
+ * incompleto. Por isso a mudança de status na linha-pai desce pras filhas na mesma transação.
+ *
+ * Só o status desce: cor, emoji e foto são de cada peça e precisam divergir.
+ */
+function propagarStatusParaFilhas(
+  workbookId: string,
+  chavePai: string,
+  cellPatches: CellPatch[] | null,
+  rowInteira: unknown[] | undefined,
+  now: number,
+): void {
+  let novoStatus: string | null = null
+  if (cellPatches) {
+    const alvo = cellPatches.find((c) => Number(c.col) === STATUS_COL)
+    if (alvo) novoStatus = String(alvo.value ?? '')
+  } else if (Array.isArray(rowInteira) && rowInteira.length > STATUS_COL) {
+    novoStatus = String(rowInteira[STATUS_COL] ?? '')
+  }
+  if (novoStatus === null) return
+
+  const filhas = db
+    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ? AND parent_key = ?')
+    .all(workbookId, chavePai) as Array<{ order_key: string; row_json: string }>
+  const upd = db.prepare('UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?')
+  for (const f of filhas) {
+    const row = JSON.parse(f.row_json || '[]') as unknown[]
+    while (row.length <= STATUS_COL) row.push(null)
+    if (String(row[STATUS_COL] ?? '') === novoStatus) continue
+    row[STATUS_COL] = novoStatus
+    upd.run(JSON.stringify(row), now, workbookId, f.order_key)
+  }
+}
+
 router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
   const workbookId = req.params.workbookId
   const id = req.params.id
@@ -337,6 +374,7 @@ router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
     db.prepare(
       `UPDATE orders SET ${sets.join(', ')} WHERE workbook_id = ? AND order_key = ?`,
     ).run(...params)
+    propagarStatusParaFilhas(workbookId, resolved.key, cellPatches, patch.row, now)
     db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
   })
   txn()

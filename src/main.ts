@@ -108,6 +108,9 @@ function buildShell() {
           <button type="button" class="btn btn-primary" id="shopee-link-conversations-btn" hidden title="Cruza username da col E com to_name do chat Shopee e grava conversation_id (não altera a planilha)">
             💬 Vincular conversas Shopee
           </button>
+          <button type="button" class="btn btn-primary" id="gerar-previas-btn" hidden title="Monta a arte de cada peça da data e grava o print 4x4 na coluna de foto; o pedido vira Pronto quando TODAS as peças dele têm prévia">
+            🖨 Gerar prévias (data)
+          </button>
           <button type="button" class="btn" id="baixar-aprovados-data-btn" hidden title="Gera e baixa as artes dos pedidos Aprovado da data selecionada">
             ⬇ Baixar aprovados (data)
           </button>
@@ -1877,8 +1880,62 @@ function bindBaixarAprovados() {
   todos?.addEventListener('click', () => void baixar(todos, null))
 }
 
+/**
+ * Gera as prévias (print 4×4) da data e grava na coluna de foto de cada linha.
+ *
+ * Substitui `gerar_prints_4x4.py` + `planilha_upload_previews.py` do pipeline local, que
+ * liam o staging em disco — inexistente pros pedidos montados no picker web. Peça sem foto
+ * ajustada ainda entra como falha esperada (é o estado normal no meio do dia), por isso o
+ * resumo separa gerado / pulado / faltando.
+ */
+function bindGerarPrevias() {
+  const btn = document.querySelector<HTMLButtonElement>('#gerar-previas-btn')
+  btn?.addEventListener('click', async () => {
+    const data = document.querySelector<HTMLSelectElement>('#date-select')?.value ?? ''
+    if (!data) {
+      setStatusText('Selecione uma data primeiro.')
+      return
+    }
+    const rotulo = btn.textContent
+    btn.disabled = true
+    btn.textContent = '⏳ Gerando prévias…'
+    setStatusText(`Montando as artes de ${data} e recortando as prévias…`)
+    try {
+      const r = await fetch(`/api/picker/prints?sheetDate=${encodeURIComponent(data)}`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const body = (await r.json()) as {
+        error?: string
+        previasGeradas?: number
+        pedidosMarcadosPronto?: number
+        puladas?: number
+        falhas?: Array<{ orderSn: string; erro: string }>
+      }
+      if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+      const partes = [
+        `${body.previasGeradas ?? 0} prévia(s) gerada(s)`,
+        `${body.pedidosMarcadosPronto ?? 0} pedido(s) marcado(s) Pronto`,
+      ]
+      if (body.puladas) partes.push(`${body.puladas} já tinha(m)`)
+      if (body.falhas?.length) partes.push(`${body.falhas.length} sem foto ajustada`)
+      setStatusText(partes.join(' · '))
+      if (body.falhas?.length) {
+        console.warn('[prévias] peças que ainda não deu pra gerar:', body.falhas)
+      }
+      await refreshFromServer({ force: true })
+    } catch (error) {
+      setStatusText(`Falha ao gerar prévias: ${(error as Error).message}`)
+    } finally {
+      btn.disabled = false
+      btn.textContent = rotulo
+    }
+  })
+}
+
 function applyShopeeWorkbookToolbar(workbookId: string) {
   const isShopee = isShopeeWorkbookId(workbookId)
+  setToolbarBtnVisible(document.querySelector('#gerar-previas-btn'), isShopee)
   setToolbarBtnVisible(document.querySelector('#baixar-aprovados-data-btn'), isShopee)
   setToolbarBtnVisible(document.querySelector('#baixar-aprovados-todos-btn'), isShopee)
   // "Vincular conversas" sai da barra (pedido do user), mas a FUNÇÃO continua:
@@ -1933,6 +1990,7 @@ async function enterWorkbook(workbookId: string) {
   bindPendingMutationsButton()
   applyShopeeWorkbookToolbar(workbookId)
   bindBaixarAprovados()
+  bindGerarPrevias()
   bindShopeeLinkConversations()
   try {
     await refreshFromServer({ force: true })
