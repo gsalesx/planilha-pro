@@ -472,4 +472,102 @@ router.post('/audit/renomear-keys', requireAuth, (req, res) => {
   })
 })
 
+/**
+ * POST /api/audit/marcar-filhas — passo 5: aplica o agrupamento pai/filha aos pedidos que
+ * já existiam antes dele.
+ *
+ * Não apaga, não move, não muda status: só preenche `parent_key` na 2ª linha em diante de
+ * cada pedido multi-linha, que é o que faz o grid desenhar o `↳` e a numeração contar
+ * pedidos em vez de linhas. Ficou barato porque o reparo já deixou tudo íntegro — sem
+ * duplicata nem linha fora de ordem, "quem é a 1ª linha" é uma pergunta sem ambiguidade.
+ *
+ * A quantidade NÃO é explodida aqui: pedido antigo com Qnt=5 numa linha continua assim.
+ * Explodir mexeria em pedido publicado, criando 4 linhas do nada em coisa já entregue.
+ *
+ * DRY-RUN por padrão; executa com `?aplicar=1`.
+ */
+router.post('/audit/marcar-filhas', requireAuth, (req, res) => {
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
+  const aplicar = req.query.aplicar === '1' || req.query.aplicar === 'true'
+
+  const linhas = db
+    .prepare(
+      `SELECT order_key, id, position, parent_key, row_json FROM orders
+        WHERE workbook_id = ? ORDER BY position`,
+    )
+    .all(workbookId) as Array<{
+      order_key: string
+      id: string
+      position: number
+      parent_key: string | null
+      row_json: string
+    }>
+
+  const porPedido = new Map<string, typeof linhas>()
+  for (const l of linhas) {
+    const lista = porPedido.get(l.id) ?? []
+    lista.push(l)
+    porPedido.set(l.id, lista)
+  }
+
+  const marcar: Array<{ orderSn: string; pai: string; filhas: string[]; cliente: string }> = []
+  const naoContiguos: string[] = []
+
+  for (const [orderSn, lista] of porPedido) {
+    if (lista.length < 2) continue
+    const jaMarcado = lista.slice(1).every((l) => l.parent_key === lista[0].order_key)
+    if (jaMarcado) continue
+
+    // Contiguidade é pré-requisito: com outro pedido no meio, "a 1ª linha" seria arbitrária.
+    const pos = lista.map((l) => l.position)
+    if (Math.max(...pos) - Math.min(...pos) !== lista.length - 1) {
+      naoContiguos.push(orderSn)
+      continue
+    }
+
+    const row = JSON.parse(lista[0].row_json || '[]') as string[]
+    marcar.push({
+      orderSn,
+      pai: lista[0].order_key,
+      filhas: lista.slice(1).map((l) => l.order_key),
+      cliente: row[4] ?? '',
+    })
+  }
+
+  if (aplicar && marcar.length > 0) {
+    const upd = db.prepare('UPDATE orders SET parent_key = ? WHERE workbook_id = ? AND order_key = ?')
+    db.transaction(() => {
+      for (const m of marcar) {
+        // A linha-pai fica explicitamente sem pai (NULL) — pedido que já tenha sido marcado
+        // errado antes volta ao estado certo em vez de acumular.
+        upd.run(null, workbookId, m.pai)
+        for (const f of m.filhas) upd.run(m.pai, workbookId, f)
+      }
+      db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(nowMs(), workbookId)
+    })()
+    recordAudit({
+      source: 'api',
+      event: 'filhas.marcadas',
+      level: 'warn',
+      workbookId,
+      detail: { pedidos: marcar.length, linhas: marcar.reduce((n, m) => n + m.filhas.length, 0), marcar },
+    })
+  }
+
+  res.json({
+    ok: true,
+    aplicado: aplicar,
+    pedidosParaMarcar: marcar.length,
+    linhasQueViramFilhas: marcar.reduce((n, m) => n + m.filhas.length, 0),
+    marcar,
+    // Pedido com outro no meio: o reparo junta primeiro, senão a 1ª linha é chute.
+    naoContiguos,
+    aviso: naoContiguos.length
+      ? 'Há pedidos com linhas separadas: rode POST /audit/reparar antes.'
+      : aplicar
+        ? undefined
+        : 'DRY-RUN — nada foi alterado. Repita com ?aplicar=1 pra executar.',
+  })
+})
+
 export default router
