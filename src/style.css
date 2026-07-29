@@ -1746,6 +1746,43 @@ body.shopee-chat-open {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* Faixa de contexto quando a mensagem é resposta a outra (quoted_msg da Shopee) —
+   mesma leitura do "anexo" que o app oficial mostra acima da mensagem citante. */
+.shopee-chat-quoted {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 2px 6px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.06);
+  font-size: 12px;
+  color: #475569;
+  max-width: 240px;
+}
+.shopee-chat-quoted-bar {
+  align-self: stretch;
+  width: 3px;
+  border-radius: 2px;
+  background: #94a3b8;
+  flex-shrink: 0;
+}
+.shopee-chat-quoted-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shopee-chat-quoted-thumb {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.shopee-chat-quoted-label {
+  font-style: italic;
+}
+
 .shopee-chat-compose {
   display: flex;
   gap: 8px;

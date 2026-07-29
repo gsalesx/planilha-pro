@@ -866,6 +866,14 @@ export async function fetchConversationMap(
   }
 }
 
+/** Resumo da mensagem citada (resposta a outra msg) — só o suficiente pra mostrar a
+ *  faixa de contexto acima da mensagem, igual o app oficial da Shopee. */
+export interface QuotedMessage {
+  text: string
+  imageUrl: string | null
+  fromBuyer: boolean
+}
+
 export interface ParsedChatMessage {
   id: string
   fromId: number
@@ -876,6 +884,9 @@ export interface ParsedChatMessage {
   createdAt: number | null
   /** true = mensagem do comprador; false = loja/vendedor */
   fromBuyer: boolean
+  /** Preenchido quando esta mensagem é uma resposta a outra (`quoted_msg` da Shopee) —
+   *  no app oficial aparece como anexo/faixa acima da mensagem; null = não é resposta. */
+  quotedMessage: QuotedMessage | null
 }
 
 function messageListFromBody(body: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -942,6 +953,21 @@ function parseMessageCreatedAt(msg: Record<string, unknown>): number | null {
   return n < 1e12 ? n * 1000 : n
 }
 
+/** `quoted_msg` vem no MESMO formato de uma mensagem inteira (message_type/content/from_id
+ *  próprios) — só precisa de um resumo pra faixa de contexto, não o parse completo. */
+function extractQuotedMessage(msg: Record<string, unknown>, buyerToId: number): QuotedMessage | null {
+  const raw = msg.quoted_msg
+  if (!raw || typeof raw !== 'object') return null
+  const q = raw as Record<string, unknown>
+  const text = extractMessageText(q)
+  const fromId = Number(q.from_id ?? 0)
+  return {
+    text,
+    imageUrl: extractMessageImageUrl(q, text),
+    fromBuyer: fromId === buyerToId,
+  }
+}
+
 export function parseChatMessage(
   msg: Record<string, unknown>,
   buyerToId: number,
@@ -961,6 +987,7 @@ export function parseChatMessage(
     imageUrl: extractMessageImageUrl(msg, text),
     createdAt: parseMessageCreatedAt(msg),
     fromBuyer: fromId === buyerToId,
+    quotedMessage: extractQuotedMessage(msg, buyerToId),
   }
 }
 

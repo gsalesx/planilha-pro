@@ -408,6 +408,12 @@ export async function saveShopeeLinkStartCursor(nextTimestampNano: string): Prom
   })
 }
 
+export type ShopeeQuotedMessage = {
+  text: string
+  imageUrl: string | null
+  fromBuyer: boolean
+}
+
 export type ShopeeChatMessage = {
   id: string
   fromId: number
@@ -417,6 +423,8 @@ export type ShopeeChatMessage = {
   imageUrl: string | null
   createdAt: number | null
   fromBuyer: boolean
+  /** Preenchido quando é resposta a outra mensagem (anexo/citação no app da Shopee). */
+  quotedMessage: ShopeeQuotedMessage | null
 }
 
 export async function fetchShopeeLinkStatus(workbookId: string): Promise<{

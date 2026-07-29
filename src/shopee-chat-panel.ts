@@ -22,6 +22,7 @@ import {
   type PecaTipo,
   type PhotoCrop,
   type ShopeeChatMessage,
+  type ShopeeQuotedMessage,
 } from './api'
 import { openConfirmDialog } from './dialog'
 import { STATUS_COLUMN_INDEX } from './status'
@@ -234,6 +235,33 @@ function colorPickerHtml(pieceId: number, current: string): string {
   `
 }
 
+/**
+ * Faixa de contexto acima da bolha quando a mensagem é RESPOSTA a outra (`quoted_msg` da
+ * Shopee — o app oficial mostra como um anexo pequeno acima do texto). Sem isso, uma
+ * resposta como "Essa quero recordada em volta" ficava sem explicar A QUAL foto/mensagem
+ * ela se referia, e o operador precisava abrir o app da Shopee só pra ver.
+ */
+function renderQuotedMessage(quoted: ShopeeQuotedMessage): string {
+  const quemQuotou = quoted.fromBuyer ? 'Cliente' : 'Loja'
+  if (quoted.imageUrl) {
+    const url = escapeHtml(quoted.imageUrl)
+    return `
+      <div class="shopee-chat-quoted">
+        <img class="shopee-chat-quoted-thumb" src="${url}" alt="Foto respondida" loading="lazy" referrerpolicy="no-referrer" />
+        <span class="shopee-chat-quoted-label">${escapeHtml(quemQuotou)} enviou uma foto</span>
+      </div>
+    `
+  }
+  const isPlaceholder = /^\[\w+\]$/.test(quoted.text ?? '')
+  const texto = isPlaceholder ? quemQuotou + ' enviou algo aqui' : quoted.text
+  return `
+    <div class="shopee-chat-quoted">
+      <span class="shopee-chat-quoted-bar"></span>
+      <span class="shopee-chat-quoted-text">${escapeHtml(texto)}</span>
+    </div>
+  `
+}
+
 function renderMessageBody(msg: ShopeeChatMessage): string {
   if (msg.imageUrl) {
     const url = escapeHtml(msg.imageUrl)
@@ -322,7 +350,7 @@ function renderMessages(messages: ShopeeChatMessage[], buyerUsername: string): s
     parts.push(`
       <div class="shopee-chat-bubble-wrap ${side}">
         <div class="shopee-chat-bubble-meta">${escapeHtml(label)} · ${escapeHtml(fmtMessageTime(msg.createdAt))}</div>
-        <div class="shopee-chat-bubble ${side}">${renderMessageBody(msg)}</div>
+        <div class="shopee-chat-bubble ${side}">${msg.quotedMessage ? renderQuotedMessage(msg.quotedMessage) : ''}${renderMessageBody(msg)}</div>
       </div>
     `)
   }
