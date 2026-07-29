@@ -243,10 +243,15 @@ function colorPickerHtml(pieceId: number, current: string): string {
  */
 function renderQuotedMessage(quoted: ShopeeQuotedMessage): string {
   const quemQuotou = quoted.fromBuyer ? 'Cliente' : 'Loja'
+  // data-quoted-id: se a mensagem original estiver carregada na página, o clique rola
+  // até ela (igual clicar numa resposta no WhatsApp). Se não estiver (página ainda
+  // carregando mais histórico, por ex.), o clique simplesmente não faz nada — sem erro.
+  const attrId = quoted.id ? ` data-quoted-id="${escapeHtml(quoted.id)}"` : ''
+  const clicavel = quoted.id ? ' is-clickable' : ''
   if (quoted.imageUrl) {
     const url = escapeHtml(quoted.imageUrl)
     return `
-      <div class="shopee-chat-quoted">
+      <div class="shopee-chat-quoted${clicavel}"${attrId}>
         <img class="shopee-chat-quoted-thumb" src="${url}" alt="Foto respondida" loading="lazy" referrerpolicy="no-referrer" />
         <span class="shopee-chat-quoted-label">${escapeHtml(quemQuotou)} enviou uma foto</span>
       </div>
@@ -255,7 +260,7 @@ function renderQuotedMessage(quoted: ShopeeQuotedMessage): string {
   const isPlaceholder = /^\[\w+\]$/.test(quoted.text ?? '')
   const texto = isPlaceholder ? quemQuotou + ' enviou algo aqui' : quoted.text
   return `
-    <div class="shopee-chat-quoted">
+    <div class="shopee-chat-quoted${clicavel}"${attrId}>
       <span class="shopee-chat-quoted-bar"></span>
       <span class="shopee-chat-quoted-text">${escapeHtml(texto)}</span>
     </div>
@@ -268,11 +273,16 @@ function renderMessageBody(msg: ShopeeChatMessage): string {
     // referrerpolicy=no-referrer: CDN da Shopee às vezes bloqueia hotlink com
     // Referer do nosso domínio — a foto some até fechar/abrir o chat. Retry
     // automático + botão ↻ cobrem falha intermitente (rede/429 no browser).
-    const img = `<div class="shopee-chat-image-wrap">
-      <a class="shopee-chat-image-link" href="${url}" target="_blank" rel="noopener noreferrer">
-        <img class="shopee-chat-image" src="${url}" data-src="${url}" alt="Imagem enviada no chat"
-             loading="lazy" referrerpolicy="no-referrer" data-retries="0" />
-      </a>
+    // Botão de recarregar fica AO LADO da imagem, não sobreposto: um <button> absoluto
+    // por cima do canto da foto criava um respiro grande no card pra "caber" a área de
+    // toque sem cobrir a imagem — tirar a sobreposição elimina o espaço vazio.
+    const img = `<div class="shopee-chat-image-row">
+      <div class="shopee-chat-image-wrap">
+        <a class="shopee-chat-image-link" href="${url}" target="_blank" rel="noopener noreferrer">
+          <img class="shopee-chat-image" src="${url}" data-src="${url}" alt="Imagem enviada no chat"
+               loading="lazy" referrerpolicy="no-referrer" data-retries="0" />
+        </a>
+      </div>
       <button type="button" class="shopee-chat-image-retry" title="Recarregar imagem" aria-label="Recarregar imagem">↻</button>
     </div>`
     // Mensagens tipo "image_with_text" (ex.: "Esse no vestido" junto da foto)
@@ -348,7 +358,7 @@ function renderMessages(messages: ShopeeChatMessage[], buyerUsername: string): s
     const side = msg.fromBuyer ? 'buyer' : 'seller'
     const label = msg.fromBuyer ? buyerUsername : 'Loja'
     parts.push(`
-      <div class="shopee-chat-bubble-wrap ${side}">
+      <div class="shopee-chat-bubble-wrap ${side}" data-message-id="${escapeHtml(msg.id)}">
         <div class="shopee-chat-bubble-meta">${escapeHtml(label)} · ${escapeHtml(fmtMessageTime(msg.createdAt))}</div>
         <div class="shopee-chat-bubble ${side}">${msg.quotedMessage ? renderQuotedMessage(msg.quotedMessage) : ''}${renderMessageBody(msg)}</div>
       </div>
@@ -919,8 +929,11 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     }
   }
 
-  function baixarArtesBtnHtml(pieces: OrderPiece[]): string {
+  function acoesExtraBtnHtml(pieces: OrderPiece[]): string {
     return `
+      <button type="button" class="btn shopee-chat-gerar-previa" id="shopee-chat-gerar-previa"
+              ${pieces.length === 0 ? 'disabled' : ''}
+              title="Monta a arte de cada peça e grava o print 4x4 na coluna de foto — pedido vira Pronto quando todas as peças tiverem prévia">🖨 Gerar prévia</button>
       <button type="button" class="btn shopee-chat-baixar-artes" id="shopee-chat-baixar-artes"
               ${pieces.length === 0 ? 'disabled' : ''}
               title="Monta e baixa a(s) arte(s) deste pedido agora, sem esperar virar Aprovado">⬇ Baixar arte(s)</button>
@@ -930,8 +943,8 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   function confirmBarHtml(pieces: OrderPiece[]): string {
     if (order.status === CONFIRMED_STATUS) {
       return `
-        <div class="shopee-chat-pieces-confirmed">✓ Pedido confirmado — status "Separado"</div>
-        ${baixarArtesBtnHtml(pieces)}
+        <div class="shopee-chat-pieces-confirmed">✓ Pedido confirmado</div>
+        ${acoesExtraBtnHtml(pieces)}
       `
     }
     const missing = pieces.filter((p) => !p.photos[1]).length
@@ -939,19 +952,36 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     return `
       <button type="button" class="btn btn-primary shopee-chat-confirm-order" id="shopee-chat-confirm-order"
               ${pieces.length === 0 ? 'disabled' : ''}>${label}</button>
-      ${baixarArtesBtnHtml(pieces)}
+      ${acoesExtraBtnHtml(pieces)}
     `
+  }
+
+  /** Chama uma rota que baixa um blob (arte) ou devolve JSON (prévia), com o mesmo
+   *  padrão de rótulo "carregando"/erro — evita repetir o try/finally 2x. */
+  async function acionarBotaoAssincrono(
+    btn: HTMLButtonElement,
+    rotuloCarregando: string,
+    acao: () => Promise<void>,
+  ): Promise<void> {
+    const rotulo = btn.textContent
+    btn.disabled = true
+    btn.textContent = rotuloCarregando
+    try {
+      await acao()
+    } catch (error) {
+      alert(`Falha: ${(error as Error).message}`)
+    } finally {
+      btn.disabled = false
+      btn.textContent = rotulo
+    }
   }
 
   /** Baixa a(s) arte(s) do pedido inteiro — monta na hora, sem esperar "Aprovado". */
   function bindBaixarArtes(): void {
     const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-baixar-artes')
     if (!btn) return
-    btn.addEventListener('click', async () => {
-      const rotulo = btn.textContent
-      btn.disabled = true
-      btn.textContent = '⏳ Montando…'
-      try {
+    btn.addEventListener('click', () =>
+      acionarBotaoAssincrono(btn, '⏳ Montando…', async () => {
         const r = await fetch(
           `/api/workbooks/${encodeURIComponent(order.workbookId)}/orders/${encodeURIComponent(order.orderKey)}/artes`,
           { credentials: 'include' },
@@ -970,18 +1000,31 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         a.download = nome
         a.click()
         URL.revokeObjectURL(url)
-      } catch (error) {
-        alert(`Falha ao baixar: ${(error as Error).message}`)
-      } finally {
-        btn.disabled = false
-        btn.textContent = rotulo
-      }
-    })
+      }),
+    )
+  }
+
+  /** Gera a prévia (print 4×4) do pedido inteiro e grava na coluna de foto de cada linha. */
+  function bindGerarPrevia(): void {
+    const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-gerar-previa')
+    if (!btn) return
+    btn.addEventListener('click', () =>
+      acionarBotaoAssincrono(btn, '⏳ Gerando…', async () => {
+        const r = await fetch(
+          `/api/workbooks/${encodeURIComponent(order.workbookId)}/orders/${encodeURIComponent(order.orderKey)}/gerar-previas`,
+          { method: 'POST', credentials: 'include' },
+        )
+        const body = (await r.json().catch(() => ({}))) as { error?: string; previasGeradas?: number }
+        if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+        alert(`${body.previasGeradas ?? 0} prévia(s) gerada(s).`)
+      }),
+    )
   }
 
   function bindConfirmBar(pieces: OrderPiece[]): void {
     const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-confirm-order')
     bindBaixarArtes()
+    bindGerarPrevia()
     if (!btn) return
     btn.addEventListener('click', () => {
       const missing = pieces.filter((p) => !p.photos[1]).length
@@ -1108,9 +1151,24 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     if (retryBtn) {
       e.preventDefault()
       e.stopPropagation()
-      const wrap = retryBtn.closest('.shopee-chat-image-wrap')
-      const img = wrap?.querySelector<HTMLImageElement>('img.shopee-chat-image')
+      // Botão é irmão de .shopee-chat-image-wrap (não filho) — sobe pro container
+      // da linha (.shopee-chat-image-row) pra achar a imagem ao lado.
+      const row = retryBtn.closest('.shopee-chat-image-row')
+      const img = row?.querySelector<HTMLImageElement>('img.shopee-chat-image')
       if (img) reloadChatImage(img, false)
+      return
+    }
+    const quotedEl = (e.target as HTMLElement).closest<HTMLElement>('.shopee-chat-quoted.is-clickable')
+    if (quotedEl) {
+      const id = quotedEl.dataset.quotedId
+      // A mensagem original pode não estar carregada (fora da janela de histórico
+      // atual) — nesse caso não tem pra onde rolar, e o clique não faz nada.
+      const alvo = id ? messagesEl.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`) : null
+      if (alvo) {
+        alvo.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        alvo.classList.add('shopee-chat-bubble-wrap--highlight')
+        window.setTimeout(() => alvo.classList.remove('shopee-chat-bubble-wrap--highlight'), 1600)
+      }
       return
     }
     if (!armed) return

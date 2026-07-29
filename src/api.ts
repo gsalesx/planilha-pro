@@ -409,6 +409,7 @@ export async function saveShopeeLinkStartCursor(nextTimestampNano: string): Prom
 }
 
 export type ShopeeQuotedMessage = {
+  id: string
   text: string
   imageUrl: string | null
   fromBuyer: boolean

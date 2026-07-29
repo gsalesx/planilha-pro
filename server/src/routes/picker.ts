@@ -720,6 +720,53 @@ router.post('/pieces/:id/print', requireAuth, async (req, res) => {
 })
 
 /**
+ * POST /workbooks/:wb/orders/:orderKey/gerar-previas — prévia de UM pedido inteiro
+ * (todas as peças da linha + filhas), direto do painel do chat. Mesma lógica de
+ * `/picker/prints` (que faz o dia inteiro), só que escopada a 1 pedido — pra gerar a
+ * prévia sem esperar rodar o lote do dia.
+ */
+router.post('/workbooks/:wb/orders/:orderKey/gerar-previas', requireAuth, async (req, res) => {
+  const { wb, orderKey } = req.params
+  const linha = db
+    .prepare('SELECT order_key, id, parent_key FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(wb, orderKey) as { order_key: string; id: string; parent_key: string | null } | undefined
+  if (!linha) {
+    res.status(404).json({ error: 'Pedido não encontrado' })
+    return
+  }
+  const chavePai = linha.parent_key ?? linha.order_key
+  const chaves = [
+    chavePai,
+    ...(
+      db.prepare('SELECT order_key FROM orders WHERE workbook_id = ? AND parent_key = ? ORDER BY position')
+        .all(wb, chavePai) as Array<{ order_key: string }>
+    ).map((f) => f.order_key),
+  ]
+
+  const feitas: Array<{ pieceId: number; col: number }> = []
+  const falhas: Array<{ pieceId: number; erro: string }> = []
+  for (const chave of chaves) {
+    const pecas = db
+      .prepare('SELECT id FROM order_pieces WHERE workbook_id = ? AND order_key = ? ORDER BY seq')
+      .all(wb, chave) as Array<{ id: number }>
+    for (const p of pecas) {
+      try {
+        const r = await gerarEGuardarPrint(p.id, wb)
+        feitas.push({ pieceId: p.id, col: r.col })
+      } catch (e) {
+        falhas.push({ pieceId: p.id, erro: (e as Error).message })
+      }
+    }
+  }
+  if (feitas.length === 0) {
+    res.status(422).json({ error: 'Nenhuma prévia pôde ser gerada', detalhes: falhas })
+    return
+  }
+  const pronto = marcarProntoSeCompleto(wb, linha.id)
+  res.json({ ok: true, previasGeradas: feitas.length, falhas, marcadoPronto: pronto })
+})
+
+/**
  * POST /picker/prints?sheetDate=DD-MM-AAAA — prévias em massa do dia.
  *
  * Substitui `gerar_prints_4x4.py` + `planilha_upload_previews.py` do pipeline local, que

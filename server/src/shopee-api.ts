@@ -869,6 +869,11 @@ export async function fetchConversationMap(
 /** Resumo da mensagem citada (resposta a outra msg) — só o suficiente pra mostrar a
  *  faixa de contexto acima da mensagem, igual o app oficial da Shopee. */
 export interface QuotedMessage {
+  /** message_id da mensagem original — usado só pra rolar até ela na tela quando o
+   *  operador clica na faixa de citação (a mensagem original pode não estar carregada
+   *  na página atual, então o id nem sempre acha o elemento — nesse caso o clique é
+   *  ignorado, sem erro). */
+  id: string
   text: string
   imageUrl: string | null
   fromBuyer: boolean
@@ -962,6 +967,7 @@ function extractQuotedMessage(msg: Record<string, unknown>, buyerToId: number): 
   const text = extractMessageText(q)
   const fromId = Number(q.from_id ?? 0)
   return {
+    id: String(q.message_id ?? q.id ?? '').trim(),
     text,
     imageUrl: extractMessageImageUrl(q, text),
     fromBuyer: fromId === buyerToId,

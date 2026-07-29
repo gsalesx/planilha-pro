@@ -1683,7 +1683,12 @@ body.shopee-chat-open {
   color: #fff;
   border-bottom-right-radius: 4px;
 }
-.shopee-chat-bubble.seller:has(.shopee-chat-image) {
+/* Bolha com foto ganha padding reduzido dos DOIS lados (comprador e vendedor) — só
+   existia pro vendedor antes, então foto do COMPRADOR (o caso mais comum: cliente
+   manda a foto pro pijama) ficava com o padding de texto normal (10px/12px) sobrando
+   em volta da imagem, um respiro grande em cima/embaixo que parecia bug. */
+.shopee-chat-bubble.seller:has(.shopee-chat-image),
+.shopee-chat-bubble.buyer:has(.shopee-chat-image) {
   background: #fff;
   border: 1px solid #e2e8f0;
   padding: 6px;
@@ -1692,10 +1697,19 @@ body.shopee-chat-open {
   display: block;
   line-height: 0;
 }
+/* Imagem + botão de recarregar lado a lado — antes o botão ficava ABSOLUTO por cima
+   do canto da foto; a área de toque extra criava espaço vazio em volta da imagem no
+   card. Agora são dois itens numa linha, sem sobreposição. */
+.shopee-chat-image-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
 .shopee-chat-image-wrap {
   position: relative;
   display: inline-block;
   max-width: 100%;
+  min-width: 0;
 }
 .shopee-chat-image {
   display: block;
@@ -1714,29 +1728,21 @@ body.shopee-chat-open {
   outline: 1px dashed #cbd5e1;
 }
 .shopee-chat-image-retry {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  z-index: 2;
-  width: 28px;
-  height: 28px;
-  border: 0;
+  flex-shrink: 0;
+  align-self: flex-start;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #e2e8f0;
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.72);
-  color: #fff;
-  font-size: 15px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-.shopee-chat-image-wrap:hover .shopee-chat-image-retry,
-.shopee-chat-image-wrap.is-broken .shopee-chat-image-retry,
-.shopee-chat-image-wrap:focus-within .shopee-chat-image-retry {
-  opacity: 1;
 }
 .shopee-chat-image-retry:hover {
-  background: rgba(15, 23, 42, 0.9);
+  background: #e2e8f0;
+  color: #0f172a;
 }
 .shopee-chat-image-caption {
   padding: 6px 4px 2px;
@@ -1781,6 +1787,24 @@ body.shopee-chat-open {
 }
 .shopee-chat-quoted-label {
   font-style: italic;
+}
+/* Clicável (só quando a mensagem original tem id — ver data-quoted-id) — rola até ela,
+   igual clicar numa resposta no WhatsApp. */
+.shopee-chat-quoted.is-clickable {
+  cursor: pointer;
+}
+.shopee-chat-quoted.is-clickable:hover {
+  background: rgba(15, 23, 42, 0.11);
+}
+/* Pisca a mensagem original quando o operador clica na citação que aponta pra ela —
+   sem isso, "rolou até lá" não deixava claro QUAL bolha era a referenciada em meio a
+   várias parecidas. */
+.shopee-chat-bubble-wrap--highlight .shopee-chat-bubble {
+  animation: shopee-chat-quoted-highlight 1.6s ease-out;
+}
+@keyframes shopee-chat-quoted-highlight {
+  0%, 15% { box-shadow: 0 0 0 3px #fbbf24; }
+  100% { box-shadow: 0 0 0 3px transparent; }
 }
 
 .shopee-chat-compose {
@@ -2030,13 +2054,25 @@ body.shopee-chat-open {
   padding: 10px;
 }
 
-/* Baixa a(s) arte(s) na hora, sem esperar "Aprovado" — cor neutra de propósito, não
-   compete visualmente com o "Confirmar pedido" (a ação principal da barra). */
+/* "Gerar prévia" e "Baixar arte(s)" — cores neutras/distintas de propósito, não
+   competem visualmente com o "Confirmar pedido" (a ação principal da barra). Cada uma
+   com um tom diferente entre si só pra não ficarem indistinguíveis lado a lado. */
+.shopee-chat-gerar-previa,
 .shopee-chat-baixar-artes {
   flex: 0 0 auto;
   font-size: 13px;
   font-weight: 600;
   padding: 10px 14px;
+}
+.shopee-chat-gerar-previa {
+  background: #eef2ff;
+  color: #4338ca;
+  border: 1px solid #c7d2fe;
+}
+.shopee-chat-gerar-previa:hover {
+  background: #e0e7ff;
+}
+.shopee-chat-baixar-artes {
   background: #f1f5f9;
   color: #334155;
   border: 1px solid #cbd5e1;
