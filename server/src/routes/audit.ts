@@ -589,6 +589,12 @@ router.post('/audit/explodir-quantidade', requireAuth, (req, res) => {
   const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
   const aplicar = req.query.aplicar === '1' || req.query.aplicar === 'true'
   const incluirEncerrados = req.query.incluirEncerrados === '1'
+  // Sem filtro, a rota acha pedido de QUALQUER data — inclusive resíduo antigo com
+  // status vazio (nunca entrou no fluxo). ?orderSn=a,b restringe a pedidos específicos,
+  // pro operador aplicar só onde já confirmou que é caso de verdade.
+  const somenteOrderSn = typeof req.query.orderSn === 'string'
+    ? new Set(req.query.orderSn.split(',').map((s) => s.trim()).filter(Boolean))
+    : null
   const ENCERRADOS = new Set(['Cancelado', 'Concluído'])
   const COL_QTD = 3
 
@@ -618,6 +624,7 @@ router.post('/audit/explodir-quantidade', requireAuth, (req, res) => {
   }> = []
 
   for (const l of todas) {
+    if (somenteOrderSn && !somenteOrderSn.has(l.id)) continue
     const row = JSON.parse(l.row_json || '[]') as string[]
     const qtd = Number(String(row[COL_QTD] ?? '').trim())
     if (!Number.isInteger(qtd) || qtd < 2) continue
