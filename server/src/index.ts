@@ -1,10 +1,12 @@
 import { existsSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import express from 'express'
+import sharp from 'sharp'
 
 import { newRunId, pruneAudit, recordAudit } from './audit.js'
 import { cleanupExpiredSessions, requireAuth } from './auth.js'
@@ -41,6 +43,16 @@ import workbooksRouter from './routes/workbooks.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+
+/**
+ * Node/libvips detectam a CPU do HOST, não a fração real alocada ao container (cgroup
+ * não é lido por padrão) — num VPS pequeno, isso faz o sharp abrir mais threads do que
+ * núcleo de verdade disponível, e as threads competem entre si em vez de acelerar (é
+ * por isso que renderizar a arte fica bem mais lento no servidor do que no PC local,
+ * mesmo fazendo o mesmo trabalho). `SHARP_CONCURRENCY` no ambiente do Dokploy deixa
+ * fixar o número real de vCPUs alocadas; sem ela, usa um teto conservador de 2.
+ */
+sharp.concurrency(Number(process.env.SHARP_CONCURRENCY) || Math.min(2, os.cpus().length))
 
 const app = express()
 

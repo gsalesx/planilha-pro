@@ -198,6 +198,109 @@ export async function renderCoracao(
   return sharp(base).composite([{ input: recortada }]).png().toBuffer()
 }
 
+/**
+ * Distance transform euclidiano EXATO (Felzenszwalb & Huttenlocher, 2004 — dois passes
+ * 1D separáveis, O(n)) — mesma matemática do `cv2.distanceTransform(DIST_L2)` usado no
+ * pipeline Python (`render_molde_local.borda_expandida`). Sharp/libvips não expõe
+ * distance transform, e Node não tem OpenCV; implementar o algoritmo exato (em vez de
+ * uma aproximação por blur/dilatação) é o que garante bater pixel a pixel com a borda
+ * já validada — ela é resultado de comparativo direto contra o Photopea em 2026-05-30,
+ * não pode regredir pra uma aproximação pior.
+ *
+ * `seed[i] = 0` no pixel-fonte (dentro da silhueta), `Infinity` fora. Devolve a
+ * distância euclidiana ao pixel-fonte mais próximo.
+ */
+function edt1d(f: Float64Array, n: number): Float64Array {
+  const d = new Float64Array(n)
+  const v = new Int32Array(n)
+  const z = new Float64Array(n + 1)
+  let k = 0
+  v[0] = 0
+  z[0] = -Infinity
+  z[1] = Infinity
+  for (let q = 1; q < n; q++) {
+    let s = 0
+    while (true) {
+      s = (f[q] + q * q - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k])
+      if (s <= z[k]) {
+        k--
+      } else break
+    }
+    k++
+    v[k] = q
+    z[k] = s
+    z[k + 1] = Infinity
+  }
+  k = 0
+  for (let q = 0; q < n; q++) {
+    while (z[k + 1] < q) k++
+    const dq = q - v[k]
+    d[q] = dq * dq + f[v[k]]
+  }
+  return d
+}
+
+function distanceTransform(seedZero: Uint8Array, w: number, h: number): Float32Array {
+  const INF = 1e10
+  const g = new Float64Array(w * h)
+  // Passo 1: colunas.
+  const col = new Float64Array(h)
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) col[y] = seedZero[y * w + x] ? 0 : INF
+    const dcol = edt1d(col, h)
+    for (let y = 0; y < h; y++) g[y * w + x] = dcol[y]
+  }
+  // Passo 2: linhas, sobre o resultado do passo 1.
+  const out = new Float32Array(w * h)
+  const row = new Float64Array(w)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) row[x] = g[y * w + x]
+    const drow = edt1d(row, w)
+    for (let x = 0; x < w; x++) out[y * w + x] = Math.sqrt(drow[x])
+  }
+  return out
+}
+
+/**
+ * Borda branca pelo modelo do Photopea, EXATAMENTE como `render_molde_local.borda_expandida`:
+ * silhueta branca expandida ATRÁS da foto (a foto cobre por cima; sobra o branco onde ela
+ * não chega). Expansão medida a partir da borda visível (alpha≥128) via distance transform
+ * — dá largura uniforme com ~1px de AA, sem afinar em cantos côncavos (o problema que a
+ * dilatação por blur do alpha suave dava, comparado 2026-05-30).
+ *
+ * Diferente do coração (máscara sempre igual → pré-calculada em PNG), a máscara do recorte
+ * varia com a largura da cápsula — a expansão precisa ser calculada em runtime.
+ */
+async function bordaExpandida(rgba: Buffer, strokePx: number): Promise<Buffer> {
+  const { data, info } = await sharp(rgba).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  const { width: w, height: h } = info
+  const n = w * h
+  const alpha = new Uint8Array(n)
+  const binario = new Uint8Array(n)
+  for (let i = 0, p = 3; i < n; i++, p += 4) {
+    alpha[i] = data[p]
+    binario[i] = data[p] >= 128 ? 1 : 0
+  }
+  const dist = distanceTransform(binario, w, h)
+
+  const grown = new Uint8Array(n)
+  for (let i = 0; i < n; i++) {
+    const aa = Math.min(1, Math.max(0, strokePx + 0.75 - dist[i])) * 255
+    grown[i] = Math.max(aa, alpha[i])
+  }
+
+  const baseData = Buffer.allocUnsafe(n * 4)
+  for (let i = 0, p = 0; i < n; i++, p += 4) {
+    baseData[p] = 255
+    baseData[p + 1] = 255
+    baseData[p + 2] = 255
+    baseData[p + 3] = grown[i]
+  }
+  const base = await sharp(baseData, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer()
+  const foto = await sharp(data, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer()
+  return sharp(base).composite([{ input: foto }]).png().toBuffer()
+}
+
 /** Máscara da cápsula do recorte — retângulo arredondado, raio = metade da largura. */
 export function capsulaSvg(widthPx: number): Buffer {
   const w = Math.max(U_WIDTH_MIN, Math.min(U_WIDTH_MAX, Math.round(widthPx)))
@@ -211,19 +314,27 @@ export function capsulaSvg(widthPx: number): Buffer {
 }
 
 /**
- * Recorte 900×900: foto (já sem fundo) enquadrada e recortada na cápsula.
+ * Recorte 900×900: foto (já sem fundo) enquadrada e recortada na cápsula, com a borda
+ * branca do modelo Photopea (silhueta expandida atrás — ver `bordaExpandida`).
+ *
+ * `borderPx=0` devolve o recorte LIMPO, sem borda — é o insumo que o picker guarda
+ * (`{slot} recorte.png`) pra poder reeditar depois sem acumular borda em cima de borda;
+ * a borda só entra na hora de montar a arte final, igual o pipeline Python
+ * (`pipeline_prep` chama `--no-stroke`, a borda entra só no estágio 3).
  */
 export async function renderRecorte(
   fotoSemFundo: Buffer,
   params: ParamsEnquadramento,
   uWidth = 600,
   reenquadrar = true,
+  borderPx = 0,
 ): Promise<Buffer> {
   const posicionada = await fotoPosicionada(fotoSemFundo, params, {
     r: 0, g: 0, b: 0, alpha: 0,
   })
   const recortada = await aplicarMascara(posicionada, await mascaraRaw(capsulaSvg(uWidth)))
-  return reenquadrar ? reframe(recortada) : recortada
+  const final = reenquadrar ? await reframe(recortada) : recortada
+  return borderPx > 0 ? bordaExpandida(final, borderPx) : final
 }
 
 /**

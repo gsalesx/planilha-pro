@@ -31,6 +31,7 @@ import {
 import { SHOPEE_COL_INTERNAL_STATUS, SHOPEE_PHOTO_COL_START, SHOPEE_PHOTO_COUNT } from '../shopee-columns.js'
 import { SHOPEE_WORKBOOK_ID } from '../shopee-workbook.js'
 import {
+  BORDER_PX,
   type ParamsEnquadramento,
   renderCoracao,
   renderRecorte,
@@ -273,8 +274,12 @@ async function comporFoto(
       throw new Error('rode remove-bg antes de compor o recorte')
     }
     // `semClip` no recorte = ver a foto inteira antes da cápsula (e sem o
-    // reenquadramento, que só faz sentido no resultado final).
-    return renderRecorte(readFileSync(l.sem_fundo_path), ajuste, uWidth, !semClip)
+    // reenquadramento, que só faz sentido no resultado final) — a borda também só
+    // faz sentido no resultado final (precisa da cápsula+reenquadramento prontos).
+    // A composta salva aqui vai direto pra arte final sem nenhum passo depois (esse
+    // port não tem "estágio 3" separado como o pipeline Python), então a borda entra
+    // já na composição — mesmo timing que renderCoracao já usa por padrão.
+    return renderRecorte(readFileSync(l.sem_fundo_path), ajuste, uWidth, !semClip, semClip ? 0 : BORDER_PX)
   }
   if (!existsSync(l.storage_path)) throw new Error('foto original não encontrada')
   return renderCoracao(readFileSync(l.storage_path), ajuste, { clip: !semClip })
