@@ -4027,3 +4027,27 @@ table.sheet tbody th.row-num.is-active {
 .status-cell-filha {
   opacity: 0.45;
 }
+
+/* ── Moldura do pedido multi-linha ──────────────────────────────────────────────
+   Agrupa visualmente a linha do pedido com as filhas dela. A borda é aplicada nas
+   CÉLULAS (um <tr> não aceita borda com border-collapse) e o "espinho" fica na coluna
+   do número, que é sticky — então o vínculo continua visível ao rolar pro lado. */
+.row-grupo > td,
+.row-grupo > th {
+  background: #f7faff;
+}
+.row-grupo:hover > td,
+.row-grupo:hover > th {
+  background: #eef4fd;
+}
+.row-grupo > .row-num {
+  box-shadow: inset 3px 0 0 0 #93b4e6;
+}
+.row-grupo-inicio > td,
+.row-grupo-inicio > th {
+  border-top: 2px solid #93b4e6;
+}
+.row-grupo-fim > td,
+.row-grupo-fim > th {
+  border-bottom: 2px solid #93b4e6;
+}

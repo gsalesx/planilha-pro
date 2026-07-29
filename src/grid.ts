@@ -711,11 +711,19 @@ export class GridView {
     // recebe `↳` no lugar do número. Sem isso, "quantos pedidos tem hoje" ficaria inflado
     // por pedido de 2+ peças.
     let numeroDoPedido = 0
-    this.visibleOrder.forEach((r) => {
+    this.visibleOrder.forEach((r, i) => {
       const filha = !!sheet.rowFlags?.[r]?.filha
       if (!filha) numeroDoPedido++
+      // Moldura do grupo: a linha-pai só abre a moldura se a PRÓXIMA visível for filha
+      // dela — pedido de linha única não pode ganhar borda de grupo. O fim é a última
+      // filha da sequência.
+      const proxima = this.visibleOrder[i + 1]
+      const proximaEhFilha = proxima != null && !!sheet.rowFlags?.[proxima]?.filha
+      const grupo = filha
+        ? (proximaEhFilha ? 'meio' : 'fim')
+        : (proximaEhFilha ? 'inicio' : null)
       tbody.appendChild(
-        this.buildDataRow(sheet, r, filha ? null : numeroDoPedido, columnCount, selectedRows),
+        this.buildDataRow(sheet, r, filha ? null : numeroDoPedido, columnCount, selectedRows, grupo),
       )
     })
     return tbody
@@ -728,12 +736,15 @@ export class GridView {
     numeroDoPedido: number | null,
     columnCount: number,
     selectedRows: Set<number>,
+    /** Posição na moldura do pedido multi-linha; null = pedido de linha única. */
+    grupo: 'inicio' | 'meio' | 'fim' | null = null,
   ): HTMLTableRowElement {
     const tr = document.createElement('tr')
     tr.dataset.row = String(r)
     tr.style.height = `${DEFAULT_ROW_HEIGHT}px`
     if (sheet.rowFlags?.[r]?.disappeared) tr.classList.add('row-disappeared')
     if (numeroDoPedido === null) tr.classList.add('row-filha')
+    if (grupo) tr.classList.add('row-grupo', `row-grupo-${grupo}`)
     if (selectedRows.has(r)) tr.classList.add('row-selected')
 
     const rowNum = document.createElement('th')
