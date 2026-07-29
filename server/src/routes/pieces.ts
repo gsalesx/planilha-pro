@@ -54,7 +54,7 @@ function sleep(ms: number): Promise<void> {
  * qualquer foto ainda pendente. `AbortSignal.timeout` limita cada tentativa a 10s;
  * pior caso agora é ~4×10s + backoff, nunca mais um hang sem fim (2026-07-29).
  */
-const CDN_TIMEOUT_MS = 10_000
+const CDN_TIMEOUT_MS = 5_000
 
 export async function fetchShopeeCdn(url: string): Promise<Response> {
   const delaysMs = [0, 800, 2000, 5000]
