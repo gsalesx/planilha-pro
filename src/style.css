@@ -1697,13 +1697,20 @@ body.shopee-chat-open {
   display: block;
   line-height: 0;
 }
-/* Imagem + botão de recarregar lado a lado — antes o botão ficava ABSOLUTO por cima
-   do canto da foto; a área de toque extra criava espaço vazio em volta da imagem no
-   card. Agora são dois itens numa linha, sem sobreposição. */
-.shopee-chat-image-row {
+/* Linha com a bolha (foto) + botão de recarregar FORA do card, flutuando ao lado —
+   igual o ícone de encaminhar do WhatsApp. Tentativas anteriores puseram o botão
+   dentro do card (sobreposto, depois como item de linha) e as duas ainda mudavam o
+   tamanho/padding do balão; ficando de fora dele o card não muda em nada. Para o
+   comprador (bolha à esquerda) o botão fica à direita, saindo em direção ao centro;
+   pro vendedor (bolha à direita) o botão fica à esquerda — mesma leitura dos dois
+   lados, sempre entre a bolha e o centro do chat. */
+.shopee-chat-image-linha {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
+}
+.shopee-chat-image-linha.seller {
+  flex-direction: row-reverse;
 }
 .shopee-chat-image-wrap {
   position: relative;
@@ -1729,11 +1736,10 @@ body.shopee-chat-open {
 }
 .shopee-chat-image-retry {
   flex-shrink: 0;
-  align-self: flex-start;
   width: 26px;
   height: 26px;
   border: 1px solid #e2e8f0;
-  border-radius: 8px;
+  border-radius: 50%;
   background: #f8fafc;
   color: #475569;
   font-size: 14px;

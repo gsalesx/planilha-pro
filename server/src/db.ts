@@ -507,6 +507,34 @@ db.exec(`
   }
 }
 
+/**
+ * Cache da arte FINAL por peça (2026-07-29). Antes a arte era sempre gerada na hora e
+ * descartada — cada download (individual, do pedido, ou o zip de aprovados) refazia o
+ * mesmo trabalho, e "gerar todas as artes de hoje" não tinha como rodar em segundo
+ * plano pro operador só voltar depois pra baixar.
+ *
+ * `cache_key` é o que decide se a arte guardada ainda vale: junta `order_pieces.
+ * updated_at` (muda em QUALQUER edição — cor/emoji/molde/tipo/tamanho, ver
+ * `updatePiece`) com o `updated_at` de cada `piece_images` (muda toda vez que a foto
+ * composta é resalva, ver PUT /ajuste). Se qualquer um mudou desde que a arte foi
+ * gerada, a chave não bate mais e a arte é refeita — SEM precisar caçar e invalidar
+ * manualmente em cada rota que mexe em peça/foto (frágil, fácil esquecer uma).
+ *
+ * Expira em `expira_em` (gerado_em + 10 dias) OU quando o pedido correspondente vira
+ * "Concluído" (status interno do SHIPPED da Shopee) — o que vier primeiro; ver
+ * `limparArtesExpiradas` em routes/picker.ts, rodada por um setInterval em index.ts.
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS piece_arte_cache (
+    piece_id INTEGER PRIMARY KEY,
+    cache_key TEXT NOT NULL,
+    jpg_path TEXT NOT NULL,
+    gerado_em INTEGER NOT NULL,
+    expira_em INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_piece_arte_cache_expira ON piece_arte_cache (expira_em);
+`)
+
 export function nowMs(): number {
   return Date.now()
 }

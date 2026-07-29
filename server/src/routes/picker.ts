@@ -5,9 +5,12 @@
  * artes"). Só o caminho MANUAL: o operador posiciona a foto, e o servidor
  * compõe. Não há detecção de rosto, então nada de OpenCV/ONNX aqui.
  *
- * Modelo de armazenamento (decidido 2026-07-27): guarda-se o INSUMO (foto sem
- * fundo + parâmetros de ajuste + composta 900×900), nunca a arte final —
- * ela pesa ~4MB e é barata de refazer, então é gerada no download e descartada.
+ * Modelo de armazenamento: guarda-se sempre o INSUMO (foto sem fundo + parâmetros de
+ * ajuste + composta 900×900) — regenerar a arte a partir disso é barato. A arte FINAL
+ * (o JPG do molde inteiro) passou a ser cacheada por até 10 dias ou até o pedido virar
+ * "Concluído" (2026-07-29 — decisão revista: gerar sob demanda toda vez tornava
+ * "gerar todas as artes de hoje" e depois só baixar" impraticável em lote; ver
+ * `gerarArteDaPecaCache`/`limparArtesExpiradas`).
  */
 import crypto from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -28,7 +31,12 @@ import {
   labelDoMolde,
   renderMolde,
 } from '../render-molde.js'
-import { SHOPEE_COL_INTERNAL_STATUS, SHOPEE_PHOTO_COL_START, SHOPEE_PHOTO_COUNT } from '../shopee-columns.js'
+import {
+  SHOPEE_COL_INTERNAL_STATUS,
+  SHOPEE_INTERNAL_STATUS_SHIPPED,
+  SHOPEE_PHOTO_COL_START,
+  SHOPEE_PHOTO_COUNT,
+} from '../shopee-columns.js'
 import { SHOPEE_WORKBOOK_ID } from '../shopee-workbook.js'
 import {
   BORDER_PX,
@@ -373,7 +381,7 @@ router.get('/pieces/:id/photo/:slot/composta', requireAuth, (req, res) => {
 })
 
 /* ------------------------------------------------------------------ *
- * Arte final — gerada sob demanda, nunca armazenada.
+ * Arte final — cacheada por até 10 dias ou até o pedido virar "Concluído".
  * ------------------------------------------------------------------ */
 interface LinhaPeca {
   id: number
@@ -414,6 +422,106 @@ export async function gerarArteDaPeca(pieceId: number): Promise<{ nome: string; 
     emojis,
   })
   return { nome: `${labelDoMolde(molde)}.jpg`, jpg }
+}
+
+/** 10 dias — teto de guarda mesmo se o pedido nunca chegar a "Concluído" na Shopee. */
+const ARTE_CACHE_DIAS = 10
+const ARTE_CACHE_MS = ARTE_CACHE_DIAS * 24 * 60 * 60 * 1000
+
+/** Muda sempre que algo que afeta o RENDER muda — cor/emoji/molde/tipo/tamanho da peça
+ *  (order_pieces.updated_at) ou a foto composta de qualquer slot (piece_images.updated_at).
+ *  Comparar essa string com a guardada é o que decide se a arte em cache ainda vale, sem
+ *  precisar caçar e invalidar manualmente em cada rota que mexe em peça/foto. */
+function chaveCacheArte(pieceId: number): string | null {
+  const peca = db
+    .prepare('SELECT updated_at, molde, cor, emoji1, emoji2 FROM order_pieces WHERE id = ?')
+    .get(pieceId) as { updated_at: number; molde: string; cor: string; emoji1: string; emoji2: string } | undefined
+  if (!peca) return null
+  const fotos = db
+    .prepare('SELECT slot, updated_at FROM piece_images WHERE piece_id = ? ORDER BY slot')
+    .all(pieceId) as Array<{ slot: number; updated_at: number }>
+  return JSON.stringify([peca.updated_at, peca.molde, peca.cor, peca.emoji1, peca.emoji2, fotos])
+}
+
+/**
+ * Igual `gerarArteDaPeca`, mas reaproveita o JPG já montado se nada que afeta o render
+ * mudou desde então — é o que permite "gerar todas as artes" rodar em lote e o download
+ * (individual, do pedido, ou o zip de aprovados) ser praticamente instantâneo depois.
+ */
+export async function gerarArteDaPecaCache(pieceId: number): Promise<{ nome: string; jpg: Buffer }> {
+  const chave = chaveCacheArte(pieceId)
+  if (chave) {
+    const cache = db
+      .prepare('SELECT cache_key, jpg_path FROM piece_arte_cache WHERE piece_id = ?')
+      .get(pieceId) as { cache_key: string; jpg_path: string } | undefined
+    if (cache && cache.cache_key === chave && existsSync(cache.jpg_path)) {
+      const molde = (
+        db.prepare('SELECT molde FROM order_pieces WHERE id = ?').get(pieceId) as { molde: string }
+      ).molde
+      return { nome: `${labelDoMolde(molde.trim().toUpperCase())}.jpg`, jpg: readFileSync(cache.jpg_path) }
+    }
+  }
+
+  const { nome, jpg } = await gerarArteDaPeca(pieceId)
+  if (chave) {
+    const destino = path.join(imagesDir, `arte_${pieceId}_${crypto.randomBytes(4).toString('hex')}.jpg`)
+    const now = nowMs()
+    const anterior = db
+      .prepare('SELECT jpg_path FROM piece_arte_cache WHERE piece_id = ?')
+      .get(pieceId) as { jpg_path: string } | undefined
+    writeFileSync(destino, jpg)
+    db.prepare(
+      `INSERT INTO piece_arte_cache (piece_id, cache_key, jpg_path, gerado_em, expira_em)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(piece_id) DO UPDATE SET
+         cache_key = excluded.cache_key, jpg_path = excluded.jpg_path,
+         gerado_em = excluded.gerado_em, expira_em = excluded.expira_em`,
+    ).run(pieceId, chave, destino, now, now + ARTE_CACHE_MS)
+    if (anterior && anterior.jpg_path !== destino) {
+      try {
+        unlinkSync(anterior.jpg_path)
+      } catch {
+        // arquivo já sumiu — sem problema
+      }
+    }
+  }
+  return { nome, jpg }
+}
+
+/**
+ * Roda periodicamente (ver index.ts): apaga arte cacheada com mais de 10 dias OU cujo
+ * pedido já virou "Concluído" (SHIPPED confirmado pela Shopee — depois disso a arte
+ * não tem mais utilidade, o pedido já foi despachado).
+ */
+export function limparArtesExpiradas(): { apagadas: number } {
+  const agora = nowMs()
+  const expiradasPorTempo = db
+    .prepare('SELECT piece_id, jpg_path FROM piece_arte_cache WHERE expira_em <= ?')
+    .all(agora) as Array<{ piece_id: number; jpg_path: string }>
+
+  const concluidos = db
+    .prepare(
+      `SELECT DISTINCT p.id AS piece_id, c.jpg_path
+         FROM piece_arte_cache c
+         INNER JOIN order_pieces p ON p.id = c.piece_id
+         INNER JOIN orders o ON o.workbook_id = p.workbook_id AND o.order_key = p.order_key
+        WHERE json_extract(o.row_json, '$[${SHOPEE_COL_INTERNAL_STATUS}]') = ?`,
+    )
+    .all(SHOPEE_INTERNAL_STATUS_SHIPPED) as Array<{ piece_id: number; jpg_path: string }>
+
+  const todas = new Map<number, string>()
+  for (const l of [...expiradasPorTempo, ...concluidos]) todas.set(l.piece_id, l.jpg_path)
+
+  const del = db.prepare('DELETE FROM piece_arte_cache WHERE piece_id = ?')
+  for (const [pieceId, jpgPath] of todas) {
+    del.run(pieceId)
+    try {
+      unlinkSync(jpgPath)
+    } catch {
+      // arquivo já sumiu — sem problema
+    }
+  }
+  return { apagadas: todas.size }
 }
 
 /** Resolve o PNG do emoji no catálogo embutido (`server/assets/emojis`). */
@@ -474,7 +582,7 @@ router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
       .all(pedido.order_key) as Array<{ id: number }>
     for (const peca of pecas) {
       try {
-        const { nome, jpg } = await gerarArteDaPeca(peca.id)
+        const { nome, jpg } = await gerarArteDaPecaCache(peca.id)
         // nome do arquivo espelha o do pipeline: "{cliente} {molde}.jpg"
         zip.file(`${cliente} ${nome}`, jpg)
         geradas++
@@ -520,7 +628,7 @@ router.get('/pieces/:id/arte', requireAuth, async (req, res) => {
     return
   }
   try {
-    const { nome, jpg } = await gerarArteDaPeca(pieceId)
+    const { nome, jpg } = await gerarArteDaPecaCache(pieceId)
     res.setHeader('content-type', 'image/jpeg')
     res.setHeader('content-disposition', `attachment; filename="${nome}"`)
     res.send(jpg)
@@ -567,7 +675,7 @@ router.get('/workbooks/:wb/orders/:orderKey/artes', requireAuth, async (req, res
   const falhas: string[] = []
   for (const p of pecas) {
     try {
-      geradas.push(await gerarArteDaPeca(p.id))
+      geradas.push(await gerarArteDaPecaCache(p.id))
     } catch (e) {
       falhas.push(`peça ${p.id}: ${(e as Error).message}`)
     }
@@ -688,7 +796,7 @@ async function gerarEGuardarPrint(pieceId: number, workbookId: string): Promise<
     .get(workbookId, peca.order_key) as { id: string } | undefined
   if (!linha) throw new Error('linha do pedido não encontrada')
 
-  const { jpg } = await gerarArteDaPeca(pieceId)
+  const { jpg } = await gerarArteDaPecaCache(pieceId)
   // nFotos = quantas fotos a arte usa; define a largura da unidade do padrão.
   const nFotos = [1, 2].filter((slot) => {
     const l = foto(pieceId, slot)
@@ -845,6 +953,76 @@ router.post('/picker/prints', requireAuth, async (req, res) => {
     puladas: puladas.length,
     falhas,
   })
+})
+
+/* ===========================================================
+   Gerar todas as artes em lote — roda em SEGUNDO PLANO no servidor
+   =========================================================== */
+
+interface JobGerarArtes {
+  rodando: boolean
+  total: number
+  feitas: number
+  falhas: Array<{ pieceId: number; erro: string }>
+  iniciadoEm: number
+  concluidoEm: number | null
+}
+
+/**
+ * Estado do lote em memória (1 job por vez) — NÃO por request HTTP. O pedido do user
+ * é "deixo gerando e depois só volto pra baixar": se isso fosse uma requisição comum,
+ * navegar pra outra tela cancelaria o fetch e o trabalho pararia no meio. Rodando fora
+ * do ciclo de vida da request, o job continua mesmo com o navegador fechado; o
+ * progresso é consultado por polling em GET /picker/gerar-todas-artes/status.
+ */
+let jobGerarArtes: JobGerarArtes | null = null
+
+/**
+ * POST /picker/gerar-todas-artes?sheetDate=DD-MM-AAAA (opcional) — pré-gera (cacheia)
+ * a arte de toda peça de todo pedido do dia, ou de TODOS os dias se omitido. Só
+ * aquece o cache; usar depois GET /pieces/:id/arte, o download do pedido ou o zip de
+ * aprovados pra baixar — vão sair praticamente instantâneos por já estarem prontos.
+ */
+router.post('/picker/gerar-todas-artes', requireAuth, (req, res) => {
+  if (jobGerarArtes?.rodando) {
+    res.status(409).json({ error: 'Já tem um lote rodando', job: jobGerarArtes })
+    return
+  }
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
+  const sheetDate = typeof req.query.sheetDate === 'string' ? req.query.sheetDate.trim() : ''
+
+  const where = sheetDate ? 'AND sheet_date = ?' : ''
+  const params = sheetDate ? [workbookId, sheetDate] : [workbookId]
+  const pecas = db
+    .prepare(
+      `SELECT p.id AS piece_id FROM order_pieces p
+         INNER JOIN orders o ON o.workbook_id = p.workbook_id AND o.order_key = p.order_key
+        WHERE p.workbook_id = ? ${where}
+        ORDER BY o.position`,
+    )
+    .all(...params) as Array<{ piece_id: number }>
+
+  jobGerarArtes = { rodando: true, total: pecas.length, feitas: 0, falhas: [], iniciadoEm: nowMs(), concluidoEm: null }
+  res.json({ ok: true, job: jobGerarArtes })
+
+  // Roda DEPOIS de responder — o operador não fica esperando o lote inteiro.
+  void (async () => {
+    for (const p of pecas) {
+      try {
+        await gerarArteDaPecaCache(p.piece_id)
+      } catch (e) {
+        jobGerarArtes!.falhas.push({ pieceId: p.piece_id, erro: (e as Error).message })
+      }
+      jobGerarArtes!.feitas++
+    }
+    jobGerarArtes!.rodando = false
+    jobGerarArtes!.concluidoEm = nowMs()
+  })()
+})
+
+/** GET /picker/gerar-todas-artes/status — progresso do lote em andamento (ou do último). */
+router.get('/picker/gerar-todas-artes/status', requireAuth, (_req, res) => {
+  res.json({ ok: true, job: jobGerarArtes })
 })
 
 export default router

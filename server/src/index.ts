@@ -33,7 +33,7 @@ import emojiCatalogRouter from './routes/emoji-catalog.js'
 import imagesRouter from './routes/images.js'
 import loginRouter from './routes/login.js'
 import parseIssuesRouter from './routes/parse-issues.js'
-import pickerRouter from './routes/picker.js'
+import pickerRouter, { limparArtesExpiradas } from './routes/picker.js'
 import piecesRouter from './routes/pieces.js'
 import shopeePushRouter, { handleShopeePushPost } from './routes/shopee-push.js'
 import shopeeProductsRouter from './routes/shopee-products.js'
@@ -125,6 +125,14 @@ setInterval(cleanupExpiredSessions, 60 * 60 * 1000)
 cleanupExpiredSessions()
 ensureShopeeWorkbook()
 ensureEmojiCatalogSeeded()
+
+// Arte cacheada expira em 10 dias ou quando o pedido vira "Concluído" (ver
+// piece_arte_cache em db.ts) — varredura a cada hora é barata (2 SELECTs indexados).
+setInterval(() => {
+  const { apagadas } = limparArtesExpiradas()
+  if (apagadas > 0) console.log(`[arte-cache] ${apagadas} arte(s) expirada(s) apagada(s)`)
+}, 60 * 60 * 1000)
+limparArtesExpiradas()
 
 // Reinício do servidor é o evento que explica buraco no log — registrar sempre.
 recordAudit({

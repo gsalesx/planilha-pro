@@ -274,17 +274,11 @@ function renderMessageBody(msg: ShopeeChatMessage): string {
     // referrerpolicy=no-referrer: CDN da Shopee às vezes bloqueia hotlink com
     // Referer do nosso domínio — a foto some até fechar/abrir o chat. Retry
     // automático + botão ↻ cobrem falha intermitente (rede/429 no browser).
-    // Botão de recarregar fica AO LADO da imagem, não sobreposto: um <button> absoluto
-    // por cima do canto da foto criava um respiro grande no card pra "caber" a área de
-    // toque sem cobrir a imagem — tirar a sobreposição elimina o espaço vazio.
-    const img = `<div class="shopee-chat-image-row">
-      <div class="shopee-chat-image-wrap">
-        <a class="shopee-chat-image-link" href="${url}" target="_blank" rel="noopener noreferrer">
-          <img class="shopee-chat-image" src="${url}" data-src="${url}" alt="Imagem enviada no chat"
-               loading="lazy" referrerpolicy="no-referrer" data-retries="0" />
-        </a>
-      </div>
-      <button type="button" class="shopee-chat-image-retry" title="Recarregar imagem" aria-label="Recarregar imagem">↻</button>
+    const img = `<div class="shopee-chat-image-wrap">
+      <a class="shopee-chat-image-link" href="${url}" target="_blank" rel="noopener noreferrer">
+        <img class="shopee-chat-image" src="${url}" data-src="${url}" alt="Imagem enviada no chat"
+             loading="lazy" referrerpolicy="no-referrer" data-retries="0" />
+      </a>
     </div>`
     // Mensagens tipo "image_with_text" (ex.: "Esse no vestido" junto da foto)
     // vêm com imageUrl E text preenchidos — sem a legenda o operador precisa
@@ -358,10 +352,18 @@ function renderMessages(messages: ShopeeChatMessage[], buyerUsername: string): s
     }
     const side = msg.fromBuyer ? 'buyer' : 'seller'
     const label = msg.fromBuyer ? buyerUsername : 'Loja'
+    const bolha = `<div class="shopee-chat-bubble ${side}">${msg.quotedMessage ? renderQuotedMessage(msg.quotedMessage) : ''}${renderMessageBody(msg)}</div>`
+    // Botão de recarregar fica FORA do card, flutuando ao lado — igual o ícone de
+    // encaminhar do WhatsApp. Um <button> DENTRO do card (mesmo como item de linha,
+    // não sobreposto) ainda empurrava o tamanho do balão; ficando de fora, o card não
+    // muda em nada e o botão só aparece quando a mensagem tem foto.
+    const linha = msg.imageUrl
+      ? `<div class="shopee-chat-image-linha ${side}">${bolha}<button type="button" class="shopee-chat-image-retry" title="Recarregar imagem" aria-label="Recarregar imagem">↻</button></div>`
+      : bolha
     parts.push(`
       <div class="shopee-chat-bubble-wrap ${side}" data-message-id="${escapeHtml(msg.id)}">
         <div class="shopee-chat-bubble-meta">${escapeHtml(label)} · ${escapeHtml(fmtMessageTime(msg.createdAt))}</div>
-        <div class="shopee-chat-bubble ${side}">${msg.quotedMessage ? renderQuotedMessage(msg.quotedMessage) : ''}${renderMessageBody(msg)}</div>
+        ${linha}
       </div>
     `)
   }
@@ -1181,10 +1183,10 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     if (retryBtn) {
       e.preventDefault()
       e.stopPropagation()
-      // Botão é irmão de .shopee-chat-image-wrap (não filho) — sobe pro container
-      // da linha (.shopee-chat-image-row) pra achar a imagem ao lado.
-      const row = retryBtn.closest('.shopee-chat-image-row')
-      const img = row?.querySelector<HTMLImageElement>('img.shopee-chat-image')
+      // Botão fica FORA do card (irmão da bolha) — sobe pro container da linha
+      // (.shopee-chat-image-linha) pra achar a imagem dentro da bolha ao lado.
+      const linha = retryBtn.closest('.shopee-chat-image-linha')
+      const img = linha?.querySelector<HTMLImageElement>('img.shopee-chat-image')
       if (img) reloadChatImage(img, false)
       return
     }

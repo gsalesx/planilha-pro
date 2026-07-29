@@ -111,7 +111,10 @@ function buildShell() {
           <button type="button" class="btn btn-primary" id="gerar-previas-btn" hidden title="Monta a arte de cada peça da data e grava o print 4x4 na coluna de foto; o pedido vira Pronto quando TODAS as peças dele têm prévia">
             🖨 Gerar prévias (data)
           </button>
-          <button type="button" class="btn" id="baixar-aprovados-data-btn" hidden title="Gera e baixa as artes dos pedidos Aprovado da data selecionada">
+          <button type="button" class="btn" id="gerar-todas-artes-btn" hidden title="Pré-gera (deixa cacheada) a arte de cada peça da data — roda no servidor, dá pra sair da tela e voltar depois só pra baixar">
+            🖼 Gerar todas as artes (data)
+          </button>
+          <button type="button" class="btn" id="baixar-aprovados-data-btn" hidden title="Baixa as artes dos pedidos Aprovado da data selecionada (usa o cache se já foram geradas)">
             ⬇ Baixar aprovados (data)
           </button>
           <button type="button" class="btn" id="baixar-aprovados-todos-btn" hidden title="Gera e baixa as artes de TODOS os pedidos Aprovado, de todas as datas (substitui a Remessa manual)">
@@ -1881,6 +1884,61 @@ function bindBaixarAprovados() {
 }
 
 /**
+ * "Gerar todas as artes" — pré-gera (cacheia) a arte de cada peça da data, rodando no
+ * SERVIDOR, fora do ciclo de vida da request: o operador pode sair da tela ou fechar o
+ * navegador que o lote continua, e mais tarde "Baixar aprovados" sai instantâneo por já
+ * estar pronto. Faz polling do progresso enquanto a aba ficar aberta, só por conforto —
+ * fechar a aba não cancela o lote no servidor.
+ */
+function bindGerarTodasArtes() {
+  const el = document.querySelector<HTMLButtonElement>('#gerar-todas-artes-btn')
+  if (!el) return
+  const btn: HTMLButtonElement = el
+  const rotuloOriginal = btn.textContent
+
+  async function consultarStatus(): Promise<void> {
+    const r = await fetch('/api/picker/gerar-todas-artes/status', { credentials: 'include' })
+    const body = (await r.json().catch(() => ({}))) as {
+      job?: { rodando: boolean; total: number; feitas: number; falhas: unknown[] } | null
+    }
+    const job = body.job
+    if (!job || !job.rodando) {
+      btn.disabled = false
+      btn.textContent = rotuloOriginal
+      if (job && job.total > 0) {
+        setStatusText(`Artes prontas: ${job.feitas}/${job.total}${job.falhas.length ? ` (${job.falhas.length} falha(s))` : ''}.`)
+      }
+      return
+    }
+    btn.textContent = `⏳ Gerando ${job.feitas}/${job.total}…`
+    setStatusText(`Gerando artes em segundo plano: ${job.feitas}/${job.total}…`)
+    window.setTimeout(() => void consultarStatus(), 1500)
+  }
+
+  btn.addEventListener('click', async () => {
+    const data = document.querySelector<HTMLSelectElement>('#date-select')?.value ?? ''
+    if (!data) {
+      setStatusText('Selecione uma data primeiro.')
+      return
+    }
+    btn.disabled = true
+    try {
+      const r = await fetch(`/api/picker/gerar-todas-artes?sheetDate=${encodeURIComponent(data)}`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const body = (await r.json().catch(() => ({}))) as { error?: string }
+      if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+      void consultarStatus()
+    } catch (error) {
+      setStatusText(`Falha ao iniciar: ${(error as Error).message}`)
+      btn.disabled = false
+      btn.textContent = rotuloOriginal
+    }
+  })
+}
+
+/**
  * Gera as prévias (print 4×4) da data e grava na coluna de foto de cada linha.
  *
  * Substitui `gerar_prints_4x4.py` + `planilha_upload_previews.py` do pipeline local, que
@@ -1936,6 +1994,7 @@ function bindGerarPrevias() {
 function applyShopeeWorkbookToolbar(workbookId: string) {
   const isShopee = isShopeeWorkbookId(workbookId)
   setToolbarBtnVisible(document.querySelector('#gerar-previas-btn'), isShopee)
+  setToolbarBtnVisible(document.querySelector('#gerar-todas-artes-btn'), isShopee)
   setToolbarBtnVisible(document.querySelector('#baixar-aprovados-data-btn'), isShopee)
   setToolbarBtnVisible(document.querySelector('#baixar-aprovados-todos-btn'), isShopee)
   // "Vincular conversas" sai da barra (pedido do user), mas a FUNÇÃO continua:
@@ -1990,6 +2049,7 @@ async function enterWorkbook(workbookId: string) {
   bindPendingMutationsButton()
   applyShopeeWorkbookToolbar(workbookId)
   bindBaixarAprovados()
+  bindGerarTodasArtes()
   bindGerarPrevias()
   bindShopeeLinkConversations()
   try {
