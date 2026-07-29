@@ -379,6 +379,16 @@ export function openPreviewPickerDialog(opts: {
    *  linha diferente (pedido pai+filha, cada peça com sua própria prévia). */
   items: Array<{ col: number; label: string; imageUrl: string; orderKey?: string }>
   onSend: (item: { col: number; orderKey?: string }) => Promise<void>
+  /**
+   * Botão "Marcar como prévia" (rodapé) — separa "mandei a foto no chat" de "o pedido
+   * virou Prévia": pedido do user pra pedido de N peças, mandar 1 já fechava o modal
+   * (não dava pra mandar as outras) e o status virava Prévia sozinho no 1º envio, sem
+   * o operador ter decidido que terminou. Agora cada "Enviar prévia" só marca aquele
+   * card como enviado e o modal CONTINUA aberto — o status só muda quando o operador
+   * clica aqui, depois de mandar quantas quiser. Omitido = comportamento antigo (1
+   * envio já fecha o modal), usado pelo fluxo simples do grid (1 linha, N colunas).
+   */
+  onMarkAsPreview?: () => Promise<void>
 }): void {
   const overlay = document.createElement('div')
   overlay.className = 'modal-overlay'
@@ -394,6 +404,11 @@ export function openPreviewPickerDialog(opts: {
 
   const body = document.createElement('div')
   body.className = 'modal-body preview-picker-grid'
+  let algumEnviado = false
+  const atualizarBotaoMarcar = () => {
+    if (marcarBtn) marcarBtn.disabled = !algumEnviado
+  }
+
   for (const item of opts.items) {
     const card = document.createElement('div')
     card.className = 'preview-picker-card'
@@ -418,7 +433,16 @@ export function openPreviewPickerDialog(opts: {
       btn.textContent = 'Enviando...'
       try {
         await opts.onSend({ col: item.col, orderKey: item.orderKey })
-        close()
+        if (opts.onMarkAsPreview) {
+          // Fluxo novo: fica marcado como enviado, modal continua aberto pro
+          // operador mandar as outras peças antes de fechar o ciclo.
+          btn.textContent = '✓ Enviada'
+          btn.classList.remove('btn-primary')
+          algumEnviado = true
+          atualizarBotaoMarcar()
+        } else {
+          close()
+        }
       } catch {
         btn.disabled = false
         btn.textContent = 'Enviar prévia'
@@ -431,6 +455,28 @@ export function openPreviewPickerDialog(opts: {
 
   const actions = document.createElement('div')
   actions.className = 'modal-actions'
+  let marcarBtn: HTMLButtonElement | null = null
+  if (opts.onMarkAsPreview) {
+    marcarBtn = document.createElement('button')
+    marcarBtn.type = 'button'
+    marcarBtn.className = 'btn btn-primary'
+    marcarBtn.textContent = 'Marcar como prévia'
+    marcarBtn.disabled = true
+    marcarBtn.title = 'Envie ao menos 1 prévia antes de marcar o pedido'
+    marcarBtn.addEventListener('click', async () => {
+      marcarBtn!.disabled = true
+      marcarBtn!.textContent = 'Marcando...'
+      try {
+        await opts.onMarkAsPreview!()
+        close()
+      } catch (error) {
+        marcarBtn!.disabled = false
+        marcarBtn!.textContent = 'Marcar como prévia'
+        alert(`Falha ao marcar: ${(error as Error).message}`)
+      }
+    })
+    actions.appendChild(marcarBtn)
+  }
   const cancelBtn = document.createElement('button')
   cancelBtn.type = 'button'
   cancelBtn.className = 'btn modal-cancel'

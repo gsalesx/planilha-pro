@@ -1118,22 +1118,20 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
             imageUrl: `/api/workbooks/${encodeURIComponent(order.workbookId)}/images/${encodeURIComponent(p.orderKey)}/${p.col}?t=${cacheBuster}`,
           })),
           onSend: async (item) => {
+            // Só manda a imagem — NÃO mexe em status. O operador pode mandar quantas
+            // peças quiser (o modal fica aberto, cada uma vira "✓ Enviada") antes de
+            // decidir fechar o ciclo em "Marcar como prévia".
             await sendShopeePreview({
               username: order.buyerUsername,
               workbookId: order.workbookId,
               orderKey: item.orderKey ?? order.orderKey,
               col: item.col,
             })
-            // sendShopeePreview só manda a imagem — marcar "Prévia" é responsabilidade
-            // de quem chama (mesmo padrão de sendPreviewForRow em main.ts).
-            //
-            // ⚠️ Marcar a PEÇA ESPECÍFICA que foi enviada (item.orderKey) só propaga
-            // pras outras linhas quando essa peça É a linha-pai — o painel do chat
-            // pode abrir a partir de QUALQUER linha (inclusive uma filha), e nesse
-            // caso patchar a filha não propaga nada (server só cascade de pai pra
-            // filha, nunca o contrário). Pedido do user: mandar a prévia de 1 peça
-            // já marca o PEDIDO INTEIRO como Prévia — então patcheia sempre a
-            // linha-pai (pieces[0].orderKey), nunca a peça específica enviada.
+          },
+          onMarkAsPreview: async () => {
+            // Sempre a linha-PAI (pieces[0].orderKey) — o painel pode ter aberto a
+            // partir de qualquer linha, e só patchar o pai aciona o cascade pras
+            // filhas no servidor (nunca o contrário).
             const chavePai = pieces[0]?.orderKey ?? order.orderKey
             await patchOrderDelta(order.workbookId, chavePai, {
               cells: [{ col: STATUS_COLUMN_INDEX, value: PREVIEW_SENT_STATUS }],

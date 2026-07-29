@@ -716,6 +716,15 @@ button {
   font-size: 12px;
   padding: 6px 8px;
 }
+/* Depois de enviada, o card fica marcado em vez de fechar o modal — o operador
+   pode mandar as outras peças do pedido antes de "Marcar como prévia". */
+.preview-picker-send:disabled {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #bbf7d0;
+  cursor: default;
+  opacity: 1;
+}
 .modal-card {
   background: #fff;
   color: #0f172a;
