@@ -161,11 +161,15 @@ export async function abrirPickerEditor(
 
           <div class="picker-editor-grupo">
             <span class="picker-editor-label">Girar <b class="v-rot"></b></span>
-            <div class="picker-editor-rot">
-              <button type="button" data-rot="-90">-90°</button>
-              <button type="button" data-rot="-1">-1°</button>
-              <button type="button" data-rot="1">+1°</button>
-              <button type="button" data-rot="90">+90°</button>
+            <div class="picker-editor-rot-wrap">
+              <svg class="picker-editor-rot-disco" viewBox="0 0 120 120" width="120" height="120">
+                <circle class="picker-editor-rot-trilha" cx="60" cy="60" r="52"></circle>
+                <circle class="picker-editor-rot-bola" cx="60" cy="8" r="9"></circle>
+              </svg>
+              <div class="picker-editor-rot-90">
+                <button type="button" data-rot="-90" title="Girar -90°">-90°</button>
+                <button type="button" data-rot="90" title="Girar +90°">+90°</button>
+              </div>
             </div>
           </div>
 
@@ -532,6 +536,7 @@ export async function abrirPickerEditor(
       q('.v-zoom').textContent = `${pct}%`
     }
     q('.v-rot').textContent = `${ajuste.rotation.toFixed(0)}°`
+    posicionarBolaRotacao()
     inUWidth.value = String(uWidth)
     q('.v-uwidth').textContent = String(uWidth)
     overlay.querySelectorAll<HTMLElement>('[data-so-recorte]').forEach((el) => {
@@ -559,6 +564,51 @@ export async function abrirPickerEditor(
       sincronizarControles()
       desenhar()
     })
+  })
+
+  /**
+   * Disco de rotação: a bolinha fica presa na borda do círculo, e arrastá-la em volta
+   * gira a foto — o ângulo da bolinha (medido a partir do topo, sentido horário) É o
+   * `ajuste.rotation`. Pedido do user, no lugar dos botões -1°/+1° (imprecisos pra
+   * ajuste fino) como controle principal; +90°/-90° continuam ao lado pra virar rápido.
+   */
+  const discoRot = overlay.querySelector<SVGSVGElement>('.picker-editor-rot-disco')!
+  const bolaRot = overlay.querySelector<SVGCircleElement>('.picker-editor-rot-bola')!
+  const CENTRO_ROT = 60
+  const RAIO_ROT = 52
+
+  function posicionarBolaRotacao(): void {
+    // -90 pra medir a partir do topo (0°) em vez do padrão trigonométrico (3h).
+    const rad = ((ajuste.rotation - 90) * Math.PI) / 180
+    bolaRot.setAttribute('cx', String(CENTRO_ROT + RAIO_ROT * Math.cos(rad)))
+    bolaRot.setAttribute('cy', String(CENTRO_ROT + RAIO_ROT * Math.sin(rad)))
+  }
+
+  function anguloDoPonteiro(clientX: number, clientY: number): number {
+    const r = discoRot.getBoundingClientRect()
+    const escala = 120 / r.width // viewBox é 120×120, independente do tamanho renderizado
+    const x = (clientX - r.left) * escala - CENTRO_ROT
+    const y = (clientY - r.top) * escala - CENTRO_ROT
+    // atan2 padrão mede a partir do eixo X (3h); +90 realinha pro topo = 0°.
+    return (Math.atan2(y, x) * 180) / Math.PI + 90
+  }
+
+  let arrastandoRot = false
+  discoRot.addEventListener('pointerdown', (ev) => {
+    arrastandoRot = true
+    discoRot.setPointerCapture(ev.pointerId)
+    ajuste.rotation = anguloDoPonteiro(ev.clientX, ev.clientY)
+    sincronizarControles()
+    desenhar()
+  })
+  discoRot.addEventListener('pointermove', (ev) => {
+    if (!arrastandoRot) return
+    ajuste.rotation = anguloDoPonteiro(ev.clientX, ev.clientY)
+    sincronizarControles()
+    desenhar()
+  })
+  discoRot.addEventListener('pointerup', () => {
+    arrastandoRot = false
   })
 
   inZoom.addEventListener('input', () => {

@@ -3965,10 +3965,10 @@ table.sheet tbody th.row-num.is-active {
 .picker-editor-label b { color: #334155; font-weight: 700; }
 
 .picker-editor-modos,
-.picker-editor-rot,
+.picker-editor-rot-90,
 .picker-editor-borracha { display: flex; gap: 6px; }
 .picker-editor-modos button,
-.picker-editor-rot button,
+.picker-editor-rot-90 button,
 .picker-editor-borracha button {
   flex: 1;
   padding: 7px 6px;
@@ -3981,8 +3981,37 @@ table.sheet tbody th.row-num.is-active {
   cursor: pointer;
 }
 .picker-editor-modos button:hover,
-.picker-editor-rot button:hover,
+.picker-editor-rot-90 button:hover,
 .picker-editor-borracha button:hover { background: #f1f5f9; }
+
+/* Disco de rotação: a bolinha fica na borda e arrastá-la em volta gira a foto — troca
+   os antigos botões -1°/+1° (imprecisos pro ajuste fino) como controle principal. */
+.picker-editor-rot-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.picker-editor-rot-disco {
+  cursor: grab;
+  touch-action: none;
+}
+.picker-editor-rot-disco:active {
+  cursor: grabbing;
+}
+.picker-editor-rot-trilha {
+  fill: none;
+  stroke: #cbd5e1;
+  stroke-width: 2;
+}
+.picker-editor-rot-bola {
+  fill: #0f172a;
+  stroke: #fff;
+  stroke-width: 2;
+}
+.picker-editor-rot-90 {
+  width: 100%;
+}
 .picker-editor-modos button.ativo,
 .picker-editor-borracha button.ativo {
   background: #0f172a;
