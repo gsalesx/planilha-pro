@@ -570,4 +570,137 @@ router.post('/audit/marcar-filhas', requireAuth, (req, res) => {
   })
 })
 
+/**
+ * POST /api/audit/explodir-quantidade — aplica a explosão de quantidade aos pedidos que já
+ * existiam antes dela.
+ *
+ * "5× M MASCULINO" numa linha com Qnt=5 vira 5 linhas de Qnt=1 (a original + 4 filhas),
+ * porque são 5 artes a imprimir: com uma linha só, a planilha conta 1 e a produção precisa
+ * de 5. Caso real que motivou: adrielegiyuri, 5 shorts em 1 linha (2026-07-28).
+ *
+ * As linhas novas nascem SEM prévia e SEM peça — cada uma precisa passar pelo picker. O
+ * status é copiado da original pra não deixar o pedido com status divergente entre linhas
+ * (é o que a propagação espera); as colunas de foto vazias é que mostram o que falta.
+ *
+ * Por padrão ignora Cancelado/Concluído — explodir pedido morto só polui a planilha.
+ * DRY-RUN por padrão; executa com `?aplicar=1`. `?incluirEncerrados=1` pega todos.
+ */
+router.post('/audit/explodir-quantidade', requireAuth, (req, res) => {
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
+  const aplicar = req.query.aplicar === '1' || req.query.aplicar === 'true'
+  const incluirEncerrados = req.query.incluirEncerrados === '1'
+  const ENCERRADOS = new Set(['Cancelado', 'Concluído'])
+  const COL_QTD = 3
+
+  interface Linha {
+    order_key: string
+    id: string
+    row_json: string
+    sheet_date: string
+    position: number
+    parent_key: string | null
+    product_image_url: string
+  }
+  const todas = db
+    .prepare(
+      `SELECT order_key, id, row_json, sheet_date, position, parent_key, product_image_url
+         FROM orders WHERE workbook_id = ? ORDER BY position`,
+    )
+    .all(workbookId) as Linha[]
+
+  const planos: Array<{
+    orderSn: string
+    cliente: string
+    linha: string
+    quantidade: number
+    novasLinhas: string[]
+    status: string
+  }> = []
+
+  for (const l of todas) {
+    const row = JSON.parse(l.row_json || '[]') as string[]
+    const qtd = Number(String(row[COL_QTD] ?? '').trim())
+    if (!Number.isInteger(qtd) || qtd < 2) continue
+    const status = String(row[SHOPEE_COL_INTERNAL_STATUS] ?? '')
+    if (!incluirEncerrados && ENCERRADOS.has(status)) continue
+
+    // Numeração continua de onde o pedido parou, pra não colidir com irmã existente.
+    const usados = todas
+      .filter((x) => x.id === l.id)
+      .map((x) => occurrenceDaKey(x.order_key, x.id) ?? 0)
+    let proxima = Math.max(1, ...usados) + 1
+    const novas: string[] = []
+    for (let i = 1; i < qtd; i++) novas.push(`${l.id}#${proxima++}`)
+
+    planos.push({
+      orderSn: l.id,
+      cliente: row[4] ?? '',
+      linha: l.order_key,
+      quantidade: qtd,
+      novasLinhas: novas,
+      status,
+    })
+  }
+
+  if (aplicar && planos.length > 0) {
+    const now = nowMs()
+    db.transaction(() => {
+      for (const p of planos) {
+        const original = todas.find((x) => x.order_key === p.linha)!
+        const row = JSON.parse(original.row_json) as string[]
+        row[COL_QTD] = '1'
+        db.prepare('UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?')
+          .run(JSON.stringify(row), now, workbookId, p.linha)
+
+        // Filha de filha não existe: se a original já é filha, as novas penduram no mesmo pai.
+        const chavePai = original.parent_key ?? original.order_key
+        // Entram logo abaixo da última linha do pedido, empurrando o resto — as linhas de
+        // um pedido têm que ficar contíguas pra "a 1ª linha" não virar loteria.
+        const ultima = Math.max(
+          ...todas.filter((x) => x.id === p.orderSn).map((x) => x.position),
+        )
+        db.prepare('UPDATE orders SET position = position + ? WHERE workbook_id = ? AND position > ?')
+          .run(p.novasLinhas.length, workbookId, ultima)
+
+        p.novasLinhas.forEach((chave, i) => {
+          db.prepare(
+            `INSERT INTO orders (workbook_id, order_key, id, row_json, styles_json, disappeared,
+                                 sheet_date, product_image_url, position, updated_at, parent_key)
+             VALUES (?, ?, ?, ?, '{}', 0, ?, ?, ?, ?, ?)`,
+          ).run(
+            workbookId,
+            chave,
+            p.orderSn,
+            JSON.stringify(row), // já com Qnt=1; sem imagem, porque prévia é por peça
+            original.sheet_date,
+            original.product_image_url,
+            ultima + 1 + i,
+            now,
+            chavePai,
+          )
+        })
+      }
+      db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
+    })()
+    recordAudit({
+      source: 'api',
+      event: 'quantidade.explodida',
+      level: 'warn',
+      workbookId,
+      detail: { pedidos: planos.length, linhasCriadas: planos.reduce((n, p) => n + p.novasLinhas.length, 0), planos },
+    })
+  }
+
+  res.json({
+    ok: true,
+    aplicado: aplicar,
+    pedidos: planos.length,
+    linhasQueSeraoCriadas: planos.reduce((n, p) => n + p.novasLinhas.length, 0),
+    planos,
+    aviso: aplicar
+      ? 'As linhas novas nascem sem prévia — cada uma precisa passar pelo picker.'
+      : 'DRY-RUN — nada foi alterado. Repita com ?aplicar=1 pra executar.',
+  })
+})
+
 export default router
