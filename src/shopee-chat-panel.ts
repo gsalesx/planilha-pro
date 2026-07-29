@@ -29,6 +29,7 @@ import { openConfirmDialog, openPreviewPickerDialog } from './dialog'
 import { STATUS_COLUMN_INDEX } from './status'
 import { openImageLightbox } from './lightbox'
 import { abrirPickerEditor, abrirPickerFila, type ItemFila } from './picker-editor'
+import { carregarImagem, cortarPrintCanvas, labelDoMolde, montarArteCanvas } from './render-molde-client'
 
 export interface ShopeeChatOrderInfo {
   workbookId: string
@@ -979,58 +980,130 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     }
   }
 
-  /** Baixa a(s) arte(s) do pedido inteiro — monta na hora, sem esperar "Aprovado". */
-  function bindBaixarArtes(): void {
+  /**
+   * Monta a arte de UMA peça inteiramente no NAVEGADOR — busca as 2 fotos já
+   * compostas (900×900, prontas há tempos, sem processamento nenhum aqui) e
+   * os 2 emojis (350×350) e desenha no canvas (render-molde-client.ts). O
+   * servidor só serve arquivos estáticos nessa parte; quem monta é a aba de
+   * quem clicou. Peça sem foto composta ainda lança erro (mesma regra do
+   * servidor: "ajuste as fotos no picker antes").
+   */
+  async function montarArtePecaNoNavegador(p: OrderPiece): Promise<{ nome: string; blob: Blob }> {
+    const fotoUrl = (slot: 1 | 2) => `/api/pieces/${p.id}/photo/${slot}/composta`
+    const emojiUrl = (slot: 1 | 2) => `/api/pieces/${p.id}/emoji/${slot}`
+
+    const fotos: HTMLImageElement[] = []
+    for (const slot of [1, 2] as const) {
+      if (p.photos[slot]) {
+        try {
+          fotos.push(await carregarImagem(fotoUrl(slot)))
+        } catch {
+          // slot sem composta — ignora, mesma regra do servidor (foto única repete)
+        }
+      }
+    }
+    if (fotos.length === 0) throw new Error(`${p.molde}: nenhuma foto composta — ajuste as fotos no picker antes`)
+    if (fotos.length === 1) fotos.push(fotos[0])
+
+    const emojis: HTMLImageElement[] = []
+    for (const slot of [1, 2] as const) {
+      try {
+        emojis.push(await carregarImagem(emojiUrl(slot)))
+      } catch {
+        // sem emoji nesse slot — reusa o outro (mesma regra do servidor)
+      }
+    }
+    if (emojis.length === 0) throw new Error(`${p.molde}: emoji não encontrado no catálogo`)
+
+    const molde = p.molde.trim().toUpperCase()
+    const blob = await montarArteCanvas({ molde, cor: p.cor || '#000000', fotos, emojis })
+    const cliente = order.buyerUsername || order.orderId
+    return { nome: `${cliente} ${labelDoMolde(molde)}.jpg`, blob }
+  }
+
+  function baixarBlob(nome: string, blob: Blob): void {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = nome
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  /** Baixa a(s) arte(s) do pedido inteiro — montadas na hora NO NAVEGADOR, sem
+   *  esperar "Aprovado" e sem processar nada no servidor compartilhado. */
+  function bindBaixarArtes(pieces: OrderPiece[]): void {
     const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-baixar-artes')
     if (!btn) return
     btn.addEventListener('click', () =>
       acionarBotaoAssincrono(btn, '⏳ Montando…', async () => {
-        const r = await fetch(
-          `/api/workbooks/${encodeURIComponent(order.workbookId)}/orders/${encodeURIComponent(order.orderKey)}/artes`,
-          { credentials: 'include' },
-        )
-        if (!r.ok) {
-          const detalhe = (await r.json().catch(() => ({}))) as { error?: string }
-          throw new Error(detalhe.error ?? `HTTP ${r.status}`)
+        if (pieces.length === 0) throw new Error('Nenhuma peça montada ainda pra este pedido')
+        const geradas: Array<{ nome: string; blob: Blob }> = []
+        const falhas: string[] = []
+        for (const p of pieces) {
+          try {
+            geradas.push(await montarArtePecaNoNavegador(p))
+          } catch (e) {
+            falhas.push((e as Error).message)
+          }
         }
-        const blob = await r.blob()
-        const disposition = r.headers.get('content-disposition') ?? ''
-        const nomeMatch = /filename="([^"]+)"/.exec(disposition)
-        const nome = nomeMatch?.[1] ?? `${order.orderId}.jpg`
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = nome
-        a.click()
-        URL.revokeObjectURL(url)
+        if (geradas.length === 0) throw new Error(falhas[0] ?? 'nenhuma arte pôde ser montada')
+
+        if (geradas.length === 1) {
+          baixarBlob(geradas[0].nome, geradas[0].blob)
+          return
+        }
+        const { default: JSZip } = await import('jszip')
+        const zip = new JSZip()
+        geradas.forEach((g, i) => zip.file(`${i + 1} - ${g.nome}`, g.blob))
+        if (falhas.length) zip.file('_FALHAS.txt', falhas.join('\n'))
+        const buf = await zip.generateAsync({ type: 'blob' })
+        baixarBlob(`${order.buyerUsername || order.orderId}.zip`, buf)
       }),
     )
   }
 
   /**
-   * Gera a prévia (print 4×4) do pedido inteiro, grava na coluna de foto de cada linha
-   * (substituindo a anterior — guardarPrint no servidor já apaga o arquivo velho antes
-   * de salvar o novo) e abre o MESMO popup de "Enviar prévia" que já existe no grid,
-   * pro operador escolher ali mesmo qual(is) mandar no chat sem precisar sair do painel.
+   * Gera a prévia (print) de cada peça do pedido — a arte inteira é montada NO
+   * NAVEGADOR (mesma função de "Baixar arte", ver montarArtePecaNoNavegador) e
+   * recortada também no navegador (cortarPrintCanvas); só o print final (pequeno,
+   * ~200KB) sobe pro servidor via /pieces/:id/print-upload, que apenas GRAVA — não
+   * processa nada. Substitui a antiga rota /gerar-previas (que montava a folha
+   * inteira NO SERVIDOR, ~14s medidos numa peça real — o gargalo que competia por
+   * CPU com outras operações no mesmo container).
+   *
+   * Depois de subir, abre o MESMO popup de "Enviar prévia" que já existe no grid,
+   * pro operador escolher ali mesmo qual(is) mandar no chat sem sair do painel.
    */
-  function bindGerarPrevia(): void {
+  function bindGerarPrevia(pieces: OrderPiece[]): void {
     const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-gerar-previa')
     if (!btn) return
     btn.addEventListener('click', () =>
       acionarBotaoAssincrono(btn, '⏳ Gerando…', async () => {
-        const r = await fetch(
-          `/api/workbooks/${encodeURIComponent(order.workbookId)}/orders/${encodeURIComponent(order.orderKey)}/gerar-previas`,
-          { method: 'POST', credentials: 'include' },
-        )
-        const body = (await r.json().catch(() => ({}))) as {
-          error?: string
-          previasGeradas?: number
-          previas?: Array<{ orderKey: string; col: number; label: string }>
+        if (pieces.length === 0) throw new Error('Nenhuma peça montada ainda pra este pedido')
+        const previas: Array<{ orderKey: string; col: number; label: string }> = []
+        const falhas: string[] = []
+        for (const p of pieces) {
+          try {
+            const { blob } = await montarArtePecaNoNavegador(p)
+            const nFotos = (p.photos[1] ? 1 : 0) + (p.photos[2] ? 1 : 0)
+            const print = await cortarPrintCanvas(blob, Math.max(1, nFotos))
+            const fd = new FormData()
+            fd.append('image', print, 'print.jpg')
+            const r = await fetch(`/api/pieces/${p.id}/print-upload`, {
+              method: 'POST',
+              credentials: 'include',
+              body: fd,
+            })
+            const up = (await r.json().catch(() => ({}))) as { error?: string; col?: number }
+            if (!r.ok) throw new Error(up.error ?? `HTTP ${r.status}`)
+            previas.push({ orderKey: p.orderKey ?? order.orderKey, col: up.col ?? 8, label: labelDoMolde(p.molde) })
+          } catch (e) {
+            falhas.push(`${p.molde}: ${(e as Error).message}`)
+          }
         }
-        if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+        if (previas.length === 0) throw new Error(falhas[0] ?? 'nenhuma prévia pôde ser gerada')
 
-        const previas = body.previas ?? []
-        if (previas.length === 0) return
         const cacheBuster = Date.now() // a imagem acabou de ser trocada — evita servir a antiga do cache do navegador
         openPreviewPickerDialog({
           title: 'Enviar prévia',
@@ -1055,8 +1128,8 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
 
   function bindConfirmBar(pieces: OrderPiece[]): void {
     const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-confirm-order')
-    bindBaixarArtes()
-    bindGerarPrevia()
+    bindBaixarArtes(pieces)
+    bindGerarPrevia(pieces)
     if (!btn) return
     btn.addEventListener('click', () => {
       const missing = pieces.filter((p) => !p.photos[1]).length

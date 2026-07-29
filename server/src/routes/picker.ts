@@ -599,6 +599,74 @@ function caminhoEmoji(nome: string): string | null {
 }
 
 /**
+ * GET /pieces/:id/emoji/:slot — serve o PNG do emoji (1 ou 2) de uma peça.
+ * Rota LEVE (só resolve o nome e lê o arquivo, sem nenhum processamento) —
+ * existe pra o montador de arte no NAVEGADOR (render-molde-client.ts) montar
+ * a folha sem precisar que o servidor componha nada.
+ */
+router.get('/pieces/:id/emoji/:slot', requireAuth, (req, res) => {
+  const pieceId = Number(req.params.id)
+  const slot = Number(req.params.slot)
+  if (!Number.isInteger(pieceId) || (slot !== 1 && slot !== 2)) {
+    res.status(400).json({ error: 'peça/slot inválido' })
+    return
+  }
+  const peca = db
+    .prepare('SELECT emoji1, emoji2 FROM order_pieces WHERE id = ?')
+    .get(pieceId) as { emoji1: string; emoji2: string } | undefined
+  if (!peca) {
+    res.status(404).json({ error: 'peça não encontrada' })
+    return
+  }
+  const nomeEmoji = slot === 1 ? peca.emoji1 : peca.emoji2
+  const p = caminhoEmoji(nomeEmoji)
+  if (!p) {
+    res.status(404).json({ error: 'emoji não encontrado no catálogo' })
+    return
+  }
+  res.setHeader('content-type', 'image/png')
+  res.setHeader('cache-control', 'private, max-age=3600')
+  res.send(readFileSync(p))
+})
+
+/**
+ * POST /pieces/:id/print-upload — grava um print JÁ MONTADO NO NAVEGADOR
+ * (multipart, campo "image") na coluna de foto da linha, marcando Pronto se
+ * for o caso — mesma gravação de `gerarEGuardarPrint`, sem gerar nada aqui
+ * (o servidor só recebe e guarda).
+ */
+router.post('/pieces/:id/print-upload', requireAuth, upload.single('image'), (req, res) => {
+  const pieceId = Number(req.params.id)
+  if (!Number.isInteger(pieceId)) {
+    res.status(400).json({ error: 'peça inválida' })
+    return
+  }
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
+  if (!req.file) {
+    res.status(400).json({ error: 'arquivo "image" obrigatório' })
+    return
+  }
+  const peca = db
+    .prepare('SELECT order_key, seq FROM order_pieces WHERE id = ? AND workbook_id = ?')
+    .get(pieceId, workbookId) as { order_key: string; seq: number } | undefined
+  if (!peca) {
+    res.status(404).json({ error: 'peça não encontrada' })
+    return
+  }
+  const linha = db
+    .prepare('SELECT id FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(workbookId, peca.order_key) as { id: string } | undefined
+  if (!linha) {
+    res.status(404).json({ error: 'linha do pedido não encontrada' })
+    return
+  }
+  const col = colunaDaPeca(peca.seq)
+  guardarPrint(workbookId, peca.order_key, col, req.file.buffer)
+  const pronto = marcarProntoSeCompleto(workbookId, linha.id)
+  res.json({ ok: true, col, marcadoPronto: pronto })
+})
+
+/**
  * Download em massa dos APROVADOS — substitui o Processo G (Remessa), que era
  * feito à mão: varrer aprovados, copiar as artes pra uma pasta, marcar
  * "Em produção".

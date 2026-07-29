@@ -679,11 +679,14 @@ export async function abrirPickerEditor(
     void carregarFonte()
   })
 
-  // "✂ Remover fundo": se o sem-fundo JÁ EXISTE (ex. usuário foi pra "Foto original"
-  // e voltou), só troca a fonte de volta — NÃO chama o PicWish de novo (o servidor já
-  // tem esse cache, mas evitar a chamada de rede também evita o spinner desnecessário).
-  // Só bate no PicWish quando realmente falta gerar o sem-fundo.
-  q<HTMLButtonElement>('.in-removebg').addEventListener('click', async (ev) => {
+  /**
+   * Remove o fundo (PicWish) ou reaproveita o que já existe — mesma lógica pro
+   * clique manual e pro disparo automático na abertura (ver chamada no fim da
+   * função). Se o sem-fundo JÁ EXISTE (ex. usuário foi pra "Foto original" e
+   * voltou), só troca a fonte de volta — NÃO chama o PicWish de novo (evita
+   * gastar a chamada paga à toa). Só bate no PicWish quando falta gerar.
+   */
+  async function removerFundo(btn?: HTMLButtonElement): Promise<void> {
     if (fonteRecorte === 'sem_fundo') return
     if (temSemFundo) {
       fonteRecorte = 'sem_fundo'
@@ -692,22 +695,25 @@ export async function abrirPickerEditor(
       void carregarFonte()
       return
     }
-    const btn = ev.currentTarget as HTMLButtonElement
-    btn.disabled = true
+    if (btn) btn.disabled = true
     setStatus('Removendo fundo…')
     try {
       await api(`${base}/remove-bg`, { method: 'POST' })
       temSemFundo = true
       fonteRecorte = 'sem_fundo'
       setStatus('Fundo removido.')
-      btn.classList.remove('destaque')
+      btn?.classList.remove('destaque')
       sincronizarControles()
       await carregarFonte()
     } catch (e) {
       setStatus((e as Error).message, true)
     } finally {
-      btn.disabled = false
+      if (btn) btn.disabled = false
     }
+  }
+
+  q<HTMLButtonElement>('.in-removebg').addEventListener('click', (ev) => {
+    void removerFundo(ev.currentTarget as HTMLButtonElement)
   })
 
   q<HTMLButtonElement>('.in-reset').addEventListener('click', () => {
@@ -782,7 +788,14 @@ export async function abrirPickerEditor(
 
   canvas.style.cursor = 'grab'
   sincronizarControles()
-  await carregarFonte()
+  // Recorte sem foto sem-fundo ainda (e sem o operador ter escolhido "foto original"
+  // de propósito) — remove o fundo sozinho ao abrir, em vez de esperar o clique em
+  // "✂ Remover fundo". `removerFundo()` já checa cache antes de chamar o PicWish.
+  if (modo === 'recorte' && fonteRecorte !== 'original' && !temSemFundo) {
+    await removerFundo()
+  } else {
+    await carregarFonte()
+  }
   sincronizarControles()
   return fim
 }
