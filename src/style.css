@@ -4028,12 +4028,16 @@ table.sheet tbody th.row-num.is-active {
 
 /* ── Linha-filha: unidade seguinte do MESMO pedido (parent_key no servidor) ──────────
    Desenhada recuada e sem repetir pedido/cliente/destinatário, pra bater o olho e ver
-   que é a mesma compra. O dado continua na linha — só o desenho muda. */
-.row-filha > td {
-  background: #fbfcfe;
+   que é a mesma compra. O dado continua na linha — só o desenho muda.
+   Mesmo problema de especificidade do .row-grupo logo abaixo: sem o prefixo
+   `table.sheet tbody`, `table.sheet tbody td{background:#fff}` (0,1,3) vencia esta
+   regra (0,1,1) e o fundo nunca aparecia — só a cor mais clara do texto (que não tem
+   concorrente) dava algum indício. */
+table.sheet tbody tr.row-filha td {
+  background: #fbfcfe !important;
 }
-.row-filha:hover > td {
-  background: #f4f7fb;
+table.sheet tbody tr.row-filha:hover td {
+  background: #f4f7fb !important;
 }
 .row-num-filha {
   color: #94a3b8;
@@ -4059,30 +4063,34 @@ table.sheet tbody th.row-num.is-active {
    Agrupa visualmente a linha do pedido com as filhas dela. Cor igual à etiqueta
    "Conjuntos" (#c084fc, ver main.ts) — pedido do user, reusando um significado que já
    existe na planilha em vez de inventar cor nova.
-   A borda é aplicada nas CÉLULAS (um <tr> não aceita borda com border-collapse) e
-   precisa fechar o retângulo inteiro: topo na 1ª linha, base na última, e os DOIS
-   lados em TODA linha do grupo (não só início/fim) — a 1ª tentativa só tinha topo e
-   lado, por isso parecia "sem fim". Esquerda vai na <th> do número (1ª célula da
-   linha); direita na última <td>. */
-.row-grupo > td,
-.row-grupo > th {
-  background: #faf5ff;
+
+   ⚠️ `table.sheet tbody td` (especificidade 0,1,3 — 3 seletores de tipo + 1 classe)
+   tem `background:#fff` e `border-right/bottom` PRÓPRIOS, que vencem qualquer regra
+   `.row-grupo > td` (especificidade 0,1,1) não importa a ordem no arquivo — foi por
+   isso que a moldura ficava só com uma linha fina cortada, sem fundo. Precisa do
+   MESMO PREFIXO (`table.sheet tbody`) pra empatar em especificidade e então ganhar
+   por vir depois no arquivo. `!important` no background porque `.has-bg` (célula com
+   cor manual) e `tr:hover td`/`tr.row-selected td` têm o mesmo prefixo e teto de
+   especificidade — sem ele, selecionar ou passar o mouse apagaria a moldura. */
+table.sheet tbody tr.row-grupo td,
+table.sheet tbody tr.row-grupo th {
+  background: #faf5ff !important;
 }
-.row-grupo:hover > td,
-.row-grupo:hover > th {
-  background: #f3e8ff;
+table.sheet tbody tr.row-grupo:hover td,
+table.sheet tbody tr.row-grupo:hover th {
+  background: #f3e8ff !important;
 }
-.row-grupo > th.row-num {
+table.sheet tbody tr.row-grupo th.row-num {
   border-left: 2px solid #c084fc;
 }
-.row-grupo > td:last-child {
+table.sheet tbody tr.row-grupo td:last-child {
   border-right: 2px solid #c084fc;
 }
-.row-grupo-inicio > td,
-.row-grupo-inicio > th {
+table.sheet tbody tr.row-grupo-inicio td,
+table.sheet tbody tr.row-grupo-inicio th {
   border-top: 2px solid #c084fc;
 }
-.row-grupo-fim > td,
-.row-grupo-fim > th {
+table.sheet tbody tr.row-grupo-fim td,
+table.sheet tbody tr.row-grupo-fim th {
   border-bottom: 2px solid #c084fc;
 }
