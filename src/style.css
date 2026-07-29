@@ -4051,6 +4051,23 @@ table.sheet tbody th.row-num.is-active {
 }
 .picker-editor-controles .btn-primary:hover { background: #1a5c38; }
 
+/* Toggle "Foto original" / "Remover fundo" — igual o modelo do picker local: os dois
+   ficam lado a lado, e o ativo (a fonte que está sendo usada agora) fica destacado. */
+.picker-editor-fonte {
+  display: flex;
+  gap: 6px;
+}
+.picker-editor-fonte .btn {
+  flex: 1;
+  font-size: 12px;
+  padding: 7px 6px;
+}
+.picker-editor-fonte .btn.ativo {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+}
+
 .picker-editor-status {
   font-size: 12px;
   color: #475569;

@@ -21,12 +21,17 @@ export interface AjusteFoto {
   rotation?: number
 }
 
+/** 'original' = corta a foto COM fundo direto (uso legítimo — nem toda foto precisa de
+ *  remoção); 'sem_fundo' = usa a silhueta recortada pelo PicWish. */
+export type FonteRecorte = 'original' | 'sem_fundo'
+
 interface EstadoServidor {
   modo: ModoFoto
   ajuste: AjusteFoto
   uWidth: number
   temSemFundo: boolean
   temComposta: boolean
+  fonteRecorte: FonteRecorte
 }
 
 export interface PickerEditorOpts {
@@ -109,6 +114,8 @@ export async function abrirPickerEditor(
     dy: estado.ajuste.dy ?? 0,
     rotation: estado.ajuste.rotation ?? 0,
   }
+  let fonteRecorte: FonteRecorte = estado.fonteRecorte
+  let temSemFundo = estado.temSemFundo
 
   const overlay = document.createElement('div')
   overlay.className = 'picker-editor-backdrop'
@@ -151,7 +158,10 @@ export async function abrirPickerEditor(
           <div class="picker-editor-grupo" data-so-recorte>
             <span class="picker-editor-label">Largura do recorte <b class="v-uwidth"></b></span>
             <input type="range" class="in-uwidth" min="200" max="1000" step="10" />
-            <button type="button" class="btn in-removebg">Remover fundo</button>
+            <div class="picker-editor-fonte">
+              <button type="button" class="btn in-fonte-original" title="Corta a foto ORIGINAL, com fundo">🖼 Foto original</button>
+              <button type="button" class="btn in-removebg" title="Corta a silhueta sem fundo (PicWish)">✂ Remover fundo</button>
+            </div>
           </div>
 
           <div class="picker-editor-grupo">
@@ -287,7 +297,9 @@ export async function abrirPickerEditor(
   let cursor: { x: number; y: number } | null = null
 
   async function carregarFonte(): Promise<void> {
-    const url = modo === 'recorte' ? `${base}/sem-fundo` : `${base}?t=${Date.now()}`
+    const url = modo === 'recorte'
+      ? (fonteRecorte === 'original' ? `${base}?t=${Date.now()}` : `${base}/sem-fundo`)
+      : `${base}?t=${Date.now()}`
     try {
       fonte = await carregarImagem(url)
       // Sem `width` salvo: começa com a foto cobrindo o canvas inteiro.
@@ -299,10 +311,10 @@ export async function abrirPickerEditor(
       desenhar()
     } catch {
       fonte = null
-      if (modo === 'recorte') {
+      if (modo === 'recorte' && fonteRecorte === 'sem_fundo') {
         // Sem foto sem-fundo ainda: 404 é o estado normal na 1ª vez. Destaca
         // o botão em vez de só escrever a instrução.
-        setStatus('O recorte precisa da foto sem fundo — clique em "Remover fundo" (botão abaixo).', true)
+        setStatus('O recorte precisa da foto sem fundo — clique em "✂ Remover fundo" (botão abaixo).', true)
         q<HTMLButtonElement>('.in-removebg').classList.add('destaque')
       } else {
         setStatus('Não consegui carregar a foto.', true)
@@ -336,11 +348,16 @@ export async function abrirPickerEditor(
   function desenharGuia(c: CanvasRenderingContext2D): void {
     c.save()
     if (modo === 'recorte') {
-      // Fora da cápsula escurecido, com a mesma leitura do modo coração.
+      // Fora da cápsula escurecido, com a mesma leitura do modo coração: o cinza é o
+      // que vai FICAR DE FORA, não o que fica dentro.
+      // ⚠️ `caminhoCapsula` chama `c.beginPath()` — se o retângulo externo fosse
+      // desenhado ANTES dela nesta mesma trajetória, esse beginPath apagaria o
+      // retângulo e o fill('evenodd') acabava enxergando só a cápsula sozinha,
+      // pintando ela por DENTRO (exatamente o inverso do esperado). O retângulo tem
+      // que vir DEPOIS de caminhoCapsula já ter aberto o novo Path2D.
       c.save()
-      c.beginPath()
-      c.rect(0, 0, CANVAS, CANVAS)
       caminhoCapsula(c, uWidth)
+      c.rect(0, 0, CANVAS, CANVAS)
       c.fillStyle = 'rgba(15,23,42,.45)'
       c.fill('evenodd')
       c.restore()
@@ -545,6 +562,15 @@ export async function abrirPickerEditor(
     overlay.querySelectorAll<HTMLButtonElement>('[data-modo]').forEach((b) => {
       b.classList.toggle('ativo', b.dataset.modo === modo)
     })
+    // Mesma semântica do picker local: "Foto original" só faz sentido clicar se tem
+    // pra onde voltar (sem-fundo já existe) E não é já o que está sendo visto agora;
+    // "Remover fundo" só faz sentido se ainda não é a fonte ativa (senão é reclicar
+    // à toa) — ambos continuam clicáveis, isso é só pra deixar claro qual ação falta.
+    const btnOriginal = q<HTMLButtonElement>('.in-fonte-original')
+    const btnRemoverFundo = q<HTMLButtonElement>('.in-removebg')
+    btnOriginal.classList.toggle('ativo', fonteRecorte === 'original')
+    btnOriginal.disabled = !temSemFundo && fonteRecorte === 'original'
+    btnRemoverFundo.classList.toggle('ativo', fonteRecorte === 'sem_fundo')
   }
 
   overlay.querySelectorAll<HTMLButtonElement>('[data-modo]').forEach((b) => {
@@ -626,6 +652,13 @@ export async function abrirPickerEditor(
   })
 
   q<HTMLButtonElement>('.in-borracha').addEventListener('click', (ev) => {
+    // Borracha apaga sobra do REMOVE-FUNDO — não faz sentido em cima da foto
+    // original (ainda com fundo), e salvar erraria: aplicarBorracha sempre grava em
+    // sem_fundo_path, então apagar sobre a original corromperia o sem-fundo guardado.
+    if (fonteRecorte === 'original') {
+      setStatus('A borracha só funciona na foto sem fundo — clique em "✂ Remover fundo".', true)
+      return
+    }
     borrachaAtiva = !borrachaAtiva
     ;(ev.currentTarget as HTMLButtonElement).classList.toggle('ativo', borrachaAtiva)
     canvas.style.cursor = borrachaAtiva ? 'none' : 'grab'
@@ -636,14 +669,39 @@ export async function abrirPickerEditor(
   // Mudar o tamanho do pincel precisa redesenhar a bolinha na hora.
   inBrush.addEventListener('input', () => desenhar())
 
+  // "🖼 Foto original": troca a FONTE do recorte pra foto COM fundo, sem chamar
+  // nenhuma API — é só cliente decidindo qual imagem carregar/compor.
+  q<HTMLButtonElement>('.in-fonte-original').addEventListener('click', () => {
+    if (fonteRecorte === 'original') return
+    fonteRecorte = 'original'
+    setStatus('')
+    sincronizarControles()
+    void carregarFonte()
+  })
+
+  // "✂ Remover fundo": se o sem-fundo JÁ EXISTE (ex. usuário foi pra "Foto original"
+  // e voltou), só troca a fonte de volta — NÃO chama o PicWish de novo (o servidor já
+  // tem esse cache, mas evitar a chamada de rede também evita o spinner desnecessário).
+  // Só bate no PicWish quando realmente falta gerar o sem-fundo.
   q<HTMLButtonElement>('.in-removebg').addEventListener('click', async (ev) => {
+    if (fonteRecorte === 'sem_fundo') return
+    if (temSemFundo) {
+      fonteRecorte = 'sem_fundo'
+      setStatus('')
+      sincronizarControles()
+      void carregarFonte()
+      return
+    }
     const btn = ev.currentTarget as HTMLButtonElement
     btn.disabled = true
     setStatus('Removendo fundo…')
     try {
       await api(`${base}/remove-bg`, { method: 'POST' })
+      temSemFundo = true
+      fonteRecorte = 'sem_fundo'
       setStatus('Fundo removido.')
       btn.classList.remove('destaque')
+      sincronizarControles()
       await carregarFonte()
     } catch (e) {
       setStatus((e as Error).message, true)
@@ -689,7 +747,7 @@ export async function abrirPickerEditor(
       await api(`${base}/ajuste`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modo, ajuste, uWidth }),
+        body: JSON.stringify({ modo, ajuste, uWidth, fonteRecorte }),
       })
       setStatus('Salvo.')
       opts.onSalvo?.()

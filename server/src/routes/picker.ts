@@ -128,13 +128,36 @@ function modoDa(l: LinhaFoto): Modo {
   return l.crop === 'coracao' ? 'coracao' : 'recorte'
 }
 
+/** 'original' = foto COM fundo, cortada direto (uso legítimo — nem toda foto precisa
+ *  de remoção de fundo); 'sem_fundo' = usa o PicWish (silhueta recortada de verdade). */
+type FonteRecorte = 'original' | 'sem_fundo'
+
+/** `fonteRecorte` mora dentro do MESMO ajuste_json que dx/dy/rotation/width — evita
+ *  migração de schema pra guardar 1 campo a mais. `parseAjuste` só devolve os campos
+ *  numéricos (o que os render*() esperam); `parseFonteRecorte` lê o mesmo blob pra
+ *  achar a escolha de fonte. */
 function parseAjuste(json: string): ParamsEnquadramento {
   if (!json) return {}
   try {
-    return JSON.parse(json) as ParamsEnquadramento
+    const obj = JSON.parse(json) as ParamsEnquadramento & { fonteRecorte?: unknown }
+    return { width: obj.width, height: obj.height, dx: obj.dx, dy: obj.dy, rotation: obj.rotation }
   } catch {
     return {}
   }
+}
+
+function parseFonteRecorte(json: string, temSemFundo: boolean): FonteRecorte {
+  if (json) {
+    try {
+      const obj = JSON.parse(json) as { fonteRecorte?: unknown }
+      if (obj.fonteRecorte === 'original' || obj.fonteRecorte === 'sem_fundo') return obj.fonteRecorte
+    } catch {
+      // cai no default abaixo
+    }
+  }
+  // 1ª vez: sem-fundo se já existir (reusa o que já foi removido), original senão —
+  // mesma regra do picker local (`fonte = "sem_fundo" if sf.exists() else "original"`).
+  return temSemFundo ? 'sem_fundo' : 'original'
 }
 
 function caminhoNovo(prefixo: string, pieceId: number, slot: number, ext = '.png'): string {
@@ -256,12 +279,14 @@ router.post('/pieces/:id/photo/:slot/preview', requireAuth, async (req, res) => 
     uWidth?: number
     /** Sem recorte na máscara — mostra o que sobra de fora (guia do editor). */
     semClip?: boolean
+    fonteRecorte?: FonteRecorte
   }
   const modo: Modo = body.modo ?? modoDa(l)
   const ajuste = body.ajuste ?? parseAjuste(l.ajuste_json)
+  const fonteRecorte = body.fonteRecorte ?? parseFonteRecorte(l.ajuste_json, Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path)))
 
   try {
-    const png = await comporFoto(l, modo, ajuste, body.uWidth ?? l.u_width ?? 600, body.semClip)
+    const png = await comporFoto(l, modo, ajuste, body.uWidth ?? l.u_width ?? 600, body.semClip, fonteRecorte)
     res.setHeader('content-type', 'image/png')
     res.setHeader('cache-control', 'no-store')
     res.send(png)
@@ -276,10 +301,20 @@ async function comporFoto(
   ajuste: ParamsEnquadramento,
   uWidth: number,
   semClip = false,
+  fonteRecorte: FonteRecorte = 'sem_fundo',
 ): Promise<Buffer> {
   if (modo === 'recorte') {
-    if (!l.sem_fundo_path || !existsSync(l.sem_fundo_path)) {
-      throw new Error('rode remove-bg antes de compor o recorte')
+    // Duas fontes válidas pro recorte: a foto SEM FUNDO (silhueta recortada de
+    // verdade pelo PicWish) ou a foto ORIGINAL, cortada direto pela cápsula sem
+    // remover fundo — uso legítimo quando o fundo já é liso/não atrapalha, ou o
+    // operador só quer conferir/posicionar sem gastar a chamada do PicWish.
+    const origem = fonteRecorte === 'original' ? l.storage_path : l.sem_fundo_path
+    if (!origem || !existsSync(origem)) {
+      throw new Error(
+        fonteRecorte === 'original'
+          ? 'foto original não encontrada'
+          : 'rode remove-bg antes de compor o recorte',
+      )
     }
     // `semClip` no recorte = ver a foto inteira antes da cápsula (e sem o
     // reenquadramento, que só faz sentido no resultado final) — a borda também só
@@ -287,7 +322,7 @@ async function comporFoto(
     // A composta salva aqui vai direto pra arte final sem nenhum passo depois (esse
     // port não tem "estágio 3" separado como o pipeline Python), então a borda entra
     // já na composição — mesmo timing que renderCoracao já usa por padrão.
-    return renderRecorte(readFileSync(l.sem_fundo_path), ajuste, uWidth, !semClip, semClip ? 0 : BORDER_PX)
+    return renderRecorte(readFileSync(origem), ajuste, uWidth, !semClip, semClip ? 0 : BORDER_PX)
   }
   if (!existsSync(l.storage_path)) throw new Error('foto original não encontrada')
   return renderCoracao(readFileSync(l.storage_path), ajuste, { clip: !semClip })
@@ -307,13 +342,19 @@ router.put('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
     res.status(404).json({ error: 'foto não encontrada' })
     return
   }
-  const body = req.body as { modo?: Modo; ajuste?: ParamsEnquadramento; uWidth?: number }
+  const body = req.body as {
+    modo?: Modo
+    ajuste?: ParamsEnquadramento
+    uWidth?: number
+    fonteRecorte?: FonteRecorte
+  }
   const modo: Modo = body.modo ?? modoDa(l)
   const ajuste = body.ajuste ?? {}
   const uWidth = body.uWidth ?? l.u_width ?? 600
+  const fonteRecorte = body.fonteRecorte ?? parseFonteRecorte(l.ajuste_json, Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path)))
 
   try {
-    const composta = await comporFoto(l, modo, ajuste, uWidth)
+    const composta = await comporFoto(l, modo, ajuste, uWidth, false, fonteRecorte)
     const destino = caminhoNovo('composta', ids.pieceId, ids.slot)
     trocarArquivo(l.composta_path, destino, composta)
     db.prepare(
@@ -322,7 +363,8 @@ router.put('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
         WHERE piece_id = ? AND slot = ?`,
     ).run(
       modo === 'coracao' ? 'coracao' : 'rosto',
-      JSON.stringify(ajuste),
+      // fonteRecorte guardado no MESMO blob — sem migração de schema pra 1 campo.
+      JSON.stringify({ ...ajuste, fonteRecorte }),
       uWidth,
       destino,
       nowMs(),
@@ -355,12 +397,14 @@ router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
     res.status(404).json({ error: 'nenhuma foto escolhida nesse slot' })
     return
   }
+  const temSemFundo = Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path))
   res.json({
     modo: modoDa(l),
     ajuste: parseAjuste(l.ajuste_json),
     uWidth: l.u_width ?? 600,
-    temSemFundo: Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path)),
+    temSemFundo,
     temComposta: Boolean(l.composta_path && existsSync(l.composta_path)),
+    fonteRecorte: parseFonteRecorte(l.ajuste_json, temSemFundo),
   })
 })
 
