@@ -34,6 +34,7 @@ import {
   CONJUNTO_POR_MOLDE,
   cortarPrintCanvas,
   labelDoMolde,
+  moldeConjuntoPlaceholder,
   montarArteCanvas,
   montarConjuntoCanvas,
 } from './render-molde-client'
@@ -1056,7 +1057,9 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     const molde = p.molde.trim().toUpperCase()
     const cliente = order.buyerUsername || order.orderId
 
-    if (CONJUNTO_POR_MOLDE[molde]) {
+    // CONJ infantil (ex "6 ANOS CONJ FEM") também é conjunto — usa a
+    // geometria placeholder (M CONJ FEM), ver moldeConjuntoPlaceholder.
+    if (CONJUNTO_POR_MOLDE[moldeConjuntoPlaceholder(molde)]) {
       const paineis = await montarConjuntoCanvas({ molde, cor: p.cor || '#000000', fotos, emojis })
       const { default: JSZip } = await import('jszip')
       const zip = new JSZip()

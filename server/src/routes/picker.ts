@@ -32,6 +32,7 @@ import {
   gerarPrint4x4,
   labelDoMolde,
   moldeCanvasPlaceholder,
+  moldeConjuntoPlaceholder,
   renderConjunto,
   renderMolde,
 } from '../render-molde.js'
@@ -541,10 +542,11 @@ export async function gerarArteDaPeca(pieceId: number, workbookId: string = SHOP
   if (!peca) throw new Error('peça não encontrada')
 
   const molde = (peca.molde || '').trim().toUpperCase()
-  // CONJ infantil (ex. "6 ANOS CONJ FEM") não tem geometria de conjunto
-  // própria ainda — vira painel único (canvas placeholder M FEMININO, ver
-  // moldeCanvasPlaceholder) até o user passar as medidas reais.
-  const ehConjunto = Boolean(CONJUNTO_POR_MOLDE[molde])
+  // CONJ infantil (ex. "6 ANOS CONJ FEM") também é conjunto — usa a
+  // geometria de M CONJ FEM como placeholder (ver moldeConjuntoPlaceholder
+  // em render-molde.ts) até o user passar as medidas reais. Detecta pelo
+  // molde já resolvido pro placeholder, não pelo nome original.
+  const ehConjunto = Boolean(CONJUNTO_POR_MOLDE[moldeConjuntoPlaceholder(molde)])
   if (!ehConjunto && !CANVAS_POR_MOLDE[moldeCanvasPlaceholder(molde)]) {
     throw new Error(`molde sem canvas cadastrado: "${peca.molde}"`)
   }

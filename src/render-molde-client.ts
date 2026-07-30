@@ -70,6 +70,22 @@ export function moldeCanvasPlaceholder(molde: string): string {
   return ehMoldeInfantil(molde) ? CANVAS_INFANTIL_PLACEHOLDER : molde.trim().toUpperCase()
 }
 
+/** true = molde CONJ (conjunto) com tamanho infantil, ex "6 ANOS CONJ FEM". */
+function ehMoldeConjInfantil(molde: string): boolean {
+  return ehMoldeInfantil(molde) && molde.trim().toUpperCase().includes('CONJ')
+}
+
+/** Conjunto infantil: SEM geometria própria ainda — usa M CONJ FEM como
+ *  PLACEHOLDER (o menor conjunto adulto, decisão do user 2026-07-31). Mesma
+ *  lógica do servidor (render-molde.ts, moldeConjuntoPlaceholder). */
+const CONJUNTO_INFANTIL_PLACEHOLDER = 'M CONJ FEM'
+
+/** Resolve o molde a usar pra geometria de CONJUNTO (3 painéis) — CONJ
+ *  infantil cai no placeholder M CONJ FEM; os demais usam o próprio nome. */
+export function moldeConjuntoPlaceholder(molde: string): string {
+  return ehMoldeConjInfantil(molde) ? CONJUNTO_INFANTIL_PLACEHOLDER : molde.trim().toUpperCase()
+}
+
 /** Tamanho da folha por molde — mesma tabela do servidor (render-molde.ts). */
 export const CANVAS_POR_MOLDE: Record<string, { w: number; h: number }> = {
   'P MASCULINO': { w: 9145, h: 5784 },
@@ -415,7 +431,10 @@ export async function montarConjuntoCanvas(
   const { molde, cor, fotos, emojis } = input
   if (fotos.length === 0) throw new Error('montarConjuntoCanvas: nenhuma foto')
 
-  const def = CONJUNTO_POR_MOLDE[molde.trim().toUpperCase()]
+  // Infantil: geometria própria não existe ainda — usa M CONJ FEM como
+  // placeholder (mesma lógica do servidor). label usa o molde ORIGINAL.
+  const moldeGeometria = moldeConjuntoPlaceholder(molde)
+  const def = CONJUNTO_POR_MOLDE[moldeGeometria]
   if (!def) throw new Error(`montarConjuntoCanvas: conjunto desconhecido pro molde "${molde}"`)
 
   const n = fotos.length
@@ -429,7 +448,7 @@ export async function montarConjuntoCanvas(
     // canvasShortDoConjunto) — mesma âncora medida, só o canvas ao redor
     // muda; sem escalar nada depois (evita distorcer o texto, que sempre
     // sai no tamanho fixo padrão TEXT_CAP_H).
-    const canvasPainel = nomePainel === 'Short' ? canvasShortDoConjunto(molde) : { w: p.w, h: p.h }
+    const canvasPainel = nomePainel === 'Short' ? canvasShortDoConjunto(moldeGeometria) : { w: p.w, h: p.h }
 
     const canvas = document.createElement('canvas')
     canvas.width = canvasPainel.w

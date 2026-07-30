@@ -68,20 +68,38 @@ function ehMoldeInfantil(molde: string): boolean {
   return /^\d{1,2}\s*ANOS\b/.test(molde.trim().toUpperCase())
 }
 
-/** Canvas infantil: SEM medida própria ainda (2026-07-31, pedido do user) —
- *  usa M FEMININO como PLACEHOLDER pra qualquer tamanho/gênero/tipo infantil.
- *  Só a resolução física muda; o texto de identificação continua mostrando
- *  o tamanho REAL (labelDoMolde preserva "6 ANOS..." no nome do molde). */
+/** true = molde CONJ (conjunto) com tamanho infantil, ex "6 ANOS CONJ FEM". */
+function ehMoldeConjInfantil(molde: string): boolean {
+  return ehMoldeInfantil(molde) && molde.trim().toUpperCase().includes('CONJ')
+}
+
+/** Canvas infantil (painel único — SHORT/CAMISOLA): SEM medida própria
+ *  ainda (2026-07-31, pedido do user) — usa M FEMININO como PLACEHOLDER pra
+ *  qualquer tamanho/gênero infantil. Só a resolução física muda; o texto de
+ *  identificação continua mostrando o tamanho REAL (labelDoMolde preserva
+ *  "6 ANOS..." no nome do molde). */
 const CANVAS_INFANTIL_PLACEHOLDER = 'M FEMININO'
 
-/** Resolve o molde a usar pra CANVAS/tiling — infantil sempre cai no
- *  placeholder (CANVAS_INFANTIL_PLACEHOLDER); os demais usam o próprio nome.
- *  Conjunto infantil (ex "6 ANOS CONJ FEM") também usa o placeholder de
- *  painel único: não tem geometria de conjunto própria pro infantil ainda,
- *  então a arte infantil sai como painel único mesmo quando o pedido é
- *  CONJUNTO (até haver medida real, decisão do user 2026-07-31). */
+/** Conjunto infantil (ex "6 ANOS CONJ FEM"): SEM geometria própria ainda —
+ *  usa M CONJ FEM como PLACEHOLDER (o menor conjunto adulto, decisão do user
+ *  2026-07-31: "pode gerar os 3 com base no M feminino que é o menor"). Sai
+ *  um .zip com os 3 painéis (Frente/Manga/Short) igual ao conjunto adulto,
+ *  só o texto mostrando a idade real em vez de "M CONJ FEM". */
+const CONJUNTO_INFANTIL_PLACEHOLDER = 'M CONJ FEM'
+
+/** Resolve o molde a usar pra CANVAS/tiling de PAINEL ÚNICO — infantil
+ *  sempre cai no placeholder (CANVAS_INFANTIL_PLACEHOLDER); os demais usam
+ *  o próprio nome. CONJ infantil usa moldeConjuntoPlaceholder (3 painéis),
+ *  não este — ver gerarArteDaPeca em routes/picker.ts pra decisão de qual
+ *  caminho usar. */
 export function moldeCanvasPlaceholder(molde: string): string {
   return ehMoldeInfantil(molde) ? CANVAS_INFANTIL_PLACEHOLDER : molde.trim().toUpperCase()
+}
+
+/** Resolve o molde a usar pra geometria de CONJUNTO (3 painéis) — CONJ
+ *  infantil cai no placeholder M CONJ FEM; os demais usam o próprio nome. */
+export function moldeConjuntoPlaceholder(molde: string): string {
+  return ehMoldeConjInfantil(molde) ? CONJUNTO_INFANTIL_PLACEHOLDER : molde.trim().toUpperCase()
 }
 
 /** Tamanho da folha por molde. É o ÚNICO dado que muda entre moldes —
@@ -466,7 +484,13 @@ export async function renderConjunto(
   const { molde, cor, fotos, emojis } = input
   if (fotos.length === 0) throw new Error('renderConjunto: nenhuma foto')
 
-  const def = CONJUNTO_POR_MOLDE[molde.trim().toUpperCase()]
+  // Infantil: geometria própria não existe ainda — usa M CONJ FEM (menor
+  // conjunto adulto) como placeholder. Resolve ANTES de tudo, então o resto
+  // da função (inclusive canvasShortDoConjunto) já trabalha com um molde
+  // "normal" — só o `label` (texto) usa o molde ORIGINAL, preservando a
+  // idade real. Decisão do user 2026-07-31.
+  const moldeGeometria = moldeConjuntoPlaceholder(molde)
+  const def = CONJUNTO_POR_MOLDE[moldeGeometria]
   if (!def) throw new Error(`renderConjunto: conjunto desconhecido pro molde "${molde}"`)
 
   const n = fotos.length
@@ -482,7 +506,7 @@ export async function renderConjunto(
     // muda, então o tiling tileia igual e corta na borda menor, sem precisar
     // escalar nada depois (evita distorcer o texto de identificação, que
     // sempre sai no tamanho fixo padrão TEXT_CAP_H).
-    const canvasPainel = nomePainel === 'Short' ? canvasShortDoConjunto(molde) : { w: p.w, h: p.h }
+    const canvasPainel = nomePainel === 'Short' ? canvasShortDoConjunto(moldeGeometria) : { w: p.w, h: p.h }
 
     const camadas: sharp.OverlayOptions[] = []
     tileFotos({
