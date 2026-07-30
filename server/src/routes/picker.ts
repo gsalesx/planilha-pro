@@ -752,6 +752,19 @@ router.post('/pieces/:id/print-upload', requireAuth, upload.single('image'), (re
   res.json({ ok: true, col, marcadoPronto: pronto })
 })
 
+/** Sufixa " (2)", " (3)"... se `nome` já existe no zip — nomeArteFinal não
+ *  distingue peças do MESMO cliente+molde (2 unidades do mesmo tamanho no
+ *  mesmo pedido), então sem isso zip.file() sobrescreve a anterior. */
+function nomeZipSemColisao(zip: JSZip, nome: string): string {
+  if (!zip.file(nome)) return nome
+  const pontoExt = nome.lastIndexOf('.')
+  const base = pontoExt > 0 ? nome.slice(0, pontoExt) : nome
+  const ext = pontoExt > 0 ? nome.slice(pontoExt) : ''
+  let i = 2
+  while (zip.file(`${base} (${i})${ext}`)) i++
+  return `${base} (${i})${ext}`
+}
+
 /**
  * Download em massa dos APROVADOS — substitui o Processo G (Remessa), que era
  * feito à mão: varrer aprovados, copiar as artes pra uma pasta, marcar
@@ -765,6 +778,7 @@ router.post('/pieces/:id/print-upload', requireAuth, upload.single('image'), (re
  * (assim baixar só pra conferir não muda nada).
  */
 router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
   const sheetDate = typeof req.query.sheetDate === 'string' ? req.query.sheetDate : null
   const STATUS_COL = 5
   const APROVADO = 'Aprovado'
@@ -777,10 +791,10 @@ router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
   }
   const pedidos = db
     .prepare(
-      `SELECT order_key, id, sheet_date, row_json FROM orders
+      `SELECT order_key, id, sheet_date, row_json, parent_key FROM orders
         WHERE ${where.join(' AND ')} ORDER BY sheet_date, position`,
     )
-    .all(...params) as Array<{ order_key: string; id: string; sheet_date: string; row_json: string }>
+    .all(...params) as Array<{ order_key: string; id: string; sheet_date: string; row_json: string; parent_key: string | null }>
 
   if (pedidos.length === 0) {
     res.status(404).json({ error: sheetDate ? `nenhum aprovado em ${sheetDate}` : 'nenhum pedido aprovado' })
@@ -791,16 +805,41 @@ router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
   const falhas: string[] = []
   let geradas = 0
 
+  // Um pedido de N peças é N LINHAS (pai + filhas, ver planilha-pai-filha-2026-07-28)
+  // — cada peça mora na sua própria linha/order_key. O filtro de status acima só pega
+  // a(s) linha(s) com "Aprovado" na coluna, então buscar peças só por
+  // `pedido.order_key` perdia as peças das linhas-filhas sempre que elas não
+  // estivessem TAMBÉM marcadas "Aprovado" individualmente (bug: adrielegiyuri, pedido
+  // de 5 peças baixava só 1 — a da linha que bateu no filtro). Resolve sempre a
+  // linha-PAI e TODAS as filhas dela antes de buscar peças, e usa a linha-pai (não
+  // cada linha aprovada) como unidade de dedup — se pai e alguma filha aparecerem
+  // separadamente no resultado do filtro, processa o pedido inteiro uma única vez.
+  const pedidosProcessados = new Set<string>()
   for (const pedido of pedidos) {
+    const chavePai = pedido.parent_key ?? pedido.order_key
+    if (pedidosProcessados.has(chavePai)) continue
+    pedidosProcessados.add(chavePai)
+
     const cliente = (JSON.parse(pedido.row_json)[4] as string) || pedido.id
-    const pecas = db
-      .prepare('SELECT id FROM order_pieces WHERE order_key = ? ORDER BY seq')
-      .all(pedido.order_key) as Array<{ id: number }>
+    const chaves = [
+      chavePai,
+      ...(
+        db.prepare('SELECT order_key FROM orders WHERE workbook_id = ? AND parent_key = ? ORDER BY position')
+          .all(workbookId, chavePai) as Array<{ order_key: string }>
+      ).map((f) => f.order_key),
+    ]
+    const pecas = chaves.flatMap(
+      (k) => db.prepare('SELECT id FROM order_pieces WHERE workbook_id = ? AND order_key = ? ORDER BY seq').all(workbookId, k) as Array<{ id: number }>,
+    )
     for (const peca of pecas) {
       try {
-        // nome já vem como "{cliente} {molde}.jpg" (nomeArteFinal) — não prefixar de novo.
-        const { nome, jpg } = await gerarArteDaPecaCache(peca.id)
-        zip.file(nome, jpg)
+        const { nome, jpg } = await gerarArteDaPecaCache(peca.id, workbookId)
+        // 2+ peças do MESMO cliente+molde (ex.: 2 unidades do mesmo tamanho no
+        // mesmo pedido) geram o MESMO nome (nomeArteFinal não distingue peça) —
+        // sem desambiguar, zip.file() sobrescreve e só sobra 1 arquivo no zip
+        // (bug irmão do de cima: mesmo pedido, peças "sumindo" silenciosamente).
+        const nomeUnico = nomeZipSemColisao(zip, nome)
+        zip.file(nomeUnico, jpg)
         geradas++
       } catch (e) {
         falhas.push(`${cliente}/peça ${peca.id}: ${(e as Error).message}`)
@@ -821,7 +860,9 @@ router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
   res.send(buf)
 })
 
-/** Quantos aprovados existem — o botão mostra o número antes de baixar. */
+/** Quantos aprovados existem — o botão mostra o número antes de baixar.
+ *  Conta PEDIDOS únicos (linha-pai), não linhas — uma filha também marcada
+ *  "Aprovado" não pode contar como um 2º pedido (mesmo dedup do zip acima). */
 router.get('/picker/artes-aprovadas/contagem', requireAuth, (req, res) => {
   const sheetDate = typeof req.query.sheetDate === 'string' ? req.query.sheetDate : null
   const STATUS_COL = 5
@@ -831,10 +872,11 @@ router.get('/picker/artes-aprovadas/contagem', requireAuth, (req, res) => {
     where.push('sheet_date = ?')
     params.push(sheetDate)
   }
-  const r = db
-    .prepare(`SELECT COUNT(*) AS n FROM orders WHERE ${where.join(' AND ')}`)
-    .get(...params) as { n: number }
-  res.json({ pedidos: r.n })
+  const linhas = db
+    .prepare(`SELECT order_key, parent_key FROM orders WHERE ${where.join(' AND ')}`)
+    .all(...params) as Array<{ order_key: string; parent_key: string | null }>
+  const pedidosUnicos = new Set(linhas.map((l) => l.parent_key ?? l.order_key))
+  res.json({ pedidos: pedidosUnicos.size })
 })
 
 router.get('/pieces/:id/arte', requireAuth, async (req, res) => {
