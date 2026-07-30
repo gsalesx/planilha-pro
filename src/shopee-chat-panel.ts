@@ -1006,6 +1006,10 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     if (fotos.length === 0) throw new Error(`${p.molde}: nenhuma foto composta — ajuste as fotos no picker antes`)
     if (fotos.length === 1) fotos.push(fotos[0])
 
+    // 404 aqui é o caso normal de "SEM EMOJI" (a rota já resolve isso — ver
+    // caminhoEmoji no servidor). Lista vazia é válida: montarArteCanvas pula a
+    // camada de emoji nesse caso, não é erro (mesma regra do servidor, ver
+    // gerarArteDaPeca em picker.ts — bug corrigido junto com este 2026-07-30).
     const emojis: HTMLImageElement[] = []
     for (const slot of [1, 2] as const) {
       try {
@@ -1014,7 +1018,6 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         // sem emoji nesse slot — reusa o outro (mesma regra do servidor)
       }
     }
-    if (emojis.length === 0) throw new Error(`${p.molde}: emoji não encontrado no catálogo`)
 
     const molde = p.molde.trim().toUpperCase()
     const blob = await montarArteCanvas({ molde, cor: p.cor || '#000000', fotos, emojis })
