@@ -167,6 +167,21 @@ export const PRINT_ALTURA = 1400
 export const PRINT_ZOOM_FATOR = 1.3
 export const PRINT_DESLOCAMENTO_X = 600
 
+/** Fator de escala do painel "Short" do conjunto — mesma tabela do servidor
+ *  (render-molde.ts, ver comentário lá pra explicação completa). O PSD
+ *  original tem o short ligeiramente MAIOR que o short normal do mesmo
+ *  tamanho/gênero (medido 2026-07-31: até 15% maior no MASCULINO). */
+const SHORT_ESCALA_POR_MOLDE: Record<string, number> = {
+  'P CONJ MASC': (9145 / 10157) * 0.5 + (5784 / 6496) * 0.5,
+  'M CONJ MASC': (9145 / 10157) * 0.5 + (5784 / 6496) * 0.5,
+  'G CONJ MASC': (9259 / 10276) * 0.5 + (6140 / 6735) * 0.5,
+  'GG CONJ MASC': (9277 / 10634) * 0.5 + (6382 / 7200) * 0.5,
+  'P CONJ FEM': (8859 / 8977) * 0.5 + (4963 / 5315) * 0.5,
+  'M CONJ FEM': (8859 / 8977) * 0.5 + (4963 / 5315) * 0.5,
+  'G CONJ FEM': (9089 / 9686) * 0.5 + (5433 / 5552) * 0.5,
+  'GG CONJ FEM': (9682 / 9686) * 0.5 + (5549 / 5552) * 0.5,
+}
+
 export interface RenderMoldeInput {
   molde: string
   /** Cor de fundo em hex (#RRGGBB). */
@@ -195,9 +210,14 @@ type ImagemFonte = HTMLImageElement | ImageBitmap
 /**
  * Tileia o padrão Foto/Emoji dentro de uma área (painel ou canvas inteiro) e
  * desenha direto no ctx (coordenadas ABSOLUTAS: soma offsetX/offsetY). `x0/y0`
- * é a âncora da fase — no painel único vem da fórmula de centralização, no
- * conjunto vem medida do PSD (ver CONJUNTO_POR_MOLDE, cada painel tem fase
- * própria). Mesma lógica de `tileFotos` do servidor (render-molde.ts).
+ * é a âncora da fase DO PADRÃO de fotos/emojis — no painel único vem da
+ * fórmula de centralização, no conjunto vem medida do PSD (ver
+ * CONJUNTO_POR_MOLDE, cada painel tem fase própria). Mesma lógica de
+ * `tileFotos` do servidor (render-molde.ts) — o texto NÃO usa mais essa
+ * âncora (ver desenharLabel): fica sempre fixo no canto superior-esquerdo,
+ * independente de onde o padrão de fotos começa. Bug corrigido 2026-07-31:
+ * no painel "Manga" do conjunto a âncora medida cai no MEIO do painel, e o
+ * texto herdava essa posição.
  */
 function tileFotosCanvas(opts: {
   ctx: CanvasRenderingContext2D
@@ -211,9 +231,8 @@ function tileFotosCanvas(opts: {
   unitW: number
   fotos: ImagemFonte[]
   emojiPara: (i: number) => ImagemFonte | undefined
-}): { x: number; y: number } | null {
+}): void {
   const { ctx, offsetX, offsetY, w, h, x0, y0, itens, unitW, fotos, emojiPara } = opts
-  let ancora: { x: number; y: number } | null = null
   const yInicio = y0 - Math.ceil((y0 + ROW_PITCH) / ROW_PITCH) * ROW_PITCH
   for (let y = yInicio; y < h; y += ROW_PITCH) {
     const linha = Math.round((y - y0) / ROW_PITCH)
@@ -227,20 +246,19 @@ function tileFotosCanvas(opts: {
         const dy = item.tipo === 'foto' ? 0 : EMOJI_DY
         if (buf) ctx.drawImage(buf, offsetX + x + item.dx, offsetY + y + dy, tam, tam)
       }
-      if (!ancora && y === y0 && x === x0) ancora = { x: offsetX + x + ROSTO, y: offsetY + y }
     }
   }
-  return ancora
 }
 
-function desenharLabel(ctx: CanvasRenderingContext2D, label: string, ancora: { x: number; y: number }): void {
+/** Canto superior-esquerdo do canvas/painel, SEMPRE — ver nota em tileFotosCanvas. */
+function desenharLabel(ctx: CanvasRenderingContext2D, label: string): void {
   const fontSize = Math.round(TEXT_CAP_H / CAP_RATIO)
   ctx.fillStyle = TEXT_COLOR
   ctx.font = `bold ${fontSize}px "DejaVu Sans", Arial, Helvetica, sans-serif`
   ctx.textBaseline = 'alphabetic'
   // O SVG do servidor desenha a partir de y=TEXT_CAP_H (baseline); canvas
   // fillText também usa baseline por padrão — mesma referência.
-  ctx.fillText(label, ancora.x + TEXT_PAD_X, ancora.y + TEXT_PAD_Y + TEXT_CAP_H)
+  ctx.fillText(label, TEXT_PAD_X, TEXT_PAD_Y + TEXT_CAP_H)
 }
 
 /** DPI da arte impressa (mesmo valor do servidor, ver render-molde.ts —
@@ -342,12 +360,12 @@ export async function montarArteCanvas(input: RenderMoldeInput): Promise<Blob> {
   // (e com o pipeline Python original), mantém as 3 saídas idênticas ao pixel.
   const x0 = Math.floor(-(unitW - (W % unitW)) / 2)
 
-  const ancora = tileFotosCanvas({
+  tileFotosCanvas({
     ctx, offsetX: 0, offsetY: 0, w: W, h: H, x0, y0: 0, itens, unitW, fotos, emojiPara,
   })
 
   const label = input.label ?? labelDoMolde(molde)
-  if (label && ancora) desenharLabel(ctx, label, ancora)
+  if (label) desenharLabel(ctx, label)
 
   return canvasParaBlob(canvas, input.qualidade)
 }
@@ -391,12 +409,27 @@ export async function montarConjuntoCanvas(
     ctx.fillStyle = cor || '#000000'
     ctx.fillRect(0, 0, p.w, p.h)
 
-    const ancora = tileFotosCanvas({
+    tileFotosCanvas({
       ctx, offsetX: 0, offsetY: 0, w: p.w, h: p.h, x0: p.anchorX, y0: p.anchorY, itens, unitW, fotos, emojiPara,
     })
-    if (label && ancora) desenharLabel(ctx, label, ancora)
+    if (label) desenharLabel(ctx, label)
 
-    saidas.push({ painel: nomePainel, blob: await canvasParaBlob(canvas, input.qualidade) })
+    // Short do PSD conjunto sai maior que o short normal do mesmo tamanho —
+    // escala pro tamanho físico certo (ver SHORT_ESCALA_POR_MOLDE).
+    const escala = nomePainel === 'Short' ? SHORT_ESCALA_POR_MOLDE[molde.trim().toUpperCase()] : undefined
+    let canvasFinal = canvas
+    if (escala) {
+      const escalado = document.createElement('canvas')
+      escalado.width = Math.round(p.w * escala)
+      escalado.height = Math.round(p.h * escala)
+      const ctxEscalado = escalado.getContext('2d')!
+      ctxEscalado.imageSmoothingEnabled = true
+      ctxEscalado.imageSmoothingQuality = 'high'
+      ctxEscalado.drawImage(canvas, 0, 0, escalado.width, escalado.height)
+      canvasFinal = escalado
+    }
+
+    saidas.push({ painel: nomePainel, blob: await canvasParaBlob(canvasFinal, input.qualidade) })
   }
   return saidas
 }

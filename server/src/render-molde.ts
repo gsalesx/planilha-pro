@@ -165,6 +165,28 @@ export const CONJUNTO_POR_MOLDE: Record<string, { canvas: { w: number; h: number
   },
 }
 
+/**
+ * Fator de escala do painel "Short" do conjunto — o PSD original tem o short
+ * ligeiramente MAIOR que o short normal (painel único) do mesmo tamanho/
+ * gênero (medido 2026-07-31: até 15% maior no MASCULINO, até 7% no
+ * FEMININO). Calculado como a média das razões w/h entre o Short do PSD
+ * conjunto (CONJUNTO_POR_MOLDE) e o CANVAS_POR_MOLDE do short normal
+ * correspondente — reportado pelo user comparando artes impressas lado a
+ * lado. Reduz o painel Short na exportação pro tamanho físico certo (mesma
+ * densidade 300 DPI dos dois lados, então bater os pixels = bater as
+ * polegadas); Frente/Manga não são afetados.
+ */
+const SHORT_ESCALA_POR_MOLDE: Record<string, number> = {
+  'P CONJ MASC': 9145 / 10157 * 0.5 + 5784 / 6496 * 0.5,
+  'M CONJ MASC': 9145 / 10157 * 0.5 + 5784 / 6496 * 0.5,
+  'G CONJ MASC': 9259 / 10276 * 0.5 + 6140 / 6735 * 0.5,
+  'GG CONJ MASC': 9277 / 10634 * 0.5 + 6382 / 7200 * 0.5,
+  'P CONJ FEM': 8859 / 8977 * 0.5 + 4963 / 5315 * 0.5,
+  'M CONJ FEM': 8859 / 8977 * 0.5 + 4963 / 5315 * 0.5,
+  'G CONJ FEM': 9089 / 9686 * 0.5 + 5433 / 5552 * 0.5,
+  'GG CONJ FEM': 9682 / 9686 * 0.5 + 5549 / 5552 * 0.5,
+}
+
 export interface RenderMoldeInput {
   /** Nome do molde, ex 'M MASCULINO'. Precisa existir em CANVAS_POR_MOLDE. */
   molde: string
@@ -306,10 +328,17 @@ async function normalizarSlots(
 /**
  * Tileia o padrão Foto/Emoji dentro de uma área retangular (painel ou canvas
  * inteiro) e empilha as camadas em `camadas` (coordenadas ABSOLUTAS — soma
- * `offsetX/offsetY` do painel). `x0/y0` é a âncora da fase: a posição do 1º
- * item da linha "par" (não deslocada pelo STAGGER) — no painel único isso é
- * calculado centralizando no canvas; no conjunto vem medido do PSD (cada
- * painel tem fase própria, ver CONJUNTO_POR_MOLDE).
+ * `offsetX/offsetY` do painel). `x0/y0` é a âncora da fase do PADRÃO de
+ * fotos/emojis: a posição do 1º item da linha "par" (não deslocada pelo
+ * STAGGER) — no painel único isso é calculado centralizando no canvas; no
+ * conjunto vem medido do PSD (cada painel tem fase própria, ver
+ * CONJUNTO_POR_MOLDE). Essa âncora é só do TILING — o texto de identificação
+ * NÃO usa mais essa posição (ver svgTexto/desenharLabel): fica sempre fixo
+ * no canto superior-esquerdo do painel, independente de onde o padrão de
+ * fotos começa. Bug corrigido 2026-07-31: no painel "Manga" do conjunto, a
+ * âncora medida do PSD cai no MEIO do painel (não no canto), e o texto
+ * herdava essa posição — saía "no meio da manga" em vez de canto superior
+ * esquerdo como nos demais moldes.
  */
 function tileFotos(opts: {
   camadas: sharp.OverlayOptions[]
@@ -323,9 +352,8 @@ function tileFotos(opts: {
   unitW: number
   fotosNorm: Buffer[]
   emojiPara: (i: number) => Buffer | null
-}): { x: number; y: number } | null {
+}): void {
   const { camadas, offsetX, offsetY, w, h, x0, y0, itens, unitW, fotosNorm, emojiPara } = opts
-  let ancora: { x: number; y: number } | null = null
   // Varre da 1ª linha "par" (y0) pra cima e pra baixo, cobrindo toda a altura
   // do painel — y0 pode ser >0 (ver painéis Manga/Frente medidos no PSD).
   const yInicio = y0 - Math.ceil((y0 + ROW_PITCH) / ROW_PITCH) * ROW_PITCH
@@ -341,10 +369,8 @@ function tileFotos(opts: {
         const dy = item.tipo === 'foto' ? 0 : EMOJI_DY
         camadas.push({ input: buf, left: offsetX + x + item.dx, top: offsetY + y + dy })
       }
-      if (!ancora && y === y0 && x === x0) ancora = { x: offsetX + x + ROSTO, y: offsetY + y }
     }
   }
-  return ancora
 }
 
 /**
@@ -369,14 +395,16 @@ export async function renderMolde(input: RenderMoldeInput): Promise<Buffer> {
   const x0 = Math.floor(-(unitW - (W % unitW)) / 2)
 
   const camadas: sharp.OverlayOptions[] = []
-  const ancora = tileFotos({
+  tileFotos({
     camadas, offsetX: 0, offsetY: 0, w: W, h: H, x0, y0: 0, itens, unitW, fotosNorm, emojiPara,
   })
 
+  // Canto superior-esquerdo do canvas, SEMPRE — independente de onde o
+  // padrão de fotos começa (ver nota em tileFotos).
   const label = input.label ?? labelDoMolde(molde)
-  if (label && ancora) {
+  if (label) {
     const { svg } = svgTexto(label)
-    camadas.push({ input: svg, left: ancora.x + TEXT_PAD_X, top: ancora.y + TEXT_PAD_Y })
+    camadas.push({ input: svg, left: TEXT_PAD_X, top: TEXT_PAD_Y })
   }
 
   return sharp({
@@ -421,7 +449,7 @@ export async function renderConjunto(
   const saidas: Array<{ painel: string; jpg: Buffer }> = []
   for (const [nomePainel, p] of Object.entries(def.paineis)) {
     const camadas: sharp.OverlayOptions[] = []
-    const ancora = tileFotos({
+    tileFotos({
       camadas,
       offsetX: 0,
       offsetY: 0,
@@ -434,14 +462,24 @@ export async function renderConjunto(
       fotosNorm,
       emojiPara,
     })
-    if (label && ancora) {
+    // Canto superior-esquerdo do PAINEL — cada painel (Frente/Manga/Short) é
+    // uma imagem própria, então o texto sempre fica no canto dela.
+    if (label) {
       const { svg } = svgTexto(label)
-      camadas.push({ input: svg, left: ancora.x + TEXT_PAD_X, top: ancora.y + TEXT_PAD_Y })
+      camadas.push({ input: svg, left: TEXT_PAD_X, top: TEXT_PAD_Y })
     }
-    const jpg = await sharp({
+    let img = sharp({
       create: { width: p.w, height: p.h, channels: 3, background: cmyk },
-    })
-      .composite(camadas)
+    }).composite(camadas)
+
+    // Short do PSD conjunto sai maior que o short normal do mesmo tamanho —
+    // escala pro tamanho físico certo (ver SHORT_ESCALA_POR_MOLDE).
+    const escala = nomePainel === 'Short' ? SHORT_ESCALA_POR_MOLDE[molde.trim().toUpperCase()] : undefined
+    if (escala) {
+      img = img.resize(Math.round(p.w * escala), Math.round(p.h * escala))
+    }
+
+    const jpg = await img
       .withMetadata({ density: 300 })
       .jpeg({ quality: input.qualidade ?? 90 })
       .toBuffer()
