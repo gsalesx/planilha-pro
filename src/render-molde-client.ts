@@ -243,10 +243,66 @@ function desenharLabel(ctx: CanvasRenderingContext2D, label: string, ancora: { x
   ctx.fillText(label, ancora.x + TEXT_PAD_X, ancora.y + TEXT_PAD_Y + TEXT_CAP_H)
 }
 
+/** DPI da arte impressa (mesmo valor do servidor, ver render-molde.ts —
+ *  SEM isso a impressora assume ~72/96 e a arte sai ~4× maior/estourada;
+ *  bug já pego uma vez no pipeline Python em 2026-05-30, e de novo aqui em
+ *  2026-07-30: canvas.toBlob('image/jpeg') NÃO tem opção de densidade —
+ *  diferente de sharp.withMetadata({density:300}) no servidor, o Canvas 2D
+ *  sempre exporta sem declarar DPI (a maioria dos softwares assume 96 nesse
+ *  caso), então a arte montada NO NAVEGADOR saía sem essa informação —
+ *  reportado em produção: kairanalilianleite saiu com 96 DPI, "estragou a
+ *  arte" na impressão física. */
+const DPI_ARTE = 300
+
+/** Injeta/sobrescreve o segmento JFIF (APP0) do JPEG com a densidade
+ *  DPI_ARTE — só isso, sem re-encodar a imagem (bytes de pixel intactos).
+ *  Todo JPEG do Canvas começa com FFD8 [FFE0 <len> "JFIF\0" ver unit Xd Yd ...]
+ *  — sobrescreve `unit`(1=DPI)/Xdensity/Ydensity se o APP0 já existir; se o
+ *  navegador não gerar um (raro, mas não garantido pela spec), insere um. */
+async function forcarDpiJpeg(blob: Blob, dpi: number): Promise<Blob> {
+  const buf = new Uint8Array(await blob.arrayBuffer())
+  if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return blob // não é JPEG — não mexe
+
+  const temApp0 = buf[2] === 0xff && buf[3] === 0xe0
+  if (temApp0) {
+    const out = buf.slice()
+    // APP0: FFE0 <len 2B> "JFIF\0" (5B) <ver 2B> <unit 1B> <Xd 2B> <Yd 2B> ...
+    const base = 4 + 2 + 5 + 2 // offset do byte `unit`, a partir do início do buffer
+    out[base] = 0x01 // unit = 1 (dots per inch)
+    out[base + 1] = (dpi >> 8) & 0xff
+    out[base + 2] = dpi & 0xff
+    out[base + 3] = (dpi >> 8) & 0xff
+    out[base + 4] = dpi & 0xff
+    return new Blob([out], { type: 'image/jpeg' })
+  }
+
+  // Sem APP0: insere um segmento JFIF mínimo logo após o SOI (FFD8).
+  const app0 = new Uint8Array([
+    0xff, 0xe0, 0x00, 0x10, // marker + length(16)
+    0x4a, 0x46, 0x49, 0x46, 0x00, // "JFIF\0"
+    0x01, 0x01, // versão 1.1
+    0x01, // unit = DPI
+    (dpi >> 8) & 0xff, dpi & 0xff, // Xdensity
+    (dpi >> 8) & 0xff, dpi & 0xff, // Ydensity
+    0x00, 0x00, // thumbnail 0x0
+  ])
+  const out = new Uint8Array(buf.length + app0.length)
+  out.set(buf.slice(0, 2), 0) // SOI
+  out.set(app0, 2)
+  out.set(buf.slice(2), 2 + app0.length)
+  return new Blob([out], { type: 'image/jpeg' })
+}
+
 function canvasParaBlob(canvas: HTMLCanvasElement, qualidade = 90): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error('falha ao gerar JPEG'))),
+      (blob) => {
+        if (!blob) {
+          reject(new Error('falha ao gerar JPEG'))
+          return
+        }
+        forcarDpiJpeg(blob, DPI_ARTE).then(resolve, reject)
+      },
       'image/jpeg',
       qualidade / 100,
     )
