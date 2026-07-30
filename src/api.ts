@@ -546,6 +546,12 @@ export interface OrderPiece {
   /** updated_at da foto crua por slot — cache-buster de /photo/:slot (cacheada
    *  24h pelo navegador; sem isso, trocar a foto não atualiza a miniatura). */
   fotosUpdatedAt?: { 1: number | null; 2: number | null }
+  /** updated_at da PEÇA (order_pieces) — muda ao trocar emoji1/emoji2/cor/etc.
+   *  Cache-buster de GET /pieces/:id/emoji/:slot (cacheada 1h pelo navegador,
+   *  URL fixa por peça/slot — sem isso, trocar o emoji na peça continua
+   *  servindo o PNG antigo até o cache expirar). Nome snake_case: vem direto
+   *  da coluna do banco (server serializa o objeto sem remapear chaves). */
+  updated_at: number
 }
 
 export async function getOrderPieces(

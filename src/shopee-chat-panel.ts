@@ -1006,7 +1006,12 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     opts?: { painelPreview?: boolean },
   ): Promise<{ nome: string; blob: Blob; painelPreview?: Blob }> {
     const fotoUrl = (slot: 1 | 2) => `/api/pieces/${p.id}/photo/${slot}/composta`
-    const emojiUrl = (slot: 1 | 2) => `/api/pieces/${p.id}/emoji/${slot}`
+    // ?v=updated_at: a rota é cacheada 1h (URL fixa por peça/slot) — sem esse
+    // cache-buster, trocar o emoji na peça (emoji1/emoji2) continua servindo o
+    // PNG antigo do navegador até o cache expirar, mesmo o servidor já
+    // resolvendo o novo nome corretamente (bug: carol0595fm — cor mudava na
+    // hora, emoji continuava saindo o de antes até trocar de novo bem depois).
+    const emojiUrl = (slot: 1 | 2) => `/api/pieces/${p.id}/emoji/${slot}?v=${p.updated_at}`
 
     const fotos: HTMLImageElement[] = []
     for (const slot of [1, 2] as const) {
