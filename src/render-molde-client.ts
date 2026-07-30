@@ -44,7 +44,30 @@ export function labelDoMolde(molde: string): string {
   if (partes.length === 2 && ABREV_TIPO[partes[1]]) {
     return `${partes[0]} ${ABREV_TIPO[partes[1]]}`
   }
+  if (partes.length === 3 && ABREV_TIPO[partes[2]]) {
+    // "6 ANOS MASCULINO" -> "6 ANOS MASC" (mesma abreviação do adulto,
+    // preservando o tamanho infantil real no texto).
+    return `${partes[0]} ${partes[1]} ${ABREV_TIPO[partes[2]]}`
+  }
   return partes.join(' ')
+}
+
+/** true = molde com tamanho infantil (2/4/6/8/10/12 ANOS) — mesma lógica do
+ *  servidor (render-molde.ts). */
+function ehMoldeInfantil(molde: string): boolean {
+  return /^\d{1,2}\s*ANOS\b/.test(molde.trim().toUpperCase())
+}
+
+/** Canvas infantil: SEM medida própria ainda (2026-07-31) — usa M FEMININO
+ *  como PLACEHOLDER pra qualquer tamanho/gênero/tipo infantil. Só a
+ *  resolução física muda; o texto continua mostrando o tamanho REAL. */
+const CANVAS_INFANTIL_PLACEHOLDER = 'M FEMININO'
+
+/** Resolve o molde a usar pra CANVAS/tiling — infantil sempre cai no
+ *  placeholder; os demais usam o próprio nome. Mesma lógica do servidor
+ *  (render-molde.ts, moldeCanvasPlaceholder). */
+export function moldeCanvasPlaceholder(molde: string): string {
+  return ehMoldeInfantil(molde) ? CANVAS_INFANTIL_PLACEHOLDER : molde.trim().toUpperCase()
 }
 
 /** Tamanho da folha por molde — mesma tabela do servidor (render-molde.ts). */
@@ -340,7 +363,7 @@ export async function montarArteCanvas(input: RenderMoldeInput): Promise<Blob> {
   const { molde, cor, fotos, emojis } = input
   if (fotos.length === 0) throw new Error('montarArteCanvas: nenhuma foto')
 
-  const canvasSize = input.canvas ?? CANVAS_POR_MOLDE[molde.trim().toUpperCase()]
+  const canvasSize = input.canvas ?? CANVAS_POR_MOLDE[moldeCanvasPlaceholder(molde)]
   if (!canvasSize) throw new Error(`montarArteCanvas: canvas desconhecido pro molde "${molde}"`)
   const { w: W, h: H } = canvasSize
 

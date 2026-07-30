@@ -70,7 +70,10 @@ const TIPO_OPTIONS: Array<{ value: PecaTipo; label: string }> = [
   { value: 'SHORT', label: 'Short' },
   { value: 'CONJ', label: 'Conjunto' },
 ]
-const TAMANHO_OPTIONS: PecaTamanho[] = ['P', 'M', 'G', 'GG']
+const TAMANHO_OPTIONS: PecaTamanho[] = [
+  'P', 'M', 'G', 'GG',
+  '2 ANOS', '4 ANOS', '6 ANOS', '8 ANOS', '10 ANOS', '12 ANOS',
+]
 
 function fmtMessageTime(ms: number | null): string {
   if (!ms) return ''

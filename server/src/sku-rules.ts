@@ -14,7 +14,13 @@ import { db, nowMs } from './db.js'
 import { SHOPEE_COL_MODEL, SHOPEE_COL_PRODUCT } from './shopee-columns.js'
 
 export type Genero = 'MASCULINO' | 'FEMININO'
-export type Tamanho = 'P' | 'M' | 'G' | 'GG'
+/** Infantis (2/4/6/8/10/12 ANOS) — SEM molde/medida própria ainda (2026-07-31,
+ *  pedido reportado: livea.maria123). Usam o canvas de M FEMININO como
+ *  PLACEHOLDER até o user passar as medidas reais — só o texto de
+ *  identificação muda pra mostrar o tamanho real (ex. "6 ANOS"), ver
+ *  buildMolde/CANVAS_POR_MOLDE (render-molde.ts). */
+export type TamanhoInfantil = '2 ANOS' | '4 ANOS' | '6 ANOS' | '8 ANOS' | '10 ANOS' | '12 ANOS'
+export type Tamanho = 'P' | 'M' | 'G' | 'GG' | TamanhoInfantil
 export type PecaTipo = 'CAMISOLA' | 'SHORT' | 'CONJ'
 
 export interface Peca {
@@ -36,6 +42,7 @@ export type Family =
 export type ParseResult = { ok: true; pieces: Peca[] } | { ok: false; reason: string }
 
 const TAMANHOS: Tamanho[] = ['P', 'M', 'G', 'GG']
+const TAMANHOS_INFANTIS: TamanhoInfantil[] = ['2 ANOS', '4 ANOS', '6 ANOS', '8 ANOS', '10 ANOS', '12 ANOS']
 
 function stripAccents(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '')
@@ -45,9 +52,22 @@ function norm(s: string): string {
   return stripAccents(String(s || '')).toUpperCase().trim()
 }
 
+/** Aceita variações de escrita do tamanho infantil vindas do SKU da Shopee:
+ *  "6 anos", "6anos", "6 ANO", "06 anos" — sempre normaliza pro formato
+ *  canônico "N ANOS" (mesmo usado em buildMolde/labelDoMolde). */
+function normalizeTamanhoInfantil(raw: string): TamanhoInfantil | null {
+  const t = norm(raw)
+  const m = t.match(/^0*(\d{1,2})\s*ANOS?$/)
+  if (!m) return null
+  const n = Number(m[1])
+  const canonico = `${n} ANOS`
+  return (TAMANHOS_INFANTIS as string[]).includes(canonico) ? (canonico as TamanhoInfantil) : null
+}
+
 export function normalizeTamanho(raw: string): Tamanho | null {
   const t = norm(raw)
-  return (TAMANHOS as string[]).includes(t) ? (t as Tamanho) : null
+  if ((TAMANHOS as string[]).includes(t)) return t as Tamanho
+  return normalizeTamanhoInfantil(raw)
 }
 
 export function normalizeGenero(raw: string): Genero | null {
@@ -62,7 +82,10 @@ export function generoAbrev(g: Genero): 'MASC' | 'FEM' {
 }
 
 /** Recalcula o nome do molde (pasta em Moldes/*.psd) a partir de tipo+genero+tamanho — usado
- * quando o usuário faz override manual da peça (picker do chat, Fase 2). */
+ * quando o usuário faz override manual da peça (picker do chat, Fase 2). O nome preserva o
+ * tamanho REAL (ex. "6 ANOS CONJ MASC") mesmo pra infantil — é o que aparece no texto da
+ * arte; o CANVAS (qual folha/dimensão usar) é resolvido à parte, ver moldeCanvasPlaceholder
+ * em render-molde.ts, que troca só a resolução física, nunca o texto exibido. */
 export function buildMolde(tipo: PecaTipo, genero: Genero | undefined | null, tamanho: Tamanho): string {
   if (tipo === 'CAMISOLA') return `${tamanho} CAMISOLA`
   if (tipo === 'CONJ') return `${tamanho} CONJ ${genero ? generoAbrev(genero) : 'MASC'}`
@@ -159,13 +182,25 @@ function parseShort(modelName: string): ParseResult {
 }
 
 function parseConjuntoUnitario(modelName: string): ParseResult {
+  // Infantil vem SÓ com o tamanho (ex. "6 anos", sem gênero — o SKU da
+  // Shopee não distingue, e não faz diferença pra produção: mesmo molde/
+  // canvas independente de gênero, ver moldeCanvasPlaceholder em
+  // render-molde.ts). Formato adulto continua "tamanho,genero".
+  const tamUnico = normalizeTamanho(modelName)
+  if (tamUnico && TAMANHOS_INFANTIS.includes(tamUnico as TamanhoInfantil)) {
+    return {
+      ok: true,
+      pieces: [{ tipo: 'CONJ', genero: 'FEMININO', tamanho: tamUnico, molde: `${tamUnico} CONJ FEM` }],
+    }
+  }
+
   const tokens = splitTokens(modelName, 2)
   const tamanho = tokens && normalizeTamanho(tokens[0])
   const genero = tokens && normalizeGenero(tokens[1])
   if (!tokens || !tamanho || !genero) {
     return {
       ok: false,
-      reason: `CONJUNTO UNITARIO: esperado "tamanho,genero" (ex. "GG,Masculino"), veio "${modelName}"`,
+      reason: `CONJUNTO UNITARIO: esperado "tamanho,genero" (ex. "GG,Masculino") ou só o tamanho pra infantil (ex. "6 anos"), veio "${modelName}"`,
     }
   }
   return {

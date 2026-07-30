@@ -52,7 +52,36 @@ export function labelDoMolde(molde: string): string {
   if (partes.length === 2 && ABREV_TIPO[partes[1]]) {
     return `${partes[0]} ${ABREV_TIPO[partes[1]]}`
   }
+  if (partes.length === 3 && ABREV_TIPO[partes[2]]) {
+    // "6 ANOS MASCULINO" -> "6 ANOS MASC" (mesma abreviação do adulto,
+    // preservando o tamanho infantil real no texto).
+    return `${partes[0]} ${partes[1]} ${ABREV_TIPO[partes[2]]}`
+  }
   return partes.join(' ')
+}
+
+/** true = molde com tamanho infantil (2/4/6/8/10/12 ANOS) — ver TamanhoInfantil
+ *  em sku-rules.ts. Detecta pelo prefixo do nome do molde, ex "6 ANOS
+ *  CONJ FEM", "6 ANOS MASCULINO" — não precisa de import cruzado com
+ *  sku-rules.ts, só olha o texto. */
+function ehMoldeInfantil(molde: string): boolean {
+  return /^\d{1,2}\s*ANOS\b/.test(molde.trim().toUpperCase())
+}
+
+/** Canvas infantil: SEM medida própria ainda (2026-07-31, pedido do user) —
+ *  usa M FEMININO como PLACEHOLDER pra qualquer tamanho/gênero/tipo infantil.
+ *  Só a resolução física muda; o texto de identificação continua mostrando
+ *  o tamanho REAL (labelDoMolde preserva "6 ANOS..." no nome do molde). */
+const CANVAS_INFANTIL_PLACEHOLDER = 'M FEMININO'
+
+/** Resolve o molde a usar pra CANVAS/tiling — infantil sempre cai no
+ *  placeholder (CANVAS_INFANTIL_PLACEHOLDER); os demais usam o próprio nome.
+ *  Conjunto infantil (ex "6 ANOS CONJ FEM") também usa o placeholder de
+ *  painel único: não tem geometria de conjunto própria pro infantil ainda,
+ *  então a arte infantil sai como painel único mesmo quando o pedido é
+ *  CONJUNTO (até haver medida real, decisão do user 2026-07-31). */
+export function moldeCanvasPlaceholder(molde: string): string {
+  return ehMoldeInfantil(molde) ? CANVAS_INFANTIL_PLACEHOLDER : molde.trim().toUpperCase()
 }
 
 /** Tamanho da folha por molde. É o ÚNICO dado que muda entre moldes —
@@ -381,7 +410,7 @@ export async function renderMolde(input: RenderMoldeInput): Promise<Buffer> {
   const { molde, cor, fotos, emojis } = input
   if (fotos.length === 0) throw new Error('renderMolde: nenhuma foto')
 
-  const canvas = input.canvas ?? CANVAS_POR_MOLDE[molde.trim().toUpperCase()]
+  const canvas = input.canvas ?? CANVAS_POR_MOLDE[moldeCanvasPlaceholder(molde)]
   if (!canvas) throw new Error(`renderMolde: canvas desconhecido pro molde "${molde}"`)
   const { w: W, h: H } = canvas
 

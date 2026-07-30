@@ -513,7 +513,10 @@ export async function startShopeeConversation(opts: {
 
 export type PecaTipo = 'CAMISOLA' | 'SHORT' | 'CONJ'
 export type PecaGenero = 'MASCULINO' | 'FEMININO'
-export type PecaTamanho = 'P' | 'M' | 'G' | 'GG'
+/** Infantis (2/4/6/8/10/12 ANOS) — sem molde/medida própria ainda (2026-07-31);
+ *  usam o canvas de M FEMININO como placeholder (ver render-molde-client.ts). */
+export type PecaTamanhoInfantil = '2 ANOS' | '4 ANOS' | '6 ANOS' | '8 ANOS' | '10 ANOS' | '12 ANOS'
+export type PecaTamanho = 'P' | 'M' | 'G' | 'GG' | PecaTamanhoInfantil
 
 export type PhotoCrop = 'rosto' | 'coracao'
 
