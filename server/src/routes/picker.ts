@@ -23,6 +23,7 @@ import multer from 'multer'
 import { requireAuth } from '../auth.js'
 import { db, nowMs } from '../db.js'
 import { env } from '../env.js'
+import { resolverArquivoEmojiPorNome } from '../emoji-catalog.js'
 import { removerFundo } from '../picwish.js'
 import { fetchShopeeCdn } from './pieces.js'
 import {
@@ -657,16 +658,19 @@ export function limparArtesExpiradas(): { apagadas: number } {
   return { apagadas: todas.size }
 }
 
-/** Resolve o PNG do emoji no catálogo embutido (`server/assets/emojis`). */
-function caminhoEmoji(nome: string): string | null {
+/** true = campo vazio ou "SEM EMOJI" — não é falha, é a peça não ter emoji
+ *  de propósito. false = tem um NOME preenchido (typo, emoji custom faltando
+ *  etc.) — diferente de "sem emoji", precisa avisar o operador. */
+function ehSemEmojiDeProposito(nome: string): boolean {
   const limpo = (nome || '').trim()
-  if (!limpo || /^SEM[\s_]?EMOJI$/i.test(limpo)) return null
-  const base = path.join(process.cwd(), 'assets', 'emojis')
-  for (const cand of [`${limpo}.png`, `${limpo.toUpperCase()}.png`]) {
-    const p = path.join(base, cand)
-    if (existsSync(p)) return p
-  }
-  return null
+  return !limpo || /^SEM[\s_]?EMOJI$/i.test(limpo)
+}
+
+/** Resolve o PNG do emoji — builtin (server/assets/emojis) OU custom
+ *  (cadastrado pela galeria, ver emoji-catalog.ts/resolverArquivoEmojiPorNome). */
+function caminhoEmoji(nome: string): string | null {
+  if (ehSemEmojiDeProposito(nome)) return null
+  return resolverArquivoEmojiPorNome(nome.trim())
 }
 
 /**
@@ -692,7 +696,18 @@ router.get('/pieces/:id/emoji/:slot', requireAuth, (req, res) => {
   const nomeEmoji = slot === 1 ? peca.emoji1 : peca.emoji2
   const p = caminhoEmoji(nomeEmoji)
   if (!p) {
-    res.status(404).json({ error: 'emoji não encontrado no catálogo' })
+    // semEmoji=true diferencia "a peça não tem emoji nesse slot de propósito"
+    // (nome vazio/SEM EMOJI) de "tem nome cadastrado mas não bate com nada do
+    // catálogo" (typo, emoji custom não sincronizado) — sem isso o cliente
+    // não tem como saber e trata os dois 404 como "sem emoji", escondendo um
+    // emoji cadastrado que deveria aparecer (bug reportado: william.sfe,
+    // brbaraaguenavalle — emoji sumia da prévia sem nenhum aviso).
+    res.status(404).json({
+      error: ehSemEmojiDeProposito(nomeEmoji)
+        ? 'sem emoji nesse slot'
+        : `emoji "${nomeEmoji}" não encontrado no catálogo`,
+      semEmoji: ehSemEmojiDeProposito(nomeEmoji),
+    })
     return
   }
   res.setHeader('content-type', 'image/png')

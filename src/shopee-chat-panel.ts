@@ -1021,17 +1021,28 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     if (fotos.length === 0) throw new Error(`${p.molde}: nenhuma foto composta — ajuste as fotos no picker antes`)
     if (fotos.length === 1) fotos.push(fotos[0])
 
-    // 404 aqui é o caso normal de "SEM EMOJI" (a rota já resolve isso — ver
-    // caminhoEmoji no servidor). Lista vazia é válida: montarArteCanvas pula a
-    // camada de emoji nesse caso, não é erro (mesma regra do servidor, ver
-    // gerarArteDaPeca em picker.ts — bug corrigido junto com este 2026-07-30).
+    // 404 da rota tem 2 causas bem diferentes, distinguidas pelo campo
+    // `semEmoji` no corpo JSON (ver GET /pieces/:id/emoji/:slot no servidor):
+    //   semEmoji=true  → peça sem emoji nesse slot DE PROPÓSITO (vazio/"SEM
+    //                    EMOJI") — não é erro, só não desenha a camada.
+    //   semEmoji=false → tem um NOME cadastrado que não bate com nenhum
+    //                    arquivo do catálogo (typo, emoji custom faltando) —
+    //                    ANTES isso era engolido como "sem emoji" e a
+    //                    prévia saía faltando um emoji que devia aparecer,
+    //                    sem nenhum aviso (bug: william.sfe, brbaraaguenavalle).
     const emojis: HTMLImageElement[] = []
+    const emojiFalhas: string[] = []
     for (const slot of [1, 2] as const) {
-      try {
-        emojis.push(await carregarImagem(emojiUrl(slot)))
-      } catch {
-        // sem emoji nesse slot — reusa o outro (mesma regra do servidor)
+      const resp = await fetch(emojiUrl(slot), { credentials: 'include' })
+      if (resp.ok) {
+        emojis.push(await carregarImagem(URL.createObjectURL(await resp.blob())))
+        continue
       }
+      const corpo = (await resp.json().catch(() => ({}))) as { error?: string; semEmoji?: boolean }
+      if (!corpo.semEmoji) emojiFalhas.push(`slot ${slot}: ${corpo.error ?? `HTTP ${resp.status}`}`)
+    }
+    if (emojiFalhas.length > 0) {
+      throw new Error(`${p.molde}: ${emojiFalhas.join('; ')}`)
     }
 
     const molde = p.molde.trim().toUpperCase()

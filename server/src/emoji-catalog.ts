@@ -1,8 +1,9 @@
-import { readdirSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { db, nowMs } from './db.js'
+import { env } from './env.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -13,6 +14,10 @@ const __dirname = path.dirname(__filename)
  * /app/dist) o `../assets/emojis` resolve certo nos dois casos.
  */
 export const ASSETS_DIR = path.resolve(__dirname, '../assets/emojis')
+
+/** Onde os emojis CUSTOM (upload do usuário) ficam em disco — mesmo diretório
+ *  usado por routes/emoji-catalog.ts (fonte única, pra não divergir). */
+export const CUSTOM_DIR = path.join(env.dataDir, 'emoji-custom')
 
 export interface EmojiCatalogRow {
   id: number
@@ -176,3 +181,39 @@ export function searchByName(query: string): EmojiCatalogItem[] {
 }
 
 export { normalize as normalizeEmojiName }
+
+/**
+ * Resolve `name` (o valor cru salvo em order_pieces.emoji1/2, ex "BEIJO",
+ * "CORAÇÃO ROSA") pro CAMINHO DE ARQUIVO real no disco — builtin ou custom.
+ *
+ * Antes disso, `gerarArteDaPeca`/a rota GET /pieces/:id/emoji/:slot só
+ * olhavam o diretório estático builtin (server/assets/emojis) direto pelo
+ * nome do arquivo, IGNORANDO o catálogo em banco (emoji_catalog) — qualquer
+ * emoji CUSTOM (cadastrado pela galeria, upload do usuário) nunca era
+ * encontrado, mesmo aparecendo normalmente na tela de escolha (bug
+ * reportado: william.sfe, brbaraaguenavalle — "emoji cadastrado mas não
+ * puxou na prévia"). Resolver pelo catálogo do banco cobre os dois casos:
+ * builtin (image_path=/emoji-assets/{arquivo} → ASSETS_DIR) e custom
+ * (image_path=/api/emoji-catalog/custom/{arquivo} → CUSTOM_DIR).
+ *
+ * Fallback pro match direto em ASSETS_DIR (nome exato/uppercase.png) pra
+ * peças antigas cujo nome não esteja (ainda) sincronizado no catálogo.
+ */
+export function resolverArquivoEmojiPorNome(name: string): string | null {
+  const limpo = (name || '').trim()
+  if (!limpo) return null
+
+  const row = db.prepare('SELECT * FROM emoji_catalog WHERE name = ?').get(limpo) as EmojiCatalogRow | undefined
+  if (row) {
+    const dir = row.source === 'custom' ? CUSTOM_DIR : ASSETS_DIR
+    const arquivo = path.basename(row.image_path)
+    const p = path.join(dir, arquivo)
+    if (existsSync(p)) return p
+  }
+
+  for (const cand of [`${limpo}.png`, `${limpo.toUpperCase()}.png`]) {
+    const p = path.join(ASSETS_DIR, cand)
+    if (existsSync(p)) return p
+  }
+  return null
+}
