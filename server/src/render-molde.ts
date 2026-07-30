@@ -214,7 +214,10 @@ export async function renderMolde(input: RenderMoldeInput): Promise<Buffer> {
   const emojisNorm = await Promise.all(
     emojis.map((b) => sharp(b).resize(EMOJI, EMOJI, { fit: 'fill' }).png().toBuffer()),
   )
-  const emojiPara = (i: number) => emojisNorm[i] ?? emojisNorm[0]
+  // Lista vazia = pedido SEM EMOJI de propósito (emojiPara nunca é chamado
+  // nesse caso — ver o `if (item.tipo === 'emoji' ...)` abaixo).
+  const emojiPara = (i: number): Buffer | null =>
+    emojisNorm.length === 0 ? null : emojisNorm[i] ?? emojisNorm[0]
 
   // Centraliza a fase do padrão no canvas (o x0 do PSD legado era arbitrário).
   // Math.floor do valor JÁ negativo (não negar depois): é o que casa com a
@@ -233,6 +236,7 @@ export async function renderMolde(input: RenderMoldeInput): Promise<Buffer> {
     for (let x = x0 + (deslocada ? STAGGER : 0) - unitW; x < W; x += unitW) {
       for (const item of itens) {
         const buf = item.tipo === 'foto' ? fotosNorm[item.indice] : emojiPara(item.indice)
+        if (!buf) continue // SEM EMOJI: pula a camada, sem tentar compositar undefined
         const dy = item.tipo === 'foto' ? 0 : EMOJI_DY
         camadas.push({ input: buf, left: x + item.dx, top: y + dy })
       }

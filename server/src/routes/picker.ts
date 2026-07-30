@@ -511,11 +511,18 @@ export async function gerarArteDaPeca(pieceId: number, workbookId: string = SHOP
   // Foto única: o slot 2 repete a 1 (mesma regra do pipeline local).
   if (fotos.length === 1) fotos.push(fotos[0])
 
-  const emojis = [peca.emoji1, peca.emoji2]
-    .map((nome) => caminhoEmoji(nome))
-    .filter((p): p is string => Boolean(p))
-    .map((p) => readFileSync(p))
-  if (emojis.length === 0) throw new Error('emoji não encontrado no catálogo')
+  // "SEM EMOJI" (ou campo vazio) é um caso válido — caminhoEmoji já devolve null
+  // pra ele de propósito. Só é erro de verdade quando o nome preenchido NÃO bate
+  // com nenhum arquivo do catálogo (typo, emoji custom não sincronizado etc.).
+  const nomesEmoji = [peca.emoji1, peca.emoji2].filter((nome) => {
+    const limpo = (nome || '').trim()
+    return limpo && !/^SEM[\s_]?EMOJI$/i.test(limpo)
+  })
+  const emojis = nomesEmoji.map((nome) => {
+    const p = caminhoEmoji(nome)
+    if (!p) throw new Error(`emoji "${nome}" não encontrado no catálogo`)
+    return readFileSync(p)
+  })
 
   const jpg = await renderMolde({
     molde,

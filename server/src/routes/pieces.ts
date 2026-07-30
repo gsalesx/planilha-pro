@@ -410,11 +410,16 @@ router.post('/pieces/:id/photo/:slot/upload', requireAuth, upload.single('image'
   const now = nowMs()
   const txn = db.transaction(() => {
     const existing = db
-      .prepare('SELECT storage_path FROM piece_images WHERE piece_id = ? AND slot = ?')
-      .get(pieceId, slot) as { storage_path: string } | undefined
-    if (existing) {
+      .prepare('SELECT storage_path, sem_fundo_path, composta_path FROM piece_images WHERE piece_id = ? AND slot = ?')
+      .get(pieceId, slot) as { storage_path: string; sem_fundo_path: string | null; composta_path: string | null } | undefined
+    // Foto NOVA — qualquer coisa derivada da foto ANTIGA (fundo removido, composta,
+    // ajuste de enquadramento) fica órfã e inválida. Sem isso, "Remover fundo" via
+    // cache (`l.sem_fundo_path já existe`) reaproveita o recorte da foto trocada,
+    // e a miniatura/editor mostram a composta antiga em vez da nova.
+    for (const p of [existing?.storage_path, existing?.sem_fundo_path, existing?.composta_path]) {
+      if (!p) continue
       try {
-        unlinkSync(existing.storage_path)
+        unlinkSync(p)
       } catch {
         // ignore
       }
@@ -424,7 +429,9 @@ router.post('/pieces/:id/photo/:slot/upload', requireAuth, upload.single('image'
        VALUES (?, ?, ?, ?, ?, 'rosto', ?)
        ON CONFLICT(piece_id, slot) DO UPDATE SET
          file_name = excluded.file_name, mime = excluded.mime,
-         storage_path = excluded.storage_path, updated_at = excluded.updated_at`,
+         storage_path = excluded.storage_path,
+         sem_fundo_path = '', composta_path = '', ajuste_json = '', u_width = NULL,
+         updated_at = excluded.updated_at`,
     ).run(pieceId, slot, fileName, req.file!.mimetype, storagePath, now)
     db.prepare('DELETE FROM piece_pending_photos WHERE piece_id = ? AND slot = ?').run(pieceId, slot)
   })

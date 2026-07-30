@@ -547,11 +547,12 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       const ajustadoEm = piece.compostas?.[slot] ?? null
       // Já ajustado no picker → miniatura mostra o RESULTADO (o timestamp
       // evita cache velho depois de re-salvar). Senão, a foto crua.
+      const fotoEm = piece.fotosUpdatedAt?.[slot] ?? null
       const src = ajustadoEm
         ? `/api/pieces/${piece.id}/photo/${slot}/composta?v=${ajustadoEm}`
         : pendingUrl
           ? escapeHtml(pendingUrl)
-          : `/api/pieces/${piece.id}/photo/${slot}`
+          : `/api/pieces/${piece.id}/photo/${slot}${fotoEm ? `?v=${fotoEm}` : ''}`
       const thumb = has
         ? `<img class="shopee-chat-piece-thumb${ajustadoEm ? ' is-ajustada' : ''}" src="${src}" alt="Foto ${slot}" referrerpolicy="no-referrer" />`
         : `<div class="shopee-chat-piece-thumb shopee-chat-piece-thumb--empty">Foto ${slot}</div>`

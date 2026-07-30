@@ -543,6 +543,9 @@ export interface OrderPiece {
   /** Slot já ajustado no picker web → timestamp da composta (cache-buster da
    *  miniatura, que passa a mostrar o resultado). null = ainda não ajustado. */
   compostas?: { 1: number | null; 2: number | null }
+  /** updated_at da foto crua por slot — cache-buster de /photo/:slot (cacheada
+   *  24h pelo navegador; sem isso, trocar a foto não atualiza a miniatura). */
+  fotosUpdatedAt?: { 1: number | null; 2: number | null }
 }
 
 export async function getOrderPieces(

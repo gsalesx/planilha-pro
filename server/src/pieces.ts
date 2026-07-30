@@ -48,6 +48,10 @@ export interface PieceWithPhotos extends OrderPieceRow {
   /** Slot já ajustado no picker web → timestamp da composta (serve de
    *  cache-buster na miniatura). null = ainda não ajustado. */
   compostas: { 1: number | null; 2: number | null }
+  /** updated_at de piece_images por slot — cache-buster da FOTO CRUA na miniatura.
+   *  Sem isso, trocar a foto (upload manual) não muda a URL e o navegador continua
+   *  mostrando a versão antiga em cache (24h, ver rota GET /photo/:slot). null = sem foto. */
+  fotosUpdatedAt: { 1: number | null; 2: number | null }
 }
 
 function attachPhotos(piece: OrderPieceRow): PieceWithPhotos {
@@ -69,6 +73,7 @@ function attachPhotos(piece: OrderPieceRow): PieceWithPhotos {
   const ajustadoBySlot = new Map(
     confirmed.filter((r) => r.composta_path).map((r) => [r.slot, r.updated_at]),
   )
+  const updatedAtBySlot = new Map(confirmed.map((r) => [r.slot, r.updated_at]))
 
   const slot1 = pendingBySlot.get(1)
   const slot2 = pendingBySlot.get(2)
@@ -81,6 +86,7 @@ function attachPhotos(piece: OrderPieceRow): PieceWithPhotos {
     },
     pendingUrls: { 1: slot1?.url ?? null, 2: slot2?.url ?? null },
     compostas: { 1: ajustadoBySlot.get(1) ?? null, 2: ajustadoBySlot.get(2) ?? null },
+    fotosUpdatedAt: { 1: updatedAtBySlot.get(1) ?? null, 2: updatedAtBySlot.get(2) ?? null },
   }
 }
 
