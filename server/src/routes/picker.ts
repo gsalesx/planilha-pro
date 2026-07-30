@@ -489,19 +489,20 @@ interface LinhaPeca {
   emoji2: string
 }
 
+/** Nome do cliente da linha (col 4 do row_json) — "" se não achar. */
+function nomeClienteDoPedido(orderKey: string, workbookId: string): string {
+  const row = db
+    .prepare('SELECT row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(workbookId, orderKey) as { row_json: string } | undefined
+  return row ? String((JSON.parse(row.row_json) as string[])[4] ?? '').trim() : ''
+}
+
 /** Nome do arquivo exportado: "{cliente} {molde}.{ext}" — mesmo padrão do
  *  pipeline local (`{cliente} {tamanho}.jpg`, ou `.zip` pro conjunto). Sem o
  *  cliente, o arquivo baixado vira só "G MASC.jpg" e não dá pra saber de
  *  quem é fora do contexto da tela. */
 function nomeArteFinal(molde: string, orderKey: string, workbookId: string, ext: 'jpg' | 'zip' = 'jpg'): string {
-  const linha = db
-    .prepare('SELECT id FROM orders WHERE workbook_id = ? AND order_key = ?')
-    .get(workbookId, orderKey) as { id: string } | undefined
-  const row = linha
-    ? (db.prepare('SELECT row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
-        .get(workbookId, orderKey) as { row_json: string })
-    : null
-  const cliente = row ? String((JSON.parse(row.row_json) as string[])[4] ?? '').trim() : ''
+  const cliente = nomeClienteDoPedido(orderKey, workbookId)
   const base = cliente ? `${cliente} ${labelDoMolde(molde)}` : labelDoMolde(molde)
   return `${base}.${ext}`
 }
@@ -555,8 +556,14 @@ export async function gerarArteDaPeca(pieceId: number, workbookId: string = SHOP
 
   if (ehConjunto) {
     const paineis = await renderConjunto({ molde, cor: peca.cor || '#000000', fotos, emojis })
+    // Nome de cada arquivo DENTRO do zip também leva o cliente — sem isso o
+    // arquivo extraído vira só "G CONJ MASC Frente.jpg", sem saber de quem é
+    // fora do contexto do zip (mesmo padrão já usado no nome do .zip em si
+    // e no pipeline local, que sempre prefixa "{cliente} {molde}...").
+    const cliente = nomeClienteDoPedido(peca.order_key, workbookId)
+    const baseNome = cliente ? `${cliente} ${labelDoMolde(molde)}` : labelDoMolde(molde)
     const zip = new JSZip()
-    for (const { painel, jpg } of paineis) zip.file(`${labelDoMolde(molde)} ${painel}.jpg`, jpg)
+    for (const { painel, jpg } of paineis) zip.file(`${baseNome} ${painel}.jpg`, jpg)
     const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' })
     return { nome: nomeArteFinal(molde, peca.order_key, workbookId, 'zip'), jpg: buf }
   }

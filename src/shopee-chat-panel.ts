@@ -1063,7 +1063,9 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       const paineis = await montarConjuntoCanvas({ molde, cor: p.cor || '#000000', fotos, emojis })
       const { default: JSZip } = await import('jszip')
       const zip = new JSZip()
-      for (const { painel, blob } of paineis) zip.file(`${labelDoMolde(molde)} ${painel}.jpg`, blob)
+      // Nome de cada arquivo DENTRO do zip também leva o cliente — sem isso
+      // o arquivo extraído vira só "G CONJ MASC Frente.jpg".
+      for (const { painel, blob } of paineis) zip.file(`${cliente} ${labelDoMolde(molde)} ${painel}.jpg`, blob)
       const buf = await zip.generateAsync({ type: 'blob' })
       const frente = paineis.find((x) => x.painel === 'Frente')?.blob
       return { nome: `${cliente} ${labelDoMolde(molde)}.zip`, blob: buf, painelPreview: opts?.painelPreview ? frente : undefined }
