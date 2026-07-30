@@ -29,7 +29,14 @@ import { openConfirmDialog, openPreviewPickerDialog } from './dialog'
 import { PREVIEW_SENT_STATUS, STATUS_COLUMN_INDEX } from './status'
 import { openImageLightbox } from './lightbox'
 import { abrirPickerEditor, abrirPickerFila, type ItemFila } from './picker-editor'
-import { carregarImagem, cortarPrintCanvas, labelDoMolde, montarArteCanvas } from './render-molde-client'
+import {
+  carregarImagem,
+  CONJUNTO_POR_MOLDE,
+  cortarPrintCanvas,
+  labelDoMolde,
+  montarArteCanvas,
+  montarConjuntoCanvas,
+} from './render-molde-client'
 
 export interface ShopeeChatOrderInfo {
   workbookId: string
@@ -989,7 +996,15 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
    * quem clicou. Peça sem foto composta ainda lança erro (mesma regra do
    * servidor: "ajuste as fotos no picker antes").
    */
-  async function montarArtePecaNoNavegador(p: OrderPiece): Promise<{ nome: string; blob: Blob }> {
+  /** Molde CONJ (conjunto multi-painel Frente/Manga/Short) devolve um .zip com
+   *  os 3 JPGs — mesmo padrão do servidor (gerarArteDaPeca) e do pipeline
+   *  Python (`_export_conjunto`). `painelPreview`, quando pedido, é o Blob do
+   *  painel "Frente" isolado (usado pra recortar o print — não faz sentido
+   *  recortar print de um zip). */
+  async function montarArtePecaNoNavegador(
+    p: OrderPiece,
+    opts?: { painelPreview?: boolean },
+  ): Promise<{ nome: string; blob: Blob; painelPreview?: Blob }> {
     const fotoUrl = (slot: 1 | 2) => `/api/pieces/${p.id}/photo/${slot}/composta`
     const emojiUrl = (slot: 1 | 2) => `/api/pieces/${p.id}/emoji/${slot}`
 
@@ -1020,9 +1035,20 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     }
 
     const molde = p.molde.trim().toUpperCase()
-    const blob = await montarArteCanvas({ molde, cor: p.cor || '#000000', fotos, emojis })
     const cliente = order.buyerUsername || order.orderId
-    return { nome: `${cliente} ${labelDoMolde(molde)}.jpg`, blob }
+
+    if (CONJUNTO_POR_MOLDE[molde]) {
+      const paineis = await montarConjuntoCanvas({ molde, cor: p.cor || '#000000', fotos, emojis })
+      const { default: JSZip } = await import('jszip')
+      const zip = new JSZip()
+      for (const { painel, blob } of paineis) zip.file(`${labelDoMolde(molde)} ${painel}.jpg`, blob)
+      const buf = await zip.generateAsync({ type: 'blob' })
+      const frente = paineis.find((x) => x.painel === 'Frente')?.blob
+      return { nome: `${cliente} ${labelDoMolde(molde)}.zip`, blob: buf, painelPreview: opts?.painelPreview ? frente : undefined }
+    }
+
+    const blob = await montarArteCanvas({ molde, cor: p.cor || '#000000', fotos, emojis })
+    return { nome: `${cliente} ${labelDoMolde(molde)}.jpg`, blob, painelPreview: opts?.painelPreview ? blob : undefined }
   }
 
   function baixarBlob(nome: string, blob: Blob): void {
@@ -1089,9 +1115,9 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         const falhas: string[] = []
         for (const p of pieces) {
           try {
-            const { blob } = await montarArtePecaNoNavegador(p)
+            const { blob, painelPreview } = await montarArtePecaNoNavegador(p, { painelPreview: true })
             const nFotos = (p.photos[1] ? 1 : 0) + (p.photos[2] ? 1 : 0)
-            const print = await cortarPrintCanvas(blob, Math.max(1, nFotos))
+            const print = await cortarPrintCanvas(painelPreview ?? blob, Math.max(1, nFotos))
             const fd = new FormData()
             fd.append('image', print, 'print.jpg')
             const r = await fetch(`/api/pieces/${p.id}/print-upload`, {

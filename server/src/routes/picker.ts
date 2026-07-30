@@ -27,8 +27,10 @@ import { removerFundo } from '../picwish.js'
 import { fetchShopeeCdn } from './pieces.js'
 import {
   CANVAS_POR_MOLDE,
+  CONJUNTO_POR_MOLDE,
   gerarPrint4x4,
   labelDoMolde,
+  renderConjunto,
   renderMolde,
 } from '../render-molde.js'
 import {
@@ -478,10 +480,11 @@ interface LinhaPeca {
   emoji2: string
 }
 
-/** Nome do JPG exportado: "{cliente} {molde}.jpg" — mesmo padrão do pipeline local
- *  (`{cliente} {tamanho}.jpg`). Sem o cliente, o arquivo baixado vira só "G MASC.jpg"
- *  e não dá pra saber de quem é fora do contexto da tela. */
-function nomeArteFinal(molde: string, orderKey: string, workbookId: string): string {
+/** Nome do arquivo exportado: "{cliente} {molde}.{ext}" — mesmo padrão do
+ *  pipeline local (`{cliente} {tamanho}.jpg`, ou `.zip` pro conjunto). Sem o
+ *  cliente, o arquivo baixado vira só "G MASC.jpg" e não dá pra saber de
+ *  quem é fora do contexto da tela. */
+function nomeArteFinal(molde: string, orderKey: string, workbookId: string, ext: 'jpg' | 'zip' = 'jpg'): string {
   const linha = db
     .prepare('SELECT id FROM orders WHERE workbook_id = ? AND order_key = ?')
     .get(workbookId, orderKey) as { id: string } | undefined
@@ -490,21 +493,15 @@ function nomeArteFinal(molde: string, orderKey: string, workbookId: string): str
         .get(workbookId, orderKey) as { row_json: string })
     : null
   const cliente = row ? String((JSON.parse(row.row_json) as string[])[4] ?? '').trim() : ''
-  return cliente ? `${cliente} ${labelDoMolde(molde)}.jpg` : `${labelDoMolde(molde)}.jpg`
+  const base = cliente ? `${cliente} ${labelDoMolde(molde)}` : labelDoMolde(molde)
+  return `${base}.${ext}`
 }
 
-export async function gerarArteDaPeca(pieceId: number, workbookId: string = SHOPEE_WORKBOOK_ID): Promise<{ nome: string; jpg: Buffer }> {
-  const peca = db
-    .prepare('SELECT id, order_key, molde, cor, emoji1, emoji2 FROM order_pieces WHERE id = ?')
-    .get(pieceId) as (LinhaPeca & { order_key: string }) | undefined
-  if (!peca) throw new Error('peça não encontrada')
-
-  const molde = (peca.molde || '').trim().toUpperCase()
-  if (!CANVAS_POR_MOLDE[molde]) throw new Error(`molde sem canvas cadastrado: "${peca.molde}"`)
-
+/** Resolve fotos compostas + emojis de uma peça (comum a molde único e conjunto). */
+function resolverInsumosPeca(peca: LinhaPeca): { fotos: Buffer[]; emojis: Buffer[] } {
   const fotos: Buffer[] = []
   for (const slot of [1, 2]) {
-    const l = foto(pieceId, slot)
+    const l = foto(peca.id, slot)
     if (l?.composta_path && existsSync(l.composta_path)) fotos.push(readFileSync(l.composta_path))
   }
   if (fotos.length === 0) throw new Error('nenhuma foto composta — ajuste as fotos no picker antes')
@@ -523,14 +520,34 @@ export async function gerarArteDaPeca(pieceId: number, workbookId: string = SHOP
     if (!p) throw new Error(`emoji "${nome}" não encontrado no catálogo`)
     return readFileSync(p)
   })
+  return { fotos, emojis }
+}
 
-  const jpg = await renderMolde({
-    molde,
-    cor: peca.cor || '#000000',
-    fotos,
-    emojis,
-  })
-  return { nome: nomeArteFinal(molde, peca.order_key, workbookId), jpg }
+/** 1 peça → 1 arte. Molde CONJ (multi-painel) devolve um .zip com os 3 JPGs
+ *  (Frente/Manga/Short), igual ao pipeline Python (`_export_conjunto`); molde
+ *  de painel único devolve o .jpg direto. */
+export async function gerarArteDaPeca(pieceId: number, workbookId: string = SHOPEE_WORKBOOK_ID): Promise<{ nome: string; jpg: Buffer }> {
+  const peca = db
+    .prepare('SELECT id, order_key, molde, cor, emoji1, emoji2 FROM order_pieces WHERE id = ?')
+    .get(pieceId) as (LinhaPeca & { order_key: string }) | undefined
+  if (!peca) throw new Error('peça não encontrada')
+
+  const molde = (peca.molde || '').trim().toUpperCase()
+  const ehConjunto = Boolean(CONJUNTO_POR_MOLDE[molde])
+  if (!ehConjunto && !CANVAS_POR_MOLDE[molde]) throw new Error(`molde sem canvas cadastrado: "${peca.molde}"`)
+
+  const { fotos, emojis } = resolverInsumosPeca(peca)
+
+  if (ehConjunto) {
+    const paineis = await renderConjunto({ molde, cor: peca.cor || '#000000', fotos, emojis })
+    const zip = new JSZip()
+    for (const { painel, jpg } of paineis) zip.file(`${labelDoMolde(molde)} ${painel}.jpg`, jpg)
+    const buf = await zip.generateAsync({ type: 'nodebuffer', compression: 'STORE' })
+    return { nome: nomeArteFinal(molde, peca.order_key, workbookId, 'zip'), jpg: buf }
+  }
+
+  const jpg = await renderMolde({ molde, cor: peca.cor || '#000000', fotos, emojis })
+  return { nome: nomeArteFinal(molde, peca.order_key, workbookId, 'jpg'), jpg }
 }
 
 /** 10 dias — teto de guarda mesmo se o pedido nunca chegar a "Concluído" na Shopee. */
@@ -567,8 +584,11 @@ export async function gerarArteDaPecaCache(pieceId: number, workbookId: string =
       const peca = db
         .prepare('SELECT molde, order_key FROM order_pieces WHERE id = ?')
         .get(pieceId) as { molde: string; order_key: string }
+      // ext vem do arquivo cacheado (gravado com a extensão real — ver abaixo),
+      // não é sempre .jpg: conjunto (CONJ) cacheia um .zip.
+      const ext = cache.jpg_path.endsWith('.zip') ? 'zip' : 'jpg'
       return {
-        nome: nomeArteFinal(peca.molde.trim().toUpperCase(), peca.order_key, workbookId),
+        nome: nomeArteFinal(peca.molde.trim().toUpperCase(), peca.order_key, workbookId, ext),
         jpg: readFileSync(cache.jpg_path),
       }
     }
@@ -576,7 +596,8 @@ export async function gerarArteDaPecaCache(pieceId: number, workbookId: string =
 
   const { nome, jpg } = await gerarArteDaPeca(pieceId, workbookId)
   if (chave) {
-    const destino = path.join(imagesDir, `arte_${pieceId}_${crypto.randomBytes(4).toString('hex')}.jpg`)
+    const extDoNome = nome.endsWith('.zip') ? 'zip' : 'jpg'
+    const destino = path.join(imagesDir, `arte_${pieceId}_${crypto.randomBytes(4).toString('hex')}.${extDoNome}`)
     const now = nowMs()
     const anterior = db
       .prepare('SELECT jpg_path FROM piece_arte_cache WHERE piece_id = ?')
@@ -809,7 +830,7 @@ router.get('/pieces/:id/arte', requireAuth, async (req, res) => {
   }
   try {
     const { nome, jpg } = await gerarArteDaPecaCache(pieceId)
-    res.setHeader('content-type', 'image/jpeg')
+    res.setHeader('content-type', nome.endsWith('.zip') ? 'application/zip' : 'image/jpeg')
     res.setHeader('content-disposition', `attachment; filename="${nome}"`)
     res.send(jpg)
   } catch (e) {
@@ -866,7 +887,7 @@ router.get('/workbooks/:wb/orders/:orderKey/artes', requireAuth, async (req, res
   }
 
   if (geradas.length === 1 && falhas.length === 0) {
-    res.setHeader('content-type', 'image/jpeg')
+    res.setHeader('content-type', geradas[0].nome.endsWith('.zip') ? 'application/zip' : 'image/jpeg')
     res.setHeader('content-disposition', `attachment; filename="${geradas[0].nome}"`)
     res.send(geradas[0].jpg)
     return

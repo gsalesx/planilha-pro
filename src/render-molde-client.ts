@@ -63,6 +63,85 @@ export const CANVAS_POR_MOLDE: Record<string, { w: number; h: number }> = {
   'GG CAMISOLA': { w: 7678, h: 8741 },
 }
 
+/** Um painel do conjunto — mesma tabela do servidor (render-molde.ts). */
+export interface PainelConjunto {
+  x: number
+  y: number
+  w: number
+  h: number
+  anchorX: number
+  anchorY: number
+}
+
+/** Geometria dos moldes CONJ — mesma tabela do servidor, medida direto nos
+ *  PSDs (ver render-molde.ts para a explicação completa). */
+export const CONJUNTO_POR_MOLDE: Record<string, { canvas: { w: number; h: number }; paineis: Record<string, PainelConjunto> }> = {
+  'P CONJ MASC': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 8958, y: 0, w: 10157, h: 6496, anchorX: 2832, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 6733, h: 9333, anchorX: 5, anchorY: 0 },
+      Manga: { x: 8954, y: 8434, w: 5433, h: 2953, anchorX: 2592, anchorY: 372 },
+    },
+  },
+  'M CONJ MASC': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 8958, y: 0, w: 10157, h: 6496, anchorX: 2832, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 6733, h: 9333, anchorX: 5, anchorY: 0 },
+      Manga: { x: 8954, y: 8434, w: 5433, h: 2953, anchorX: 2592, anchorY: 372 },
+    },
+  },
+  'G CONJ MASC': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 8839, y: 0, w: 10276, h: 6735, anchorX: 2951, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 6970, h: 9452, anchorX: 5, anchorY: 0 },
+      Manga: { x: 8478, y: 8197, w: 6027, h: 3190, anchorX: 3068, anchorY: 625 },
+    },
+  },
+  'GG CONJ MASC': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 8481, y: 0, w: 10634, h: 7200, anchorX: 5, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 7350, h: 9831, anchorX: 5, anchorY: 0 },
+      Manga: { x: 8478, y: 7889, w: 6297, h: 3498, anchorX: 3068, anchorY: 933 },
+    },
+  },
+  'P CONJ FEM': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 10138, y: 0, w: 8977, h: 5315, anchorX: 1652, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 5907, h: 7914, anchorX: 5, anchorY: 0 },
+      Manga: { x: 9544, y: 8789, w: 4843, h: 2598, anchorX: 2002, anchorY: 33 },
+    },
+  },
+  'M CONJ FEM': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 10138, y: 0, w: 8977, h: 5315, anchorX: 1652, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 5907, h: 7914, anchorX: 5, anchorY: 0 },
+      Manga: { x: 9544, y: 8789, w: 4843, h: 2598, anchorX: 2002, anchorY: 33 },
+    },
+  },
+  'G CONJ FEM': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 9429, y: 0, w: 9686, h: 5552, anchorX: 2361, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 6143, h: 8268, anchorX: 5, anchorY: 0 },
+      Manga: { x: 9308, y: 8788, w: 4844, h: 2599, anchorX: 2238, anchorY: 34 },
+    },
+  },
+  'GG CONJ FEM': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 9429, y: 0, w: 9686, h: 5552, anchorX: 2361, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 6379, h: 8504, anchorX: 5, anchorY: 0 },
+      Manga: { x: 9072, y: 8552, w: 5315, h: 2835, anchorX: 2474, anchorY: 270 },
+    },
+  },
+}
+
 interface Item {
   tipo: 'foto' | 'emoji'
   indice: number
@@ -111,6 +190,69 @@ export function carregarImagem(url: string): Promise<HTMLImageElement> {
   })
 }
 
+type ImagemFonte = HTMLImageElement | ImageBitmap
+
+/**
+ * Tileia o padrão Foto/Emoji dentro de uma área (painel ou canvas inteiro) e
+ * desenha direto no ctx (coordenadas ABSOLUTAS: soma offsetX/offsetY). `x0/y0`
+ * é a âncora da fase — no painel único vem da fórmula de centralização, no
+ * conjunto vem medida do PSD (ver CONJUNTO_POR_MOLDE, cada painel tem fase
+ * própria). Mesma lógica de `tileFotos` do servidor (render-molde.ts).
+ */
+function tileFotosCanvas(opts: {
+  ctx: CanvasRenderingContext2D
+  offsetX: number
+  offsetY: number
+  w: number
+  h: number
+  x0: number
+  y0: number
+  itens: Item[]
+  unitW: number
+  fotos: ImagemFonte[]
+  emojiPara: (i: number) => ImagemFonte | undefined
+}): { x: number; y: number } | null {
+  const { ctx, offsetX, offsetY, w, h, x0, y0, itens, unitW, fotos, emojiPara } = opts
+  let ancora: { x: number; y: number } | null = null
+  const yInicio = y0 - Math.ceil((y0 + ROW_PITCH) / ROW_PITCH) * ROW_PITCH
+  for (let y = yInicio; y < h; y += ROW_PITCH) {
+    const linha = Math.round((y - y0) / ROW_PITCH)
+    const deslocada = Math.abs(linha % 2) === 1
+    const xInicioLinha = x0 + (deslocada ? STAGGER : 0)
+    const xInicio = xInicioLinha - Math.ceil((xInicioLinha + unitW) / unitW) * unitW
+    for (let x = xInicio; x < w; x += unitW) {
+      for (const item of itens) {
+        const buf = item.tipo === 'foto' ? fotos[item.indice] : emojiPara(item.indice)
+        const tam = item.tipo === 'foto' ? ROSTO : EMOJI
+        const dy = item.tipo === 'foto' ? 0 : EMOJI_DY
+        if (buf) ctx.drawImage(buf, offsetX + x + item.dx, offsetY + y + dy, tam, tam)
+      }
+      if (!ancora && y === y0 && x === x0) ancora = { x: offsetX + x + ROSTO, y: offsetY + y }
+    }
+  }
+  return ancora
+}
+
+function desenharLabel(ctx: CanvasRenderingContext2D, label: string, ancora: { x: number; y: number }): void {
+  const fontSize = Math.round(TEXT_CAP_H / CAP_RATIO)
+  ctx.fillStyle = TEXT_COLOR
+  ctx.font = `bold ${fontSize}px "DejaVu Sans", Arial, Helvetica, sans-serif`
+  ctx.textBaseline = 'alphabetic'
+  // O SVG do servidor desenha a partir de y=TEXT_CAP_H (baseline); canvas
+  // fillText também usa baseline por padrão — mesma referência.
+  ctx.fillText(label, ancora.x + TEXT_PAD_X, ancora.y + TEXT_PAD_Y + TEXT_CAP_H)
+}
+
+function canvasParaBlob(canvas: HTMLCanvasElement, qualidade = 90): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('falha ao gerar JPEG'))),
+      'image/jpeg',
+      qualidade / 100,
+    )
+  })
+}
+
 /**
  * Monta a folha inteira num canvas e devolve como JPEG (Blob). Mesma lógica
  * de tiling do servidor (`renderMolde`), com `ctx.drawImage` no lugar de
@@ -144,40 +286,63 @@ export async function montarArteCanvas(input: RenderMoldeInput): Promise<Blob> {
   // (e com o pipeline Python original), mantém as 3 saídas idênticas ao pixel.
   const x0 = Math.floor(-(unitW - (W % unitW)) / 2)
 
-  let ancora: { x: number; y: number } | null = null
-
-  for (let y = -ROW_PITCH; y < H; y += ROW_PITCH) {
-    const linha = Math.round(y / ROW_PITCH)
-    const deslocada = Math.abs(linha % 2) === 1
-    for (let x = x0 + (deslocada ? STAGGER : 0) - unitW; x < W; x += unitW) {
-      for (const item of itens) {
-        const buf = item.tipo === 'foto' ? fotos[item.indice] : emojiPara(item.indice)
-        const tam = item.tipo === 'foto' ? ROSTO : EMOJI
-        const dy = item.tipo === 'foto' ? 0 : EMOJI_DY
-        if (buf) ctx.drawImage(buf, x + item.dx, y + dy, tam, tam)
-      }
-      if (!ancora && y === 0 && x + ROSTO >= 0) ancora = { x: x + ROSTO, y }
-    }
-  }
+  const ancora = tileFotosCanvas({
+    ctx, offsetX: 0, offsetY: 0, w: W, h: H, x0, y0: 0, itens, unitW, fotos, emojiPara,
+  })
 
   const label = input.label ?? labelDoMolde(molde)
-  if (label && ancora) {
-    const fontSize = Math.round(TEXT_CAP_H / CAP_RATIO)
-    ctx.fillStyle = TEXT_COLOR
-    ctx.font = `bold ${fontSize}px "DejaVu Sans", Arial, Helvetica, sans-serif`
-    ctx.textBaseline = 'alphabetic'
-    // O SVG do servidor desenha a partir de y=TEXT_CAP_H (baseline); canvas
-    // fillText também usa baseline por padrão — mesma referência.
-    ctx.fillText(label, ancora.x + TEXT_PAD_X, ancora.y + TEXT_PAD_Y + TEXT_CAP_H)
-  }
+  if (label && ancora) desenharLabel(ctx, label, ancora)
 
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error('falha ao gerar JPEG'))),
-      'image/jpeg',
-      (input.qualidade ?? 90) / 100,
-    )
-  })
+  return canvasParaBlob(canvas, input.qualidade)
+}
+
+export interface RenderConjuntoInput {
+  /** Nome do molde CONJ, ex 'GG CONJ MASC'. Precisa existir em CONJUNTO_POR_MOLDE. */
+  molde: string
+  cor: string
+  fotos: ImagemFonte[]
+  emojis: ImagemFonte[]
+  qualidade?: number
+}
+
+/**
+ * Monta os 3 painéis do conjunto (Frente/Manga/Short) — cada um como um Blob
+ * JPEG separado (mesmo tiling do servidor, ver renderConjunto/render-molde.ts
+ * pra explicação completa da geometria por painel).
+ */
+export async function montarConjuntoCanvas(
+  input: RenderConjuntoInput,
+): Promise<Array<{ painel: string; blob: Blob }>> {
+  const { molde, cor, fotos, emojis } = input
+  if (fotos.length === 0) throw new Error('montarConjuntoCanvas: nenhuma foto')
+
+  const def = CONJUNTO_POR_MOLDE[molde.trim().toUpperCase()]
+  if (!def) throw new Error(`montarConjuntoCanvas: conjunto desconhecido pro molde "${molde}"`)
+
+  const n = fotos.length
+  const { itens, unitW } = layoutLinha(n)
+  const emojiPara = (i: number) => emojis[i] ?? emojis[0]
+  const label = labelDoMolde(molde)
+
+  const saidas: Array<{ painel: string; blob: Blob }> = []
+  for (const [nomePainel, p] of Object.entries(def.paineis)) {
+    const canvas = document.createElement('canvas')
+    canvas.width = p.w
+    canvas.height = p.h
+    const ctx = canvas.getContext('2d')!
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.fillStyle = cor || '#000000'
+    ctx.fillRect(0, 0, p.w, p.h)
+
+    const ancora = tileFotosCanvas({
+      ctx, offsetX: 0, offsetY: 0, w: p.w, h: p.h, x0: p.anchorX, y0: p.anchorY, itens, unitW, fotos, emojiPara,
+    })
+    if (label && ancora) desenharLabel(ctx, label, ancora)
+
+    saidas.push({ painel: nomePainel, blob: await canvasParaBlob(canvas, input.qualidade) })
+  }
+  return saidas
 }
 
 /**

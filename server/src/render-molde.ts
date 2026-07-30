@@ -72,6 +72,99 @@ export const CANVAS_POR_MOLDE: Record<string, { w: number; h: number }> = {
   'GG CAMISOLA': { w: 7678, h: 8741 },
 }
 
+/** Um painel do conjunto (Frente/Manga/Short) — bbox absoluto no canvas do
+ *  conjunto + a âncora de fase do tiling (posição de Rosto 1 na 1ª linha
+ *  "par", isto é, não deslocada pelo STAGGER) medida DIRETO no PSD. Cada
+ *  painel tem fase própria (não é a mesma fórmula de centralização do molde
+ *  de painel único) — sem essa âncora não dá pra saber onde o padrão começa. */
+export interface PainelConjunto {
+  x: number
+  y: number
+  w: number
+  h: number
+  /** Posição do Rosto 1 na linha de referência (y relativo ao painel = anchorY). */
+  anchorX: number
+  anchorY: number
+}
+
+/**
+ * Geometria dos moldes CONJ (multi-painel: Frente/Manga/Short no mesmo
+ * canvas) — medida direto nos 8 PSDs `Moldes/{TAM} CONJ {FEM,MASC}.psd`
+ * (psd-tools, 2026-07-30). O stagger/pitch do tiling são os MESMOS de
+ * qualquer molde (STAGGER=-740, ROW_PITCH=950 — confirmado: os 3 painéis de
+ * todos os 8 moldes batem com STAGGER exato; ROW_PITCH real de Frente/Manga
+ * é ~967, mesmo tipo de jitter manual do PSD já visto em painel único —
+ * ROW_PITCH=950 continua a fonte da verdade). Só a ÂNCORA (onde a linha
+ * "não deslocada" começa) varia por painel — não dá pra derivar de uma
+ * fórmula, por isso fica tabelada aqui.
+ */
+export const CONJUNTO_POR_MOLDE: Record<string, { canvas: { w: number; h: number }; paineis: Record<string, PainelConjunto> }> = {
+  'P CONJ MASC': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 8958, y: 0, w: 10157, h: 6496, anchorX: 2832, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 6733, h: 9333, anchorX: 5, anchorY: 0 },
+      Manga: { x: 8954, y: 8434, w: 5433, h: 2953, anchorX: 2592, anchorY: 372 },
+    },
+  },
+  'M CONJ MASC': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 8958, y: 0, w: 10157, h: 6496, anchorX: 2832, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 6733, h: 9333, anchorX: 5, anchorY: 0 },
+      Manga: { x: 8954, y: 8434, w: 5433, h: 2953, anchorX: 2592, anchorY: 372 },
+    },
+  },
+  'G CONJ MASC': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 8839, y: 0, w: 10276, h: 6735, anchorX: 2951, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 6970, h: 9452, anchorX: 5, anchorY: 0 },
+      Manga: { x: 8478, y: 8197, w: 6027, h: 3190, anchorX: 3068, anchorY: 625 },
+    },
+  },
+  'GG CONJ MASC': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 8481, y: 0, w: 10634, h: 7200, anchorX: 5, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 7350, h: 9831, anchorX: 5, anchorY: 0 },
+      Manga: { x: 8478, y: 7889, w: 6297, h: 3498, anchorX: 3068, anchorY: 933 },
+    },
+  },
+  'P CONJ FEM': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 10138, y: 0, w: 8977, h: 5315, anchorX: 1652, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 5907, h: 7914, anchorX: 5, anchorY: 0 },
+      Manga: { x: 9544, y: 8789, w: 4843, h: 2598, anchorX: 2002, anchorY: 33 },
+    },
+  },
+  'M CONJ FEM': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 10138, y: 0, w: 8977, h: 5315, anchorX: 1652, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 5907, h: 7914, anchorX: 5, anchorY: 0 },
+      Manga: { x: 9544, y: 8789, w: 4843, h: 2598, anchorX: 2002, anchorY: 33 },
+    },
+  },
+  'G CONJ FEM': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 9429, y: 0, w: 9686, h: 5552, anchorX: 2361, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 6143, h: 8268, anchorX: 5, anchorY: 0 },
+      Manga: { x: 9308, y: 8788, w: 4844, h: 2599, anchorX: 2238, anchorY: 34 },
+    },
+  },
+  'GG CONJ FEM': {
+    canvas: { w: 19115, h: 11387 },
+    paineis: {
+      Short: { x: 9429, y: 0, w: 9686, h: 5552, anchorX: 2361, anchorY: 0 },
+      Frente: { x: 0, y: 20, w: 6379, h: 8504, anchorX: 5, anchorY: 0 },
+      Manga: { x: 9072, y: 8552, w: 5315, h: 2835, anchorX: 2474, anchorY: 270 },
+    },
+  },
+}
+
 export interface RenderMoldeInput {
   /** Nome do molde, ex 'M MASCULINO'. Precisa existir em CANVAS_POR_MOLDE. */
   molde: string
@@ -192,6 +285,68 @@ function svgTexto(label: string): { svg: Buffer; w: number; h: number } {
   return { svg: Buffer.from(svg), w, h }
 }
 
+/** Normaliza fotos/emojis pro tamanho exato do slot (1:1 no molde original). */
+async function normalizarSlots(
+  fotos: Buffer[],
+  emojis: Buffer[],
+): Promise<{ fotosNorm: Buffer[]; emojiPara: (i: number) => Buffer | null }> {
+  const fotosNorm = await Promise.all(
+    fotos.map((b) => sharp(b).resize(ROSTO, ROSTO, { fit: 'fill' }).png().toBuffer()),
+  )
+  const emojisNorm = await Promise.all(
+    emojis.map((b) => sharp(b).resize(EMOJI, EMOJI, { fit: 'fill' }).png().toBuffer()),
+  )
+  // Lista vazia = pedido SEM EMOJI de propósito (emojiPara nunca "acerta"
+  // nesse caso — ver o `if (!buf) continue` em quem consome).
+  const emojiPara = (i: number): Buffer | null =>
+    emojisNorm.length === 0 ? null : emojisNorm[i] ?? emojisNorm[0]
+  return { fotosNorm, emojiPara }
+}
+
+/**
+ * Tileia o padrão Foto/Emoji dentro de uma área retangular (painel ou canvas
+ * inteiro) e empilha as camadas em `camadas` (coordenadas ABSOLUTAS — soma
+ * `offsetX/offsetY` do painel). `x0/y0` é a âncora da fase: a posição do 1º
+ * item da linha "par" (não deslocada pelo STAGGER) — no painel único isso é
+ * calculado centralizando no canvas; no conjunto vem medido do PSD (cada
+ * painel tem fase própria, ver CONJUNTO_POR_MOLDE).
+ */
+function tileFotos(opts: {
+  camadas: sharp.OverlayOptions[]
+  offsetX: number
+  offsetY: number
+  w: number
+  h: number
+  x0: number
+  y0: number
+  itens: Item[]
+  unitW: number
+  fotosNorm: Buffer[]
+  emojiPara: (i: number) => Buffer | null
+}): { x: number; y: number } | null {
+  const { camadas, offsetX, offsetY, w, h, x0, y0, itens, unitW, fotosNorm, emojiPara } = opts
+  let ancora: { x: number; y: number } | null = null
+  // Varre da 1ª linha "par" (y0) pra cima e pra baixo, cobrindo toda a altura
+  // do painel — y0 pode ser >0 (ver painéis Manga/Frente medidos no PSD).
+  const yInicio = y0 - Math.ceil((y0 + ROW_PITCH) / ROW_PITCH) * ROW_PITCH
+  for (let y = yInicio; y < h; y += ROW_PITCH) {
+    const linha = Math.round((y - y0) / ROW_PITCH)
+    const deslocada = Math.abs(linha % 2) === 1
+    const xInicioLinha = x0 + (deslocada ? STAGGER : 0)
+    const xInicio = xInicioLinha - Math.ceil((xInicioLinha + unitW) / unitW) * unitW
+    for (let x = xInicio; x < w; x += unitW) {
+      for (const item of itens) {
+        const buf = item.tipo === 'foto' ? fotosNorm[item.indice] : emojiPara(item.indice)
+        if (!buf) continue // SEM EMOJI: pula a camada, sem tentar compositar undefined
+        const dy = item.tipo === 'foto' ? 0 : EMOJI_DY
+        camadas.push({ input: buf, left: offsetX + x + item.dx, top: offsetY + y + dy })
+      }
+      if (!ancora && y === y0 && x === x0) ancora = { x: offsetX + x + ROSTO, y: offsetY + y }
+    }
+  }
+  return ancora
+}
+
 /**
  * Monta a folha e devolve o JPG (300 DPI — sem isso a impressora assume ~72
  * e a arte sai ~4× maior; bug já pego no pipeline Python em 2026-05-30).
@@ -206,18 +361,7 @@ export async function renderMolde(input: RenderMoldeInput): Promise<Buffer> {
 
   const n = fotos.length
   const { itens, unitW } = layoutLinha(n)
-
-  // Normaliza os PNGs pro tamanho exato do slot (1:1 no molde original).
-  const fotosNorm = await Promise.all(
-    fotos.map((b) => sharp(b).resize(ROSTO, ROSTO, { fit: 'fill' }).png().toBuffer()),
-  )
-  const emojisNorm = await Promise.all(
-    emojis.map((b) => sharp(b).resize(EMOJI, EMOJI, { fit: 'fill' }).png().toBuffer()),
-  )
-  // Lista vazia = pedido SEM EMOJI de propósito (emojiPara nunca é chamado
-  // nesse caso — ver o `if (item.tipo === 'emoji' ...)` abaixo).
-  const emojiPara = (i: number): Buffer | null =>
-    emojisNorm.length === 0 ? null : emojisNorm[i] ?? emojisNorm[0]
+  const { fotosNorm, emojiPara } = await normalizarSlots(fotos, emojis)
 
   // Centraliza a fase do padrão no canvas (o x0 do PSD legado era arbitrário).
   // Math.floor do valor JÁ negativo (não negar depois): é o que casa com a
@@ -225,24 +369,9 @@ export async function renderMolde(input: RenderMoldeInput): Promise<Buffer> {
   const x0 = Math.floor(-(unitW - (W % unitW)) / 2)
 
   const camadas: sharp.OverlayOptions[] = []
-  let ancora: { x: number; y: number } | null = null
-
-  // Começa 1 linha acima pra cobrir a borda de cima. A paridade vem do índice
-  // derivado do y, então y=0 é SEMPRE linha par (não deslocada) — é o que
-  // torna a posição do texto determinística.
-  for (let y = -ROW_PITCH; y < H; y += ROW_PITCH) {
-    const linha = Math.round(y / ROW_PITCH)
-    const deslocada = Math.abs(linha % 2) === 1
-    for (let x = x0 + (deslocada ? STAGGER : 0) - unitW; x < W; x += unitW) {
-      for (const item of itens) {
-        const buf = item.tipo === 'foto' ? fotosNorm[item.indice] : emojiPara(item.indice)
-        if (!buf) continue // SEM EMOJI: pula a camada, sem tentar compositar undefined
-        const dy = item.tipo === 'foto' ? 0 : EMOJI_DY
-        camadas.push({ input: buf, left: x + item.dx, top: y + dy })
-      }
-      if (!ancora && y === 0 && x + ROSTO >= 0) ancora = { x: x + ROSTO, y }
-    }
-  }
+  const ancora = tileFotos({
+    camadas, offsetX: 0, offsetY: 0, w: W, h: H, x0, y0: 0, itens, unitW, fotosNorm, emojiPara,
+  })
 
   const label = input.label ?? labelDoMolde(molde)
   if (label && ancora) {
@@ -257,4 +386,66 @@ export async function renderMolde(input: RenderMoldeInput): Promise<Buffer> {
     .withMetadata({ density: 300 })
     .jpeg({ quality: input.qualidade ?? 90 })
     .toBuffer()
+}
+
+export interface RenderConjuntoInput {
+  /** Nome do molde CONJ, ex 'GG CONJ MASC'. Precisa existir em CONJUNTO_POR_MOLDE. */
+  molde: string
+  cor: string
+  fotos: Buffer[]
+  emojis: Buffer[]
+  qualidade?: number
+}
+
+/**
+ * Monta os 3 painéis do conjunto (Frente/Manga/Short) — cada um exportado
+ * como JPG separado, igual ao pipeline Python (`_export_conjunto`). O padrão
+ * de tiling é o MESMO em todo painel (STAGGER/ROW_PITCH), só a âncora de
+ * fase muda (medida por painel, ver CONJUNTO_POR_MOLDE).
+ */
+export async function renderConjunto(
+  input: RenderConjuntoInput,
+): Promise<Array<{ painel: string; jpg: Buffer }>> {
+  const { molde, cor, fotos, emojis } = input
+  if (fotos.length === 0) throw new Error('renderConjunto: nenhuma foto')
+
+  const def = CONJUNTO_POR_MOLDE[molde.trim().toUpperCase()]
+  if (!def) throw new Error(`renderConjunto: conjunto desconhecido pro molde "${molde}"`)
+
+  const n = fotos.length
+  const { itens, unitW } = layoutLinha(n)
+  const { fotosNorm, emojiPara } = await normalizarSlots(fotos, emojis)
+  const label = labelDoMolde(molde)
+  const cmyk = hexParaRgb(cor)
+
+  const saidas: Array<{ painel: string; jpg: Buffer }> = []
+  for (const [nomePainel, p] of Object.entries(def.paineis)) {
+    const camadas: sharp.OverlayOptions[] = []
+    const ancora = tileFotos({
+      camadas,
+      offsetX: 0,
+      offsetY: 0,
+      w: p.w,
+      h: p.h,
+      x0: p.anchorX,
+      y0: p.anchorY,
+      itens,
+      unitW,
+      fotosNorm,
+      emojiPara,
+    })
+    if (label && ancora) {
+      const { svg } = svgTexto(label)
+      camadas.push({ input: svg, left: ancora.x + TEXT_PAD_X, top: ancora.y + TEXT_PAD_Y })
+    }
+    const jpg = await sharp({
+      create: { width: p.w, height: p.h, channels: 3, background: cmyk },
+    })
+      .composite(camadas)
+      .withMetadata({ density: 300 })
+      .jpeg({ quality: input.qualidade ?? 90 })
+      .toBuffer()
+    saidas.push({ painel: nomePainel, jpg })
+  }
+  return saidas
 }
