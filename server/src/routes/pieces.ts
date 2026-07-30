@@ -268,29 +268,21 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
       `UPDATE order_pieces SET emoji1 = ?, emoji2 = ?, source = 'manual', updated_at = ? WHERE id = ?`,
     ).run(source.emoji1, source.emoji2, now, targetId)
 
-    // pendentes (ainda não baixadas) — só copia a referência de URL, sem download.
-    const sourcePending = db
-      .prepare('SELECT slot, url, crop FROM piece_pending_photos WHERE piece_id = ?')
-      .all(sourceId) as Array<{ slot: number; url: string; crop: string }>
-    for (const p of sourcePending) {
-      db.prepare(
-        `INSERT INTO piece_pending_photos (piece_id, slot, url, crop, updated_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(piece_id, slot) DO UPDATE SET
-           url = excluded.url, crop = excluded.crop, updated_at = excluded.updated_at`,
-      ).run(targetId, p.slot, p.url, p.crop, now)
-    }
-    const pendingSlots = new Set(sourcePending.map((p) => p.slot))
-
-    // confirmadas (já baixadas) — só pro slot que não ganhou uma pendente acima.
+    // confirmadas (já baixadas/ajustadas) — PRIORIDADE sobre pendente: uma foto
+    // pode ter sido ajustada no picker (garantirFoto já baixou, piece_images tem
+    // composta/ajuste prontos) e ainda assim sobrar uma linha ÓRFÃ em
+    // piece_pending_photos de antes disso (bug irmão, corrigido em garantirFoto
+    // — picker.ts, 2026-07-30). Se ainda existir peça antiga com esse resíduo,
+    // copiar por "tem pendência?" primeiro pegava a URL crua da Shopee e IGNORAVA
+    // o ajuste já feito (bug: palomapancieri2910 — "copiar da 1ª" trazia a foto
+    // sem nenhum ajuste mesmo a origem já estando toda editada).
     //
-    // ⚠️ Copiava só a foto ORIGINAL crua (storage_path) — o ajuste (dx/dy/rotation/
-    // width, u_width), o sem-fundo já removido (PicWish, chamada paga) e a composta
-    // pronta pro carimbo ficavam pra trás. O destino tinha que reajustar do zero e
-    // remover o fundo de novo — o oposto do que "copiar do 1º" deveria economizar.
-    // Cada arquivo em disco (não só a linha do banco) precisa da sua PRÓPRIA cópia:
-    // os dois pieces guardam paths diferentes, e um DELETE futuro num dos dois não
-    // pode apagar o arquivo que o outro ainda usa.
+    // ⚠️ Antes copiava só a foto ORIGINAL crua (storage_path) — o ajuste (dx/dy/
+    // rotation/width, u_width), o sem-fundo já removido (PicWish, chamada paga) e
+    // a composta pronta pro carimbo ficavam pra trás. Cada arquivo em disco (não
+    // só a linha do banco) precisa da sua PRÓPRIA cópia: os dois pieces guardam
+    // paths diferentes, e um DELETE futuro num dos dois não pode apagar o
+    // arquivo que o outro ainda usa.
     const sourceImages = db
       .prepare(
         'SELECT slot, mime, storage_path, crop, sem_fundo_path, composta_path, ajuste_json, u_width FROM piece_images WHERE piece_id = ?',
@@ -305,6 +297,25 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
         ajuste_json: string
         u_width: number | null
       }>
+    const confirmedSlots = new Set(
+      sourceImages.filter((img) => existsSync(img.storage_path)).map((img) => img.slot),
+    )
+
+    // pendentes (ainda não baixadas) — só copia a referência de URL, sem download,
+    // e só pro slot que NÃO tem foto confirmada acima (senão perderia o ajuste).
+    const sourcePending = db
+      .prepare('SELECT slot, url, crop FROM piece_pending_photos WHERE piece_id = ?')
+      .all(sourceId) as Array<{ slot: number; url: string; crop: string }>
+    for (const p of sourcePending) {
+      if (confirmedSlots.has(p.slot)) continue
+      db.prepare(
+        `INSERT INTO piece_pending_photos (piece_id, slot, url, crop, updated_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(piece_id, slot) DO UPDATE SET
+           url = excluded.url, crop = excluded.crop, updated_at = excluded.updated_at`,
+      ).run(targetId, p.slot, p.url, p.crop, now)
+    }
+
     const copiarArquivo = (origem: string, sufixo: string): string => {
       if (!origem || !existsSync(origem)) return ''
       const ext = path.extname(origem) || '.png'
@@ -313,7 +324,7 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
       return destino
     }
     for (const img of sourceImages) {
-      if (pendingSlots.has(img.slot) || !existsSync(img.storage_path)) continue
+      if (!confirmedSlots.has(img.slot)) continue
       const fileName = path.basename(img.storage_path)
       const newPath = copiarArquivo(img.storage_path, `piece_${img.slot}`)
       const newSemFundo = copiarArquivo(img.sem_fundo_path, `semfundo_${img.slot}`)

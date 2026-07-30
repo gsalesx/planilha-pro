@@ -123,6 +123,12 @@ async function garantirFoto(pieceId: number, slot: number): Promise<LinhaFoto | 
        file_name = excluded.file_name, mime = excluded.mime,
        storage_path = excluded.storage_path, updated_at = excluded.updated_at`,
   ).run(pieceId, slot, path.basename(destino), mime, destino, pendente.crop || 'rosto', nowMs())
+  // A foto já está confirmada em piece_images — sem isso, a linha pendente ficava
+  // ÓRFÃ (residual) mesmo depois de baixada/ajustada, e /copy-from (que checa
+  // "tem pendência?" pra decidir se copia só a URL crua ou o ajuste completo)
+  // via essa pendência fantasma e copiava a foto ORIGINAL sem nenhum ajuste pro
+  // destino, mesmo a origem já estando toda editada (bug: palomapancieri2910).
+  db.prepare('DELETE FROM piece_pending_photos WHERE piece_id = ? AND slot = ?').run(pieceId, slot)
 
   return foto(pieceId, slot)
 }
