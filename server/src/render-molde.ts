@@ -165,26 +165,26 @@ export const CONJUNTO_POR_MOLDE: Record<string, { canvas: { w: number; h: number
   },
 }
 
+/** 'GG CONJ MASC' → 'GG MASCULINO' | 'P CONJ FEM' → 'P FEMININO' — nome do
+ *  molde de painel único (short/calça normal) do mesmo tamanho/gênero. */
+function moldeShortNormal(moldeConj: string): string {
+  const partes = moldeConj.trim().toUpperCase().split(/\s+/) // ['GG','CONJ','MASC']
+  const tamanho = partes[0]
+  const genero = partes[2] === 'MASC' ? 'MASCULINO' : 'FEMININO'
+  return `${tamanho} ${genero}`
+}
+
 /**
- * Fator de escala do painel "Short" do conjunto — o PSD original tem o short
- * ligeiramente MAIOR que o short normal (painel único) do mesmo tamanho/
- * gênero (medido 2026-07-31: até 15% maior no MASCULINO, até 7% no
- * FEMININO). Calculado como a média das razões w/h entre o Short do PSD
- * conjunto (CONJUNTO_POR_MOLDE) e o CANVAS_POR_MOLDE do short normal
- * correspondente — reportado pelo user comparando artes impressas lado a
- * lado. Reduz o painel Short na exportação pro tamanho físico certo (mesma
- * densidade 300 DPI dos dois lados, então bater os pixels = bater as
- * polegadas); Frente/Manga não são afetados.
+ * Canvas do painel "Short" do conjunto — NÃO usa o tamanho do PSD conjunto
+ * (que é ligeiramente MAIOR que o short normal do mesmo tamanho/gênero:
+ * medido 2026-07-31, até 15% maior no MASCULINO, até 7% no FEMININO).
+ * Usa direto o CANVAS_POR_MOLDE do short normal correspondente — o mesmo
+ * tiling (fotos/emojis, mesma âncora medida) é montado dentro desse canvas
+ * menor, sem escalar nada depois (resize pós-processamento distorcia o
+ * texto de identificação junto — bug reportado 2026-07-31).
  */
-const SHORT_ESCALA_POR_MOLDE: Record<string, number> = {
-  'P CONJ MASC': 9145 / 10157 * 0.5 + 5784 / 6496 * 0.5,
-  'M CONJ MASC': 9145 / 10157 * 0.5 + 5784 / 6496 * 0.5,
-  'G CONJ MASC': 9259 / 10276 * 0.5 + 6140 / 6735 * 0.5,
-  'GG CONJ MASC': 9277 / 10634 * 0.5 + 6382 / 7200 * 0.5,
-  'P CONJ FEM': 8859 / 8977 * 0.5 + 4963 / 5315 * 0.5,
-  'M CONJ FEM': 8859 / 8977 * 0.5 + 4963 / 5315 * 0.5,
-  'G CONJ FEM': 9089 / 9686 * 0.5 + 5433 / 5552 * 0.5,
-  'GG CONJ FEM': 9682 / 9686 * 0.5 + 5549 / 5552 * 0.5,
+function canvasShortDoConjunto(moldeConj: string): { w: number; h: number } {
+  return CANVAS_POR_MOLDE[moldeShortNormal(moldeConj)]
 }
 
 export interface RenderMoldeInput {
@@ -448,13 +448,20 @@ export async function renderConjunto(
 
   const saidas: Array<{ painel: string; jpg: Buffer }> = []
   for (const [nomePainel, p] of Object.entries(def.paineis)) {
+    // Short: usa o canvas do short NORMAL (menor que o do PSD conjunto — ver
+    // canvasShortDoConjunto) — mesma âncora medida, só o canvas ao redor
+    // muda, então o tiling tileia igual e corta na borda menor, sem precisar
+    // escalar nada depois (evita distorcer o texto de identificação, que
+    // sempre sai no tamanho fixo padrão TEXT_CAP_H).
+    const canvasPainel = nomePainel === 'Short' ? canvasShortDoConjunto(molde) : { w: p.w, h: p.h }
+
     const camadas: sharp.OverlayOptions[] = []
     tileFotos({
       camadas,
       offsetX: 0,
       offsetY: 0,
-      w: p.w,
-      h: p.h,
+      w: canvasPainel.w,
+      h: canvasPainel.h,
       x0: p.anchorX,
       y0: p.anchorY,
       itens,
@@ -463,23 +470,17 @@ export async function renderConjunto(
       emojiPara,
     })
     // Canto superior-esquerdo do PAINEL — cada painel (Frente/Manga/Short) é
-    // uma imagem própria, então o texto sempre fica no canto dela.
+    // uma imagem própria, então o texto sempre fica no canto dela, sempre no
+    // mesmo tamanho fixo (TEXT_CAP_H) — nenhuma escala pós-processamento.
     if (label) {
       const { svg } = svgTexto(label)
       camadas.push({ input: svg, left: TEXT_PAD_X, top: TEXT_PAD_Y })
     }
-    let img = sharp({
-      create: { width: p.w, height: p.h, channels: 3, background: cmyk },
-    }).composite(camadas)
 
-    // Short do PSD conjunto sai maior que o short normal do mesmo tamanho —
-    // escala pro tamanho físico certo (ver SHORT_ESCALA_POR_MOLDE).
-    const escala = nomePainel === 'Short' ? SHORT_ESCALA_POR_MOLDE[molde.trim().toUpperCase()] : undefined
-    if (escala) {
-      img = img.resize(Math.round(p.w * escala), Math.round(p.h * escala))
-    }
-
-    const jpg = await img
+    const jpg = await sharp({
+      create: { width: canvasPainel.w, height: canvasPainel.h, channels: 3, background: cmyk },
+    })
+      .composite(camadas)
       .withMetadata({ density: 300 })
       .jpeg({ quality: input.qualidade ?? 90 })
       .toBuffer()

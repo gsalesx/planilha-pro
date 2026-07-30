@@ -167,19 +167,21 @@ export const PRINT_ALTURA = 1400
 export const PRINT_ZOOM_FATOR = 1.3
 export const PRINT_DESLOCAMENTO_X = 600
 
-/** Fator de escala do painel "Short" do conjunto — mesma tabela do servidor
- *  (render-molde.ts, ver comentário lá pra explicação completa). O PSD
- *  original tem o short ligeiramente MAIOR que o short normal do mesmo
- *  tamanho/gênero (medido 2026-07-31: até 15% maior no MASCULINO). */
-const SHORT_ESCALA_POR_MOLDE: Record<string, number> = {
-  'P CONJ MASC': (9145 / 10157) * 0.5 + (5784 / 6496) * 0.5,
-  'M CONJ MASC': (9145 / 10157) * 0.5 + (5784 / 6496) * 0.5,
-  'G CONJ MASC': (9259 / 10276) * 0.5 + (6140 / 6735) * 0.5,
-  'GG CONJ MASC': (9277 / 10634) * 0.5 + (6382 / 7200) * 0.5,
-  'P CONJ FEM': (8859 / 8977) * 0.5 + (4963 / 5315) * 0.5,
-  'M CONJ FEM': (8859 / 8977) * 0.5 + (4963 / 5315) * 0.5,
-  'G CONJ FEM': (9089 / 9686) * 0.5 + (5433 / 5552) * 0.5,
-  'GG CONJ FEM': (9682 / 9686) * 0.5 + (5549 / 5552) * 0.5,
+/** 'GG CONJ MASC' → 'GG MASCULINO' — nome do molde de painel único (short
+ *  normal) do mesmo tamanho/gênero. Mesma lógica do servidor (render-molde.ts). */
+function moldeShortNormal(moldeConj: string): string {
+  const partes = moldeConj.trim().toUpperCase().split(/\s+/)
+  const tamanho = partes[0]
+  const genero = partes[2] === 'MASC' ? 'MASCULINO' : 'FEMININO'
+  return `${tamanho} ${genero}`
+}
+
+/** Canvas do painel "Short" do conjunto — usa direto o CANVAS_POR_MOLDE do
+ *  short normal correspondente (menor que o canvas do PSD conjunto — ver
+ *  render-molde.ts pra explicação completa: escalar depois distorcia o
+ *  texto de identificação junto, bug reportado 2026-07-31). */
+function canvasShortDoConjunto(moldeConj: string): { w: number; h: number } {
+  return CANVAS_POR_MOLDE[moldeShortNormal(moldeConj)]
 }
 
 export interface RenderMoldeInput {
@@ -400,36 +402,27 @@ export async function montarConjuntoCanvas(
 
   const saidas: Array<{ painel: string; blob: Blob }> = []
   for (const [nomePainel, p] of Object.entries(def.paineis)) {
+    // Short: usa o canvas do short NORMAL (menor que o do PSD conjunto — ver
+    // canvasShortDoConjunto) — mesma âncora medida, só o canvas ao redor
+    // muda; sem escalar nada depois (evita distorcer o texto, que sempre
+    // sai no tamanho fixo padrão TEXT_CAP_H).
+    const canvasPainel = nomePainel === 'Short' ? canvasShortDoConjunto(molde) : { w: p.w, h: p.h }
+
     const canvas = document.createElement('canvas')
-    canvas.width = p.w
-    canvas.height = p.h
+    canvas.width = canvasPainel.w
+    canvas.height = canvasPainel.h
     const ctx = canvas.getContext('2d')!
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
     ctx.fillStyle = cor || '#000000'
-    ctx.fillRect(0, 0, p.w, p.h)
+    ctx.fillRect(0, 0, canvasPainel.w, canvasPainel.h)
 
     tileFotosCanvas({
-      ctx, offsetX: 0, offsetY: 0, w: p.w, h: p.h, x0: p.anchorX, y0: p.anchorY, itens, unitW, fotos, emojiPara,
+      ctx, offsetX: 0, offsetY: 0, w: canvasPainel.w, h: canvasPainel.h, x0: p.anchorX, y0: p.anchorY, itens, unitW, fotos, emojiPara,
     })
     if (label) desenharLabel(ctx, label)
 
-    // Short do PSD conjunto sai maior que o short normal do mesmo tamanho —
-    // escala pro tamanho físico certo (ver SHORT_ESCALA_POR_MOLDE).
-    const escala = nomePainel === 'Short' ? SHORT_ESCALA_POR_MOLDE[molde.trim().toUpperCase()] : undefined
-    let canvasFinal = canvas
-    if (escala) {
-      const escalado = document.createElement('canvas')
-      escalado.width = Math.round(p.w * escala)
-      escalado.height = Math.round(p.h * escala)
-      const ctxEscalado = escalado.getContext('2d')!
-      ctxEscalado.imageSmoothingEnabled = true
-      ctxEscalado.imageSmoothingQuality = 'high'
-      ctxEscalado.drawImage(canvas, 0, 0, escalado.width, escalado.height)
-      canvasFinal = escalado
-    }
-
-    saidas.push({ painel: nomePainel, blob: await canvasParaBlob(canvasFinal, input.qualidade) })
+    saidas.push({ painel: nomePainel, blob: await canvasParaBlob(canvas, input.qualidade) })
   }
   return saidas
 }
