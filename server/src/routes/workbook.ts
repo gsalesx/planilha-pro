@@ -241,15 +241,21 @@ router.post('/workbooks/:workbookId/replace', requireAuth, (req, res) => {
 
 /**
  * O status é gerenciado numa linha só — a do pedido — mas TUDO que consome status lê linha
- * a linha (fila de "Separado", upload de prévias, remessa de "Aprovado"). Se a filha ficasse
- * com o status velho, a peça dela sumiria desses fluxos e o cliente receberia o pedido
- * incompleto. Por isso a mudança de status na linha-pai desce pras filhas na mesma transação.
+ * a linha (fila de "Separado", upload de prévias, remessa de "Aprovado"). Se uma linha
+ * ficasse com o status velho, a peça dela sumiria desses fluxos e o cliente receberia o
+ * pedido incompleto. Por isso a mudança de status em QUALQUER linha do pedido (pai OU
+ * filha — editar uma célula na grade edita a linha exata, que pode ser uma filha) desce
+ * pra TODAS as outras linhas do mesmo pedido na mesma transação.
+ *
+ * `chaveEditada` pode ser a chave do pai OU de uma filha — sempre resolve o pai de verdade
+ * (via parent_key, ou a própria linha se ela não tiver pai) antes de buscar as irmãs, senão
+ * editar uma filha não propaga pra mais ninguém (era o bug: pai e filhas divergiam).
  *
  * Só o status desce: cor, emoji e foto são de cada peça e precisam divergir.
  */
 function propagarStatusParaFilhas(
   workbookId: string,
-  chavePai: string,
+  chaveEditada: string,
   cellPatches: CellPatch[] | null,
   rowInteira: unknown[] | undefined,
   now: number,
@@ -263,11 +269,17 @@ function propagarStatusParaFilhas(
   }
   if (novoStatus === null) return
 
-  const filhas = db
-    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ? AND parent_key = ?')
-    .all(workbookId, chavePai) as Array<{ order_key: string; row_json: string }>
+  const editada = db
+    .prepare('SELECT parent_key FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(workbookId, chaveEditada) as { parent_key: string | null } | undefined
+  const chavePai = editada?.parent_key || chaveEditada
+
+  const irmas = db
+    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ? AND (order_key = ? OR parent_key = ?)')
+    .all(workbookId, chavePai, chavePai) as Array<{ order_key: string; row_json: string }>
   const upd = db.prepare('UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?')
-  for (const f of filhas) {
+  for (const f of irmas) {
+    if (f.order_key === chaveEditada) continue
     const row = JSON.parse(f.row_json || '[]') as unknown[]
     while (row.length <= STATUS_COL) row.push(null)
     if (String(row[STATUS_COL] ?? '') === novoStatus) continue
