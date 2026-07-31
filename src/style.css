@@ -4186,11 +4186,15 @@ table.sheet tbody th.row-num.is-active {
    Mesmo problema de especificidade do .row-grupo logo abaixo: sem o prefixo
    `table.sheet tbody`, `table.sheet tbody td{background:#fff}` (0,1,3) vencia esta
    regra (0,1,1) e o fundo nunca aparecia — só a cor mais clara do texto (que não tem
-   concorrente) dava algum indício. */
-table.sheet tbody tr.row-filha td {
+   concorrente) dava algum indício.
+   `:not(.has-bg)` é obrigatório: célula com etiqueta manual (grid.ts seta
+   td.style.backgroundColor + classe has-bg) tem cor por INLINE STYLE, que perde pra
+   `!important` de stylesheet mesmo sem bater na especificidade — sem essa exclusão,
+   aplicar etiqueta numa linha-filha não tinha efeito visual nenhum (bug real, 2026-07-31). */
+table.sheet tbody tr.row-filha td:not(.has-bg) {
   background: #fbfcfe !important;
 }
-table.sheet tbody tr.row-filha:hover td {
+table.sheet tbody tr.row-filha:hover td:not(.has-bg) {
   background: #f4f7fb !important;
 }
 .row-num-filha {
@@ -4226,11 +4230,11 @@ table.sheet tbody tr.row-filha:hover td {
    por vir depois no arquivo. `!important` no background porque `.has-bg` (célula com
    cor manual) e `tr:hover td`/`tr.row-selected td` têm o mesmo prefixo e teto de
    especificidade — sem ele, selecionar ou passar o mouse apagaria a moldura. */
-table.sheet tbody tr.row-grupo td,
+table.sheet tbody tr.row-grupo td:not(.has-bg),
 table.sheet tbody tr.row-grupo th {
   background: #f1e4ff !important;
 }
-table.sheet tbody tr.row-grupo:hover td,
+table.sheet tbody tr.row-grupo:hover td:not(.has-bg),
 table.sheet tbody tr.row-grupo:hover th {
   background: #f3e8ff !important;
 }

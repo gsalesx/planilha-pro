@@ -9,7 +9,7 @@ export const STATUS_OPTIONS: StatusOption[] = [
   { label: '', color: '#ffffff' },
   { label: 'Pronto', color: '#34d399' },
   { label: 'Separado', color: '#93c5fd' },
-  { label: 'Em produção 1', color: '#fde047' },
+  { label: 'Em produção 1', color: '#1e3a8a', textColor: '#ffffff' },
   { label: 'Em produção 2', color: '#fb923c' },
   { label: 'Em produção 3', color: '#7e22ce', textColor: '#ffffff' },
   { label: 'Manual', color: '#fdba74' },

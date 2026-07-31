@@ -428,13 +428,20 @@ export function upsertShopeeOrder(
   const sheetDate = resolveSheetDate(order)
 
   /**
-   * Pedido que JÁ tem linha no banco continua no formato antigo (1 linha por item, sem
-   * explodir quantidade). Trocar o formato de um pedido publicado faria um "5× M MASC"
-   * que hoje é 1 linha virar 5 de uma hora pra outra, mexendo em coisa já entregue —
-   * decisão do user: corrigir daqui pra frente, nunca remexer no que já está publicado.
+   * Pedido que JÁ tem linha no banco no formato ANTIGO (1 linha por item, sem quantidade
+   * explodida) continua nesse formato — trocar pra explodido de uma hora pra outra faria um
+   * "5× M MASC" que hoje é 1 linha virar 5, mexendo em coisa já publicada. Mas um pedido que
+   * JÁ está no formato explodido (>1 linha armazenada) precisa CONTINUAR resincronizando pelo
+   * formato explodido — senão o resync (que roda de novo pra refletir status novo da Shopee,
+   * ex. READY_TO_SHIP→SHIPPED) colapsa pra 1 linha de item só, escreve só na linha-pai e as
+   * filhas ficam com o status Shopee (col H) congelado no valor da criação pra sempre. Bug
+   * real: adrielegiyuri (5 linhas) — pai virou SHIPPED, as 4 filhas nunca mais foram tocadas
+   * porque cada resync recalculava só 1 linha de item e escrevia na key da 1ª ocorrência.
    */
-  const jaExiste = findOrdersBySn(orderSn, workbookId).length > 0
-  const unidades = jaExiste
+  const linhasExistentes = findOrdersBySn(orderSn, workbookId)
+  const jaExiste = linhasExistentes.length > 0
+  const jaExplodido = linhasExistentes.length > 1
+  const unidades = jaExiste && !jaExplodido
     ? mapShopeeOrderToItemRows(order).map((row, itemIndex) => ({ row, itemIndex }))
     : mapShopeeOrderToUnitRows(order)
   const itemRows = unidades.map((u) => u.row)
