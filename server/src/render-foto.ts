@@ -1,15 +1,17 @@
 /**
- * Compõe a FOTO dentro do slot 900×900 — coração ou recorte (cápsula).
+ * Compõe a FOTO dentro do slot 900×900 — coração, recorte (cápsula) ou rosto
+ * (face cutout PicWish, sem moldura).
  *
  * Porte de `coracao_render.render_coracao` / `recorte_render.render_recorte`
  * do repo "Criador de artes". Só o caminho MANUAL: recebe os parâmetros de
- * enquadramento já escolhidos (dx/dy/rotation/width) e aplica. Não há
- * detecção de rosto aqui — por isso nada de OpenCV/ONNX no servidor.
+ * enquadramento já escolhidos (dx/dy/rotation/width) e aplica. Detecção de
+ * rosto fica na API PicWish (face-cutout), não no servidor.
  *
  * As máscaras do coração (base e dilatada p/ a borda) dependem só de
  * constantes, então foram pré-calculadas em `assets/molde/*.png` em vez de
  * recomputar distanceTransform a cada render. A máscara do recorte é um
- * retângulo arredondado — desenhada como SVG.
+ * retângulo arredondado — desenhada como SVG. O modo rosto não usa moldura:
+ * só a silhueta do face-cutout + borda branca (mesmo `bordaExpandida`).
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
@@ -334,6 +336,27 @@ export async function renderRecorte(
   })
   const recortada = await aplicarMascara(posicionada, await mascaraRaw(capsulaSvg(uWidth)))
   const final = reenquadrar ? await reframe(recortada) : recortada
+  return borderPx > 0 ? bordaExpandida(final, borderPx) : final
+}
+
+/**
+ * Rosto 900×900: face cutout do PicWish (já sem fundo, sem moldura) enquadrado
+ * e com a mesma borda branca do recorte (`bordaExpandida`). Diferente do
+ * recorte, NÃO aplica cápsula — a silhueta é a do próprio face-cutout.
+ *
+ * `borderPx=0` devolve limpo (preview do editor / insumo reedital); a borda
+ * entra na composta final, igual ao recorte.
+ */
+export async function renderFace(
+  fotoFaceCutout: Buffer,
+  params: ParamsEnquadramento,
+  reenquadrar = true,
+  borderPx = 0,
+): Promise<Buffer> {
+  const posicionada = await fotoPosicionada(fotoFaceCutout, params, {
+    r: 0, g: 0, b: 0, alpha: 0,
+  })
+  const final = reenquadrar ? await reframe(posicionada) : posicionada
   return borderPx > 0 ? bordaExpandida(final, borderPx) : final
 }
 

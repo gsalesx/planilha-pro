@@ -24,7 +24,7 @@ import { requireAuth } from '../auth.js'
 import { db, nowMs } from '../db.js'
 import { env } from '../env.js'
 import { resolverArquivoEmojiPorNome } from '../emoji-catalog.js'
-import { removerFundo } from '../picwish.js'
+import { recortarRosto, removerFundo } from '../picwish.js'
 import { fetchShopeeCdn } from './pieces.js'
 import {
   CANVAS_POR_MOLDE,
@@ -47,6 +47,7 @@ import {
   BORDER_PX,
   type ParamsEnquadramento,
   renderCoracao,
+  renderFace,
   renderRecorte,
 } from '../render-foto.js'
 
@@ -71,7 +72,24 @@ router.get('/picker/mask/heart', requireAuth, (_req, res) => {
   res.send(readFileSync(p))
 })
 
-type Modo = 'coracao' | 'recorte'
+/** 'rosto' no banco = recorte/cápsula (legado); 'face' = face cutout PicWish. */
+type Modo = 'coracao' | 'recorte' | 'face'
+
+function cropDoModo(modo: Modo): string {
+  if (modo === 'coracao') return 'coracao'
+  if (modo === 'face') return 'face'
+  return 'rosto'
+}
+
+/** Prefixo no arquivo cacheado em sem_fundo_path — distingue remoção de fundo vs face cutout. */
+function prefixoCacheSemFundo(kind: 'fundo' | 'face'): string {
+  return kind === 'face' ? 'facecut' : 'semfundo'
+}
+
+function cacheEhDoKind(pathStr: string, kind: 'fundo' | 'face'): boolean {
+  const base = path.basename(pathStr)
+  return kind === 'face' ? base.startsWith('facecut_') : base.startsWith('semfundo_')
+}
 
 interface LinhaFoto {
   piece_id: number
@@ -135,8 +153,14 @@ async function garantirFoto(pieceId: number, slot: number): Promise<LinhaFoto | 
   return foto(pieceId, slot)
 }
 
+function modoDaCrop(crop: string): Modo {
+  if (crop === 'coracao') return 'coracao'
+  if (crop === 'face') return 'face'
+  return 'recorte'
+}
+
 function modoDa(l: LinhaFoto): Modo {
-  return l.crop === 'coracao' ? 'coracao' : 'recorte'
+  return modoDaCrop(l.crop)
 }
 
 /** 'original' = foto COM fundo, cortada direto (uso legítimo — nem toda foto precisa
@@ -195,7 +219,8 @@ function parseIds(req: { params: Record<string, string> }): { pieceId: number; s
 }
 
 /* ------------------------------------------------------------------ *
- * Foto sem fundo (PicWish) — cacheada, pois a chamada externa é cara.
+ * Foto sem fundo / face cutout (PicWish) — cacheada (chamada externa cara).
+ * `?kind=face` → Face Cutout API; default → remoção de fundo (recorte).
  * ------------------------------------------------------------------ */
 router.post('/pieces/:id/photo/:slot/remove-bg', requireAuth, async (req, res) => {
   const ids = parseIds(req)
@@ -216,19 +241,27 @@ router.post('/pieces/:id/photo/:slot/remove-bg', requireAuth, async (req, res) =
     res.status(404).json({ error: 'foto não encontrada' })
     return
   }
+  const kind: 'fundo' | 'face' = req.query.kind === 'face' ? 'face' : 'fundo'
   const forcar = req.query.force === '1'
-  if (!forcar && l.sem_fundo_path && existsSync(l.sem_fundo_path)) {
-    res.json({ ok: true, cache: true })
+  if (
+    !forcar &&
+    l.sem_fundo_path &&
+    existsSync(l.sem_fundo_path) &&
+    cacheEhDoKind(l.sem_fundo_path, kind)
+  ) {
+    res.json({ ok: true, cache: true, kind })
     return
   }
   try {
-    const png = await removerFundo(readFileSync(l.storage_path), path.basename(l.storage_path))
-    const destino = caminhoNovo('semfundo', ids.pieceId, ids.slot)
+    const bytes = readFileSync(l.storage_path)
+    const nome = path.basename(l.storage_path)
+    const png = kind === 'face' ? await recortarRosto(bytes, nome) : await removerFundo(bytes, nome)
+    const destino = caminhoNovo(prefixoCacheSemFundo(kind), ids.pieceId, ids.slot)
     trocarArquivo(l.sem_fundo_path, destino, png)
     db.prepare(
       'UPDATE piece_images SET sem_fundo_path = ?, updated_at = ? WHERE piece_id = ? AND slot = ?',
     ).run(destino, nowMs(), ids.pieceId, ids.slot)
-    res.json({ ok: true, cache: false })
+    res.json({ ok: true, cache: false, kind })
   } catch (e) {
     res.status(502).json({ error: (e as Error).message })
   }
@@ -270,7 +303,10 @@ router.put('/pieces/:id/photo/:slot/sem-fundo', requireAuth, upload.single('imag
     res.status(404).json({ error: 'foto não encontrada' })
     return
   }
-  const destino = caminhoNovo('semfundo', ids.pieceId, ids.slot)
+  // Preserva o tipo do cache (facecut_ vs semfundo_) pra não invalidar o modo rosto
+  // depois da borracha.
+  const prefixo = cacheEhDoKind(l.sem_fundo_path, 'face') ? 'facecut' : 'semfundo'
+  const destino = caminhoNovo(prefixo, ids.pieceId, ids.slot)
   trocarArquivo(l.sem_fundo_path, destino, req.file.buffer)
   db.prepare(
     'UPDATE piece_images SET sem_fundo_path = ?, updated_at = ? WHERE piece_id = ? AND slot = ?',
@@ -322,6 +358,14 @@ async function comporFoto(
   semClip = false,
   fonteRecorte: FonteRecorte = 'sem_fundo',
 ): Promise<Buffer> {
+  if (modo === 'face') {
+    // Face cutout: precisa do PNG do PicWish (só o rosto). Sem moldura — só
+    // silhueta + borda branca. `semClip` pula reframe/borda pro preview do editor.
+    if (!l.sem_fundo_path || !existsSync(l.sem_fundo_path) || !cacheEhDoKind(l.sem_fundo_path, 'face')) {
+      throw new Error('rode o face cutout antes de compor o rosto')
+    }
+    return renderFace(readFileSync(l.sem_fundo_path), ajuste, !semClip, semClip ? 0 : BORDER_PX)
+  }
   if (modo === 'recorte') {
     // Duas fontes válidas pro recorte: a foto SEM FUNDO (silhueta recortada de
     // verdade pelo PicWish) ou a foto ORIGINAL, cortada direto pela cápsula sem
@@ -389,7 +433,7 @@ router.put('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
           SET crop = ?, ajuste_json = ?, u_width = ?, composta_path = ?, updated_at = ?
         WHERE piece_id = ? AND slot = ?`,
     ).run(
-      modo === 'coracao' ? 'coracao' : 'rosto',
+      cropDoModo(modo),
       // fonteRecorte guardado no MESMO blob — sem migração de schema pra 1 campo.
       JSON.stringify({ ...ajuste, fonteRecorte }),
       uWidth,
@@ -426,14 +470,21 @@ router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, (req, res) => {
   }
   const l = foto(ids.pieceId, ids.slot)
   if (l && existsSync(l.storage_path)) {
-    const temSemFundo = Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path))
+    const modo = modoDa(l)
+    // Recorte: qualquer arquivo em sem_fundo_path que NÃO seja facecut_ conta
+    // (inclui legado sem prefixo). Face: só facecut_.
+    const cacheOk =
+      Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path)) &&
+      (modo === 'face'
+        ? cacheEhDoKind(l.sem_fundo_path, 'face')
+        : !cacheEhDoKind(l.sem_fundo_path, 'face'))
     res.json({
-      modo: modoDa(l),
+      modo,
       ajuste: parseAjuste(l.ajuste_json),
       uWidth: l.u_width ?? 600,
-      temSemFundo,
+      temSemFundo: cacheOk,
       temComposta: Boolean(l.composta_path && existsSync(l.composta_path)),
-      fonteRecorte: parseFonteRecorte(l.ajuste_json, temSemFundo),
+      fonteRecorte: parseFonteRecorte(l.ajuste_json, cacheOk),
       pendingUrl: null,
     })
     return
@@ -452,7 +503,7 @@ router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, (req, res) => {
   }
   const crop = l?.crop ?? pendente.crop
   res.json({
-    modo: crop === 'coracao' ? 'coracao' : 'recorte',
+    modo: modoDaCrop(crop),
     ajuste: parseAjuste(l?.ajuste_json ?? ''),
     uWidth: l?.u_width ?? 600,
     temSemFundo: false,

@@ -54,7 +54,7 @@ export const env = {
    */
   shopeeLinkStartTimestampNano: envTrim('SHOPEE_LINK_START_TIMESTAMP_NANO'),
   /**
-   * PicWish — remoção de fundo das fotos no picker web (modo recorte).
+   * PicWish — remoção de fundo (modo recorte) e face cutout (modo rosto).
    * Sem fallback embutido de propósito: chave não entra em repositório.
    * Configurar no Dokploy (mesma chave usada por scripts/picwish.py no
    * pipeline local). Sem ela, só o modo coração funciona.

@@ -518,7 +518,7 @@ export type PecaGenero = 'MASCULINO' | 'FEMININO'
 export type PecaTamanhoInfantil = '2 ANOS' | '4 ANOS' | '6 ANOS' | '8 ANOS' | '10 ANOS' | '12 ANOS'
 export type PecaTamanho = 'P' | 'M' | 'G' | 'GG' | PecaTamanhoInfantil
 
-export type PhotoCrop = 'rosto' | 'coracao'
+export type PhotoCrop = 'rosto' | 'coracao' | 'face'
 
 export interface OrderPiece {
   id: number
@@ -538,7 +538,7 @@ export interface OrderPiece {
   nota: string
   source: 'auto' | 'manual'
   photos: { 1: boolean; 2: boolean }
-  /** Tipo de composição por foto (recorte/silhueta vs coração) — null = sem foto. */
+  /** Tipo de composição por foto (recorte/cápsula vs coração vs rosto) — null = sem foto. */
   crops: { 1: PhotoCrop | null; 2: PhotoCrop | null }
   /** URL do CDN Shopee pra foto escolhida mas ainda não confirmada/baixada (hotlink
    * direto pro preview) — null quando já foi confirmada ou quando não tem foto. */
@@ -637,7 +637,7 @@ export async function removePiecePhoto(pieceId: number, slot: 1 | 2): Promise<{ 
   return request(`/pieces/${pieceId}/photo/${slot}`, { method: 'DELETE' })
 }
 
-/** Troca só o tipo de composição (recorte/silhueta vs coração) de uma foto já escolhida. */
+/** Troca só o tipo de composição (recorte/cápsula vs coração vs rosto) de uma foto já escolhida. */
 export async function setPiecePhotoCrop(
   pieceId: number,
   slot: 1 | 2,

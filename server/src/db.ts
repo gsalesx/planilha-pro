@@ -446,9 +446,9 @@ db.exec(`
   }
 }
 
-// Migration idempotente: garante piece_images.crop ('rosto'=recorte | 'coracao') em
-// DBs criados antes dessa coluna existir — mesmo toggle por foto que a extensão Chrome
-// antiga tinha (radiogroup "Recorte"/"Coração"), ausente no picker novo até aqui.
+// Migration idempotente: garante piece_images.crop
+// ('rosto'=recorte/cápsula | 'coracao' | 'face'=face cutout PicWish) em DBs
+// criados antes dessa coluna existir.
 {
   const cols = db.prepare("PRAGMA table_info(piece_images)").all() as Array<{ name: string }>
   if (!cols.some((c) => c.name === 'crop')) {

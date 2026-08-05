@@ -517,9 +517,8 @@ router.post('/workbooks/:workbookId/pieces/:orderKey/confirm', requireAuth, asyn
   res.json({ ok: true })
 })
 
-/** PATCH /api/pieces/:id/photo/:slot — { crop: 'rosto'|'coracao' }. Troca só o TIPO de
- * composição da foto já escolhida (recorte/silhueta vs coração), sem reenviar a imagem —
- * mesmo toggle por foto que a extensão Chrome antiga tinha. */
+/** PATCH /api/pieces/:id/photo/:slot — { crop: 'rosto'|'coracao'|'face' }. Troca só o TIPO de
+ * composição da foto já escolhida (recorte/cápsula vs coração vs rosto), sem reenviar a imagem. */
 router.patch('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
   const pieceId = Number(req.params.id)
   const slot = Number(req.params.slot)
@@ -528,8 +527,8 @@ router.patch('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
     res.status(400).json({ error: 'id/slot inválidos' })
     return
   }
-  if (crop !== 'rosto' && crop !== 'coracao') {
-    res.status(400).json({ error: "crop precisa ser 'rosto' ou 'coracao'" })
+  if (crop !== 'rosto' && crop !== 'coracao' && crop !== 'face') {
+    res.status(400).json({ error: "crop precisa ser 'rosto', 'coracao' ou 'face'" })
     return
   }
   const now = nowMs()

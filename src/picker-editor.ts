@@ -12,7 +12,7 @@ const CANVAS = 900
 /** Laranja da guia de corte — precisa destacar sobre pele, roupa e fundo claro. */
 const GUIA_COR = '#ff7a18'
 
-export type ModoFoto = 'coracao' | 'recorte'
+export type ModoFoto = 'coracao' | 'recorte' | 'face'
 
 export interface AjusteFoto {
   width?: number
@@ -161,6 +161,7 @@ export async function abrirPickerEditor(
             <div class="picker-editor-modos">
               <button type="button" data-modo="coracao">Coração</button>
               <button type="button" data-modo="recorte">Recorte</button>
+              <button type="button" data-modo="face">Rosto</button>
             </div>
           </div>
 
@@ -170,6 +171,13 @@ export async function abrirPickerEditor(
             <div class="picker-editor-fonte">
               <button type="button" class="btn in-fonte-original" title="Corta a foto ORIGINAL, com fundo">🖼 Foto original</button>
               <button type="button" class="btn in-removebg" title="Corta a silhueta sem fundo (PicWish)">✂ Remover fundo</button>
+            </div>
+          </div>
+
+          <div class="picker-editor-grupo" data-so-face>
+            <span class="picker-editor-label">Face cutout (PicWish)</span>
+            <div class="picker-editor-fonte">
+              <button type="button" class="btn in-facecut" title="Recorta só o rosto (PicWish Face Cutout)">✂ Recortar rosto</button>
             </div>
           </div>
 
@@ -192,7 +200,7 @@ export async function abrirPickerEditor(
             </div>
           </div>
 
-          <div class="picker-editor-grupo" data-so-recorte>
+          <div class="picker-editor-grupo" data-so-mascara>
             <span class="picker-editor-label">Borracha</span>
             <div class="picker-editor-borracha">
               <button type="button" class="in-borracha">Ativar</button>
@@ -306,13 +314,13 @@ export async function abrirPickerEditor(
   let cursor: { x: number; y: number } | null = null
 
   async function carregarFonte(): Promise<void> {
-    // Sem-fundo NUNCA vem da URL pendente (é derivado no servidor a partir da
-    // original) — só a foto ORIGINAL (coração, ou recorte antes de remover fundo)
-    // pode vir direto do CDN enquanto o servidor ainda não tiver a própria cópia.
+    // Sem-fundo / face-cutout NUNCA vêm da URL pendente (são derivados no servidor) —
+    // só a foto ORIGINAL (coração, ou recorte/rosto antes do PicWish) pode vir do CDN.
     const original = pendingUrl ?? `${base}?t=${Date.now()}`
-    const url = modo === 'recorte'
-      ? (fonteRecorte === 'original' ? original : `${base}/sem-fundo`)
-      : original
+    const usaSemFundo =
+      (modo === 'recorte' && fonteRecorte === 'sem_fundo') ||
+      (modo === 'face' && fonteRecorte === 'sem_fundo')
+    const url = usaSemFundo ? `${base}/sem-fundo` : original
     try {
       fonte = await carregarImagem(url)
       // Sem `width` salvo: começa com a foto cobrindo o canvas inteiro.
@@ -325,10 +333,11 @@ export async function abrirPickerEditor(
     } catch {
       fonte = null
       if (modo === 'recorte' && fonteRecorte === 'sem_fundo') {
-        // Sem foto sem-fundo ainda: 404 é o estado normal na 1ª vez. Destaca
-        // o botão em vez de só escrever a instrução.
         setStatus('O recorte precisa da foto sem fundo — clique em "✂ Remover fundo" (botão abaixo).', true)
         q<HTMLButtonElement>('.in-removebg').classList.add('destaque')
+      } else if (modo === 'face' && fonteRecorte === 'sem_fundo') {
+        setStatus('O rosto precisa do face cutout — clique em "✂ Recortar rosto".', true)
+        q<HTMLButtonElement>('.in-facecut').classList.add('destaque')
       } else {
         setStatus('Não consegui carregar a foto.', true)
       }
@@ -360,7 +369,12 @@ export async function abrirPickerEditor(
    */
   function desenharGuia(c: CanvasRenderingContext2D): void {
     c.save()
-    if (modo === 'recorte') {
+    if (modo === 'face') {
+      // Sem moldura — a silhueta é a do próprio face cutout. Só um leve
+      // escurecimento atrás pra a transparência não "sumir" no fundo branco.
+      c.fillStyle = 'rgba(15,23,42,.18)'
+      c.fillRect(0, 0, CANVAS, CANVAS)
+    } else if (modo === 'recorte') {
       // Fora da cápsula escurecido, com a mesma leitura do modo coração: o cinza é o
       // que vai FICAR DE FORA, não o que fica dentro.
       // ⚠️ `caminhoCapsula` chama `c.beginPath()` — se o retângulo externo fosse
@@ -420,16 +434,20 @@ export async function abrirPickerEditor(
     desenharGuia(ctx)
     desenharCursorBorracha(ctx)
 
-    // DIREITA: o resultado, já recortado no formato.
+    // DIREITA: o resultado, já recortado no formato (rosto = sem moldura).
     ctxSaida.clearRect(0, 0, CANVAS, CANVAS)
     desenharFoto(ctxSaida)
-    ctxSaida.globalCompositeOperation = 'destination-in'
-    if (modo === 'coracao') {
-      if (heartMask) ctxSaida.drawImage(heartMask, 0, 0, CANVAS, CANVAS)
+    if (modo === 'face') {
+      // Sem clip — a silhueta transparente do face cutout JÁ é o resultado.
     } else {
-      desenharCapsula(ctxSaida, uWidth)
+      ctxSaida.globalCompositeOperation = 'destination-in'
+      if (modo === 'coracao') {
+        if (heartMask) ctxSaida.drawImage(heartMask, 0, 0, CANVAS, CANVAS)
+      } else {
+        desenharCapsula(ctxSaida, uWidth)
+      }
+      ctxSaida.globalCompositeOperation = 'source-over'
     }
-    ctxSaida.globalCompositeOperation = 'source-over'
   }
 
   /** Cápsula do recorte: extensão vertical fixa (36–864), largura variável. */
@@ -578,6 +596,12 @@ export async function abrirPickerEditor(
     overlay.querySelectorAll<HTMLElement>('[data-so-recorte]').forEach((el) => {
       el.style.display = modo === 'recorte' ? '' : 'none'
     })
+    overlay.querySelectorAll<HTMLElement>('[data-so-face]').forEach((el) => {
+      el.style.display = modo === 'face' ? '' : 'none'
+    })
+    overlay.querySelectorAll<HTMLElement>('[data-so-mascara]').forEach((el) => {
+      el.style.display = modo === 'recorte' || modo === 'face' ? '' : 'none'
+    })
     overlay.querySelectorAll<HTMLButtonElement>('[data-modo]').forEach((b) => {
       b.classList.toggle('ativo', b.dataset.modo === modo)
     })
@@ -587,17 +611,34 @@ export async function abrirPickerEditor(
     // à toa) — ambos continuam clicáveis, isso é só pra deixar claro qual ação falta.
     const btnOriginal = q<HTMLButtonElement>('.in-fonte-original')
     const btnRemoverFundo = q<HTMLButtonElement>('.in-removebg')
+    const btnFaceCut = q<HTMLButtonElement>('.in-facecut')
     btnOriginal.classList.toggle('ativo', fonteRecorte === 'original')
     btnOriginal.disabled = !temSemFundo && fonteRecorte === 'original'
     btnRemoverFundo.classList.toggle('ativo', fonteRecorte === 'sem_fundo')
+    btnFaceCut.classList.toggle('ativo', fonteRecorte === 'sem_fundo' && modo === 'face')
   }
 
   overlay.querySelectorAll<HTMLButtonElement>('[data-modo]').forEach((b) => {
     b.addEventListener('click', () => {
       const novo = b.dataset.modo as ModoFoto
       if (novo === modo) return
+      const anterior = modo
       modo = novo
       setStatus('')
+      // Cache PicWish é por tipo (semfundo_ vs facecut_) — ao cruzar recorte↔rosto,
+      // invalida e dispara a API certa. Coração não usa o cache.
+      const precisaPicWish =
+        (novo === 'face' && anterior !== 'face') || (novo === 'recorte' && anterior === 'face')
+      if (precisaPicWish) {
+        temSemFundo = false
+        fonteRecorte = 'original'
+        sincronizarControles()
+        void carregarFonte().then(() => {
+          if (novo === 'face') void recortarRosto()
+          else void removerFundo()
+        })
+        return
+      }
       sincronizarControles()
       void carregarFonte()
     })
@@ -671,11 +712,16 @@ export async function abrirPickerEditor(
   })
 
   q<HTMLButtonElement>('.in-borracha').addEventListener('click', (ev) => {
-    // Borracha apaga sobra do REMOVE-FUNDO — não faz sentido em cima da foto
-    // original (ainda com fundo), e salvar erraria: aplicarBorracha sempre grava em
-    // sem_fundo_path, então apagar sobre a original corromperia o sem-fundo guardado.
+    // Borracha apaga sobra do PicWish (remove-fundo / face cutout) — não faz
+    // sentido em cima da foto original (ainda com fundo), e salvar erraria:
+    // aplicarBorracha sempre grava em sem_fundo_path.
     if (fonteRecorte === 'original') {
-      setStatus('A borracha só funciona na foto sem fundo — clique em "✂ Remover fundo".', true)
+      setStatus(
+        modo === 'face'
+          ? 'A borracha só funciona no face cutout — clique em "✂ Recortar rosto".'
+          : 'A borracha só funciona na foto sem fundo — clique em "✂ Remover fundo".',
+        true,
+      )
       return
     }
     borrachaAtiva = !borrachaAtiva
@@ -731,8 +777,39 @@ export async function abrirPickerEditor(
     }
   }
 
+  /** Face cutout PicWish — mesmo padrão do remove-bg, com `?kind=face`. */
+  async function recortarRosto(btn?: HTMLButtonElement): Promise<void> {
+    if (fonteRecorte === 'sem_fundo' && temSemFundo) return
+    if (temSemFundo) {
+      fonteRecorte = 'sem_fundo'
+      setStatus('')
+      sincronizarControles()
+      void carregarFonte()
+      return
+    }
+    if (btn) btn.disabled = true
+    setStatus('Recortando rosto…')
+    try {
+      await api(`${base}/remove-bg?kind=face`, { method: 'POST' })
+      temSemFundo = true
+      fonteRecorte = 'sem_fundo'
+      setStatus('Rosto recortado.')
+      btn?.classList.remove('destaque')
+      sincronizarControles()
+      await carregarFonte()
+    } catch (e) {
+      setStatus((e as Error).message, true)
+    } finally {
+      if (btn) btn.disabled = false
+    }
+  }
+
   q<HTMLButtonElement>('.in-removebg').addEventListener('click', (ev) => {
     void removerFundo(ev.currentTarget as HTMLButtonElement)
+  })
+
+  q<HTMLButtonElement>('.in-facecut').addEventListener('click', (ev) => {
+    void recortarRosto(ev.currentTarget as HTMLButtonElement)
   })
 
   q<HTMLButtonElement>('.in-reset').addEventListener('click', () => {
@@ -768,7 +845,7 @@ export async function abrirPickerEditor(
     btn.disabled = true
     setStatus('Salvando…')
     try {
-      if (modo === 'recorte' && apagador) await aplicarBorracha()
+      if ((modo === 'recorte' || modo === 'face') && apagador) await aplicarBorracha()
       await api(`${base}/ajuste`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -807,9 +884,8 @@ export async function abrirPickerEditor(
 
   canvas.style.cursor = 'grab'
   sincronizarControles()
-  // Recorte sem foto sem-fundo ainda — remove o fundo sozinho ao abrir, em vez de
-  // esperar o clique em "✂ Remover fundo". `removerFundo()` já checa cache antes de
-  // chamar o PicWish.
+  // Recorte/rosto sem PicWish ainda — dispara sozinho ao abrir. `removerFundo()` /
+  // `recortarRosto()` já checam cache antes de chamar a API.
   //
   // ⚠️ Peça NUNCA editada devolve fonteRecorte='original' como PADRÃO do servidor
   // (parseFonteRecorte: sem ajuste_json salvo, cai em 'sem_fundo'/'original' conforme
@@ -827,6 +903,10 @@ export async function abrirPickerEditor(
     fonteRecorte = 'original'
     await carregarFonte()
     void removerFundo()
+  } else if (modo === 'face' && !temSemFundo) {
+    fonteRecorte = 'original'
+    await carregarFonte()
+    void recortarRosto()
   } else {
     await carregarFonte()
   }

@@ -34,13 +34,12 @@ export interface OrderPieceRow {
   updated_at: number
 }
 
-export type PhotoCrop = 'rosto' | 'coracao'
+export type PhotoCrop = 'rosto' | 'coracao' | 'face'
 
 export interface PieceWithPhotos extends OrderPieceRow {
   photos: { 1: boolean; 2: boolean }
-  /** Tipo de composição por foto — 'rosto' (recorte/silhueta) | 'coracao'. Mesmo
-   * toggle por foto que a extensão Chrome antiga tinha (radiogroup "Recorte"/
-   * "Coração"). null = sem foto nesse slot ainda. */
+  /** Tipo de composição por foto — 'rosto' (recorte/cápsula) | 'coracao' | 'face'
+   * (face cutout PicWish, sem moldura). null = sem foto nesse slot ainda. */
   crops: { 1: PhotoCrop | null; 2: PhotoCrop | null }
   /** URL do CDN Shopee pra foto escolhida mas AINDA NÃO baixada (hotlink direto —
    * ver piece_pending_photos). null = já confirmada/baixada, ou sem foto. */

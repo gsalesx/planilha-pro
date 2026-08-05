@@ -545,9 +545,10 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           ${label}
         </label>`
       return `
-        <div class="shopee-chat-piece-crop" role="radiogroup" aria-label="Recorte">
+        <div class="shopee-chat-piece-crop" role="radiogroup" aria-label="Formato">
           ${opt('rosto', 'Recorte')}
           ${opt('coracao', 'Coração')}
+          ${opt('face', 'Rosto')}
         </div>
       `
     }
@@ -583,7 +584,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           ${has ? cropToggleHtml(slot) : ''}
           ${
             has
-              ? `<button type="button" class="shopee-chat-piece-ajustar" data-piece-id="${piece.id}" data-slot="${slot}" data-molde="${escapeHtml(piece.molde)}" title="Ajustar enquadramento (coração/recorte)">✎ Ajustar</button>`
+              ? `<button type="button" class="shopee-chat-piece-ajustar" data-piece-id="${piece.id}" data-slot="${slot}" data-molde="${escapeHtml(piece.molde)}" title="Ajustar enquadramento (coração/recorte/rosto)">✎ Ajustar</button>`
               : ''
           }
           ${removeBtn}
