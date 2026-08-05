@@ -364,8 +364,9 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
 
 /** POST /api/pieces/:id/photo/:slot — { url } de uma foto do chat Shopee. NÃO baixa nada
  * ainda — só guarda a referência (piece_pending_photos) e o preview usa o hotlink direto
- * do CDN da Shopee. O download de verdade só acontece em POST .../confirm, pra não gastar
- * tempo/disco em foto de pedido que o operador pode nem confirmar. */
+ * do CDN da Shopee. O download de verdade só acontece em POST .../confirm (ou sob demanda
+ * no picker). Substitui qualquer foto já confirmada do mesmo slot (upload manual /
+ * download anterior) — senão o "Ajustar" continuava abrindo a foto velha. */
 router.post('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
   const pieceId = Number(req.params.id)
   const slot = Number(req.params.slot)
@@ -380,11 +381,34 @@ router.post('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
   }
   const fullUrl = shopeeCdnOriginalUrl(url)
   const now = nowMs()
-  db.prepare(
-    `INSERT INTO piece_pending_photos (piece_id, slot, url, crop, updated_at)
-     VALUES (?, ?, ?, 'rosto', ?)
-     ON CONFLICT(piece_id, slot) DO UPDATE SET url = excluded.url, updated_at = excluded.updated_at`,
-  ).run(pieceId, slot, fullUrl, now)
+  const txn = db.transaction(() => {
+    const existing = db
+      .prepare(
+        'SELECT storage_path, sem_fundo_path, composta_path FROM piece_images WHERE piece_id = ? AND slot = ?',
+      )
+      .get(pieceId, slot) as {
+      storage_path: string
+      sem_fundo_path: string | null
+      composta_path: string | null
+    } | undefined
+    for (const p of [existing?.storage_path, existing?.sem_fundo_path, existing?.composta_path]) {
+      if (!p) continue
+      try {
+        unlinkSync(p)
+      } catch {
+        // ignore
+      }
+    }
+    if (existing) {
+      db.prepare('DELETE FROM piece_images WHERE piece_id = ? AND slot = ?').run(pieceId, slot)
+    }
+    db.prepare(
+      `INSERT INTO piece_pending_photos (piece_id, slot, url, crop, updated_at)
+       VALUES (?, ?, ?, 'rosto', ?)
+       ON CONFLICT(piece_id, slot) DO UPDATE SET url = excluded.url, updated_at = excluded.updated_at`,
+    ).run(pieceId, slot, fullUrl, now)
+  })
+  txn()
   res.json({ ok: true, url: fullUrl, pending: true, updatedAt: now })
 })
 
@@ -485,11 +509,18 @@ router.post('/workbooks/:workbookId/pieces/:orderKey/confirm', requireAuth, asyn
         const now = nowMs()
         const txn = db.transaction(() => {
           const existing = db
-            .prepare('SELECT storage_path FROM piece_images WHERE piece_id = ? AND slot = ?')
-            .get(pieceId, p.slot) as { storage_path: string } | undefined
-          if (existing) {
+            .prepare(
+              'SELECT storage_path, sem_fundo_path, composta_path FROM piece_images WHERE piece_id = ? AND slot = ?',
+            )
+            .get(pieceId, p.slot) as {
+            storage_path: string
+            sem_fundo_path: string | null
+            composta_path: string | null
+          } | undefined
+          for (const pathOld of [existing?.storage_path, existing?.sem_fundo_path, existing?.composta_path]) {
+            if (!pathOld) continue
             try {
-              unlinkSync(existing.storage_path)
+              unlinkSync(pathOld)
             } catch {
               // ignore
             }
@@ -499,7 +530,8 @@ router.post('/workbooks/:workbookId/pieces/:orderKey/confirm', requireAuth, asyn
              VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(piece_id, slot) DO UPDATE SET
                file_name = excluded.file_name, mime = excluded.mime, storage_path = excluded.storage_path,
-               crop = excluded.crop, updated_at = excluded.updated_at`,
+               crop = excluded.crop, updated_at = excluded.updated_at,
+               sem_fundo_path = '', composta_path = '', ajuste_json = '', u_width = NULL`,
           ).run(pieceId, p.slot, fileName, mime, storagePath, p.crop, now)
           db.prepare('DELETE FROM piece_pending_photos WHERE piece_id = ? AND slot = ?').run(pieceId, p.slot)
         })
@@ -560,10 +592,20 @@ router.delete('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
     return
   }
   if (existing) {
-    try {
-      unlinkSync(existing.storage_path)
-    } catch {
-      // ignore
+    const full = db
+      .prepare('SELECT storage_path, sem_fundo_path, composta_path FROM piece_images WHERE piece_id = ? AND slot = ?')
+      .get(pieceId, slot) as {
+      storage_path: string
+      sem_fundo_path: string | null
+      composta_path: string | null
+    }
+    for (const p of [full.storage_path, full.sem_fundo_path, full.composta_path]) {
+      if (!p) continue
+      try {
+        unlinkSync(p)
+      } catch {
+        // ignore
+      }
     }
     db.prepare('DELETE FROM piece_images WHERE piece_id = ? AND slot = ?').run(pieceId, slot)
   }

@@ -84,7 +84,12 @@ function attachPhotos(piece: OrderPieceRow): PieceWithPhotos {
       2: (slot2?.crop as PhotoCrop | undefined) ?? confirmedBySlot.get(2) ?? null,
     },
     pendingUrls: { 1: slot1?.url ?? null, 2: slot2?.url ?? null },
-    compostas: { 1: ajustadoBySlot.get(1) ?? null, 2: ajustadoBySlot.get(2) ?? null },
+    // Pendência = foto nova ainda não baixada: não mostrar composta antiga como
+    // "já ajustada" (bug: upload manual + escolher do chat depois).
+    compostas: {
+      1: slot1 ? null : (ajustadoBySlot.get(1) ?? null),
+      2: slot2 ? null : (ajustadoBySlot.get(2) ?? null),
+    },
     fotosUpdatedAt: { 1: updatedAtBySlot.get(1) ?? null, 2: updatedAtBySlot.get(2) ?? null },
   }
 }

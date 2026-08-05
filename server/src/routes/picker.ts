@@ -119,16 +119,23 @@ function foto(pieceId: number, slot: number): LinhaFoto | undefined {
  * do CDN) e só vira arquivo no "Confirmar pedido". O picker precisa dos bytes,
  * então baixa sob demanda — assim dá pra ajustar antes de confirmar o pedido,
  * que é a ordem natural de trabalho (ajusta e só então confirma).
+ *
+ * Se existe pendência E piece_images antigo (ex.: upload manual anterior, ou
+ * bug legado que não invalidava ao escolher do chat), a pendência SEMPRE
+ * prevalece — é a escolha nova do operador.
  */
 async function garantirFoto(pieceId: number, slot: number): Promise<LinhaFoto | undefined> {
-  const atual = foto(pieceId, slot)
-  if (atual && existsSync(atual.storage_path)) return atual
-
   const pendente = db
     .prepare('SELECT url, crop FROM piece_pending_photos WHERE piece_id = ? AND slot = ?')
     .get(pieceId, slot) as { url: string; crop: string } | undefined
-  if (!pendente?.url) return atual // nada pendente: devolve o que houver (ou undefined)
 
+  if (!pendente?.url) {
+    const atual = foto(pieceId, slot)
+    if (atual && existsSync(atual.storage_path)) return atual
+    return atual
+  }
+
+  const atual = foto(pieceId, slot)
   const resp = await fetchShopeeCdn(pendente.url)
   const bytes = Buffer.from(await resp.arrayBuffer())
   const mime = resp.headers.get('content-type') ?? 'image/jpeg'
@@ -136,12 +143,24 @@ async function garantirFoto(pieceId: number, slot: number): Promise<LinhaFoto | 
   const destino = caminhoNovo('foto', pieceId, slot, ext)
   writeFileSync(destino, bytes)
 
+  // Invalida derivados da foto anterior (sem-fundo/composta/ajuste) — a nova
+  // pendência é outra imagem.
+  for (const p of [atual?.storage_path, atual?.sem_fundo_path, atual?.composta_path]) {
+    if (!p || p === destino) continue
+    try {
+      unlinkSync(p)
+    } catch {
+      // ignore
+    }
+  }
+
   db.prepare(
     `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, crop, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(piece_id, slot) DO UPDATE SET
        file_name = excluded.file_name, mime = excluded.mime,
-       storage_path = excluded.storage_path, updated_at = excluded.updated_at`,
+       storage_path = excluded.storage_path, crop = excluded.crop, updated_at = excluded.updated_at,
+       sem_fundo_path = '', composta_path = '', ajuste_json = '', u_width = NULL`,
   ).run(pieceId, slot, path.basename(destino), mime, destino, pendente.crop || 'rosto', nowMs())
   // A foto já está confirmada em piece_images — sem isso, a linha pendente ficava
   // ÓRFÃ (residual) mesmo depois de baixada/ajustada, e /copy-from (que checa
@@ -468,6 +487,25 @@ router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, (req, res) => {
     res.status(400).json({ error: 'piece/slot inválido' })
     return
   }
+
+  // Pendência = escolha nova do chat. Prevalece sobre piece_images antigo (upload
+  // manual / download anterior) — o navegador carrega a URL do CDN direto.
+  const pendente = db
+    .prepare('SELECT url, crop FROM piece_pending_photos WHERE piece_id = ? AND slot = ?')
+    .get(ids.pieceId, ids.slot) as { url: string; crop: string } | undefined
+  if (pendente?.url) {
+    res.json({
+      modo: modoDaCrop(pendente.crop || 'rosto'),
+      ajuste: {},
+      uWidth: 600,
+      temSemFundo: false,
+      temComposta: false,
+      fonteRecorte: 'original',
+      pendingUrl: pendente.url,
+    })
+    return
+  }
+
   const l = foto(ids.pieceId, ids.slot)
   if (l && existsSync(l.storage_path)) {
     const modo = modoDa(l)
@@ -490,27 +528,7 @@ router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, (req, res) => {
     return
   }
 
-  // Ainda não baixada — devolve a URL do CDN pro NAVEGADOR carregar direto (evita
-  // o gargalo do servidor) em vez de 502 esperando um download que pode nem
-  // terminar. `l` pode existir aqui (peça já composta antes, mas o arquivo sumiu
-  // do disco) — nesse caso o crop salvo prevalece sobre o da foto pendente.
-  const pendente = db
-    .prepare('SELECT url, crop FROM piece_pending_photos WHERE piece_id = ? AND slot = ?')
-    .get(ids.pieceId, ids.slot) as { url: string; crop: string } | undefined
-  if (!pendente?.url) {
-    res.status(404).json({ error: 'nenhuma foto escolhida nesse slot' })
-    return
-  }
-  const crop = l?.crop ?? pendente.crop
-  res.json({
-    modo: modoDaCrop(crop),
-    ajuste: parseAjuste(l?.ajuste_json ?? ''),
-    uWidth: l?.u_width ?? 600,
-    temSemFundo: false,
-    temComposta: false,
-    fonteRecorte: 'original',
-    pendingUrl: pendente.url,
-  })
+  res.status(404).json({ error: 'nenhuma foto escolhida nesse slot' })
 })
 
 /** Composta 900×900 já salva (thumb do picker). */
