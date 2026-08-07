@@ -534,9 +534,22 @@ export async function getShippingParameterRaw(orderSn: string): Promise<ShopeeAp
   return shopApiGet('/api/v2/logistics/get_shipping_parameter', { order_sn: orderSn })
 }
 
+/** Pedido cujo envio JÁ foi organizado: o get_shipping_parameter passa a recusar
+ *  reagendamento (`error_other` — "Package ... not eligible for rescheduling"). Não é falha,
+ *  é o estado esperado de quem já despachou — o fluxo só segue pra etiqueta. Confirmado ao
+ *  vivo em 2608017D73AB9A depois do ship_order dar certo (status virou PROCESSED). */
+export class ShipmentAlreadyArrangedError extends Error {}
+
+function isAlreadyArrangedMessage(message: string): boolean {
+  return /not eligible for rescheduling/i.test(message)
+}
+
 export async function getShippingParameter(orderSn: string): Promise<ShippingParameter> {
   const data = await shopApiGet('/api/v2/logistics/get_shipping_parameter', { order_sn: orderSn })
   if (hasShopeeError(data)) {
+    if (isAlreadyArrangedMessage(String(data.message ?? ''))) {
+      throw new ShipmentAlreadyArrangedError('Envio já organizado na Shopee.')
+    }
     throw new Error(friendlyLogisticsError(String(data.error ?? ''), String(data.message ?? '')))
   }
   const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_shipping_parameter')
@@ -575,7 +588,13 @@ export async function getShippingParameter(orderSn: string): Promise<ShippingPar
  *  2026-08-07: a etiqueta nunca saía, e o `shipping_document_should_print_first` que
  *  aparecia depois era só consequência do pedido nunca ter sido organizado). */
 export async function arrangeShipment(orderSn: string): Promise<void> {
-  const param = await getShippingParameter(orderSn)
+  let param: ShippingParameter
+  try {
+    param = await getShippingParameter(orderSn)
+  } catch (error) {
+    if (error instanceof ShipmentAlreadyArrangedError) return
+    throw error
+  }
   const body: Record<string, unknown> = { order_sn: orderSn }
 
   if (param.pickupFields) {
