@@ -640,6 +640,66 @@ export async function arrangeShipment(orderSn: string): Promise<void> {
 
 export type ShippingDocumentType = 'THERMAL_AIR_WAYBILL' | 'NORMAL_AIR_WAYBILL'
 
+export interface ShippingDocumentParameter {
+  suggested: ShippingDocumentType | null
+  selectable: ShippingDocumentType[]
+}
+
+/** get_shipping_document_parameter — diz quais formatos de etiqueta ESTE pedido aceita
+ *  (`selectable_shipping_document_type`) e qual a Shopee sugere. Sem isso o formato fica
+ *  chutado: 2608017D73AB9A só aceitava NORMAL_AIR_WAYBILL e o download falhava com
+ *  `logistics.shipping_document_should_print_first ... NORMAL_AIR_WAYBILL` enquanto o
+ *  código insistia no térmico. */
+export async function getShippingDocumentParameter(orderSn: string): Promise<ShippingDocumentParameter> {
+  const data = await shopApiPost('/api/v2/logistics/get_shipping_document_parameter', {
+    order_list: [{ order_sn: orderSn }],
+  })
+  const resultList =
+    data.response != null && typeof data.response === 'object'
+      ? ((data.response as Record<string, unknown>).result_list as Array<Record<string, unknown>> | undefined)
+      : undefined
+  const row = resultList?.[0]
+  if (row?.fail_error) {
+    const failError = String(row.fail_error)
+    const failMessage = String(row.fail_message ?? '')
+    if (failError === 'logistics.can_not_print_jit_order') {
+      throw new Error(
+        'O canal de envio deste pedido só permite imprimir a etiqueta no painel da Shopee (Seller Centre) — não dá pela API.',
+      )
+    }
+    throw new Error(`get_shipping_document_parameter: ${failError}${failMessage ? ` — ${failMessage}` : ''}`)
+  }
+  if (!row) {
+    if (hasShopeeError(data)) {
+      throw new Error(
+        `get_shipping_document_parameter: ${data.error}${data.message ? ` — ${data.message}` : ''}`,
+      )
+    }
+    return { suggested: null, selectable: [] }
+  }
+  const suggested = String(row.suggest_shipping_document_type ?? '').trim()
+  const selectable = ((row.selectable_shipping_document_type as unknown[] | undefined) ?? [])
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+  return {
+    suggested: (suggested || null) as ShippingDocumentType | null,
+    selectable: selectable as ShippingDocumentType[],
+  }
+}
+
+/** Só usa o formato pedido se o pedido aceitar; senão segue o que a Shopee sugere. Falha na
+ *  consulta não bloqueia a impressão — cai no formato pedido, como era antes. */
+async function resolveShippingDocumentType(
+  orderSn: string,
+  preferred: ShippingDocumentType,
+): Promise<ShippingDocumentType> {
+  const param = await getShippingDocumentParameter(orderSn)
+  if (param.selectable.length === 0) return param.suggested ?? preferred
+  if (param.selectable.includes(preferred)) return preferred
+  if (param.suggested && param.selectable.includes(param.suggested)) return param.suggested
+  return param.selectable[0]
+}
+
 /** get_tracking_number — só depois do ship_order ter atribuído o rastreio. A maioria dos
  *  canais exige esse número no create_shipping_document (só alguns canais liberam
  *  impressão antes de organizar o envio). */
@@ -795,8 +855,9 @@ async function waitForTrackingNumber(orderSn: string): Promise<string> {
  *  arrangeShipment), cria o job do documento, espera ficar READY e baixa o PDF. */
 export async function fetchShippingLabelPdf(
   orderSn: string,
-  shippingDocumentType: ShippingDocumentType = 'THERMAL_AIR_WAYBILL',
+  preferredDocumentType: ShippingDocumentType = 'THERMAL_AIR_WAYBILL',
 ): Promise<Buffer> {
+  const shippingDocumentType = await resolveShippingDocumentType(orderSn, preferredDocumentType)
   const trackingNumber = await waitForTrackingNumber(orderSn)
 
   const created = await createShippingDocument(orderSn, trackingNumber, shippingDocumentType)
