@@ -499,9 +499,11 @@ export interface ShippingPickupAddress {
 }
 
 export interface ShippingParameter {
-  needsPickup: boolean
-  needsDropoff: boolean
-  needsNonIntegrated: boolean
+  /** Campos que a Shopee pede pra cada modo. `null` = a chave NÃO veio no `info_needed`
+   *  (modo não se aplica a este pedido); `[]` = o modo se aplica e não exige nenhum campo. */
+  pickupFields: string[] | null
+  dropoffFields: string[] | null
+  nonIntegratedFields: string[] | null
   pickupAddresses: ShippingPickupAddress[]
   dropoffBranchIds: number[]
 }
@@ -515,11 +517,14 @@ function friendlyLogisticsError(error: string, message: string): string {
   return `${error}${message ? ` — ${message}` : ''}`
 }
 
-/** A Shopee manda `[]` (array vazio) pros campos de info_needed que NÃO são necessários —
- *  só um array com itens dentro (ex.: `["address_id","pickup_time_id"]`) indica que o modo
- *  é o que esse pedido precisa. `Array.isArray` sozinho marcaria até o `[]` como "precisa". */
-function infoNeededHasFields(value: unknown): boolean {
-  return Array.isArray(value) && value.length > 0
+/** O modo de envio do pedido é dado pela PRESENÇA da chave em `info_needed`; o conteúdo do
+ *  array diz só quais campos são obrigatórios. Array vazio (ex.: `{"dropoff":[]}`) significa
+ *  "é este o modo e não precisa de campo nenhum" — a doc do ship_order é explícita:
+ *  "Developer should still include the field in the call even if it has empty value".
+ *  Confirmado ao vivo (pedido 2608017D73AB9A): a Shopee devolve `info_needed:{dropoff:[]}`,
+ *  só a chave do modo aplicável. */
+function infoNeededFields(value: unknown): string[] | null {
+  return Array.isArray(value) ? value.map((field) => String(field)) : null
 }
 
 /** Resposta CRUA do get_shipping_parameter — usada só pelo endpoint de diagnóstico, pra
@@ -541,9 +546,9 @@ export async function getShippingParameter(orderSn: string): Promise<ShippingPar
   const addressList = (pickup.address_list as Array<Record<string, unknown>> | undefined) ?? []
   const branchList = (dropoff.branch_list as Array<Record<string, unknown>> | undefined) ?? []
   return {
-    needsPickup: infoNeededHasFields(infoNeeded.pickup),
-    needsDropoff: infoNeededHasFields(infoNeeded.dropoff),
-    needsNonIntegrated: infoNeededHasFields(infoNeeded.non_integrated),
+    pickupFields: infoNeededFields(infoNeeded.pickup),
+    dropoffFields: infoNeededFields(infoNeeded.dropoff),
+    nonIntegratedFields: infoNeededFields(infoNeeded.non_integrated),
     pickupAddresses: addressList.map((addr) => ({
       addressId: Number(addr.address_id ?? 0),
       timeSlotIds: ((addr.time_slot_list as Array<Record<string, unknown>> | undefined) ?? [])
@@ -563,36 +568,43 @@ export async function getShippingParameter(orderSn: string): Promise<ShippingPar
  *  foi organizado antes, então só segue pra etiqueta). `logistics.lack_of_invoice_data` é
  *  o bloqueio mais comum — a nota fiscal ainda não está registrada na Shopee.
  *
- *  ⚠️ `info_needed` com os 3 modos vazios (nenhum needsPickup/needsDropoff/needsNonIntegrated)
- *  NÃO significa "já organizado" — testado ao vivo contra um pedido REAL ainda
- *  READY_TO_SHIP (nunca organizado) que devolvia os 3 vazios mesmo assim (caso
- *  2608017D73AB9A/maduardafreitas, 2026-08-07). Tratar como sucesso mascarava o
- *  problema real (falta alguma coisa do lado da Shopee — endereço de coleta, peso/
- *  dimensão do produto etc. — resolvível só organizando manualmente no app da
- *  Shopee) e fazia o fluxo seguir tentando gerar etiqueta de um pedido que nunca
- *  foi despachado. É erro real — propaga pro operador. */
+ *  ⚠️ Modo vazio (ex.: `info_needed:{dropoff:[]}`) NÃO é falta de dado do lado da Shopee:
+ *  é o modo aplicável sem nenhum campo obrigatório, e o campo tem que ir no ship_order
+ *  mesmo assim (objeto vazio) — ver `infoNeededFields`. Exigir campo dentro do array
+ *  travava o fluxo antes de despachar o pedido (caso 2608017D73AB9A/maduardafreitas,
+ *  2026-08-07: a etiqueta nunca saía, e o `shipping_document_should_print_first` que
+ *  aparecia depois era só consequência do pedido nunca ter sido organizado). */
 export async function arrangeShipment(orderSn: string): Promise<void> {
   const param = await getShippingParameter(orderSn)
   const body: Record<string, unknown> = { order_sn: orderSn }
 
-  if (param.needsPickup) {
-    const addr = param.pickupAddresses[0]
-    if (!addr) throw new Error('Nenhum endereço de coleta cadastrado na Shopee pra este pedido.')
-    body.pickup = {
-      address_id: addr.addressId,
-      ...(addr.timeSlotIds[0] ? { pickup_time_id: addr.timeSlotIds[0] } : {}),
+  if (param.pickupFields) {
+    const pickup: Record<string, unknown> = {}
+    if (param.pickupFields.includes('address_id')) {
+      const addr = param.pickupAddresses[0]
+      if (!addr) throw new Error('Nenhum endereço de coleta cadastrado na Shopee pra este pedido.')
+      pickup.address_id = addr.addressId
+      if (addr.timeSlotIds[0]) pickup.pickup_time_id = addr.timeSlotIds[0]
     }
-  } else if (param.needsDropoff) {
-    const branchId = param.dropoffBranchIds[0]
-    if (!branchId) throw new Error('Nenhuma unidade de despacho disponível na Shopee pra este pedido.')
-    body.dropoff = { branch_id: branchId }
-  } else if (param.needsNonIntegrated) {
-    throw new Error(
-      'Este pedido usa transportadora não integrada — informe o código de rastreio manualmente no app da Shopee antes de imprimir a etiqueta.',
-    )
+    body.pickup = pickup
+  } else if (param.dropoffFields) {
+    const dropoff: Record<string, unknown> = {}
+    if (param.dropoffFields.includes('branch_id')) {
+      const branchId = param.dropoffBranchIds[0]
+      if (!branchId) throw new Error('Nenhuma unidade de despacho disponível na Shopee pra este pedido.')
+      dropoff.branch_id = branchId
+    }
+    body.dropoff = dropoff
+  } else if (param.nonIntegratedFields) {
+    if (param.nonIntegratedFields.includes('tracking_no')) {
+      throw new Error(
+        'Este pedido usa transportadora não integrada — informe o código de rastreio manualmente no app da Shopee antes de imprimir a etiqueta.',
+      )
+    }
+    body.non_integrated = {}
   } else {
     throw new Error(
-      'A Shopee não retornou nenhuma opção de coleta/despacho pra este pedido — organize o envio manualmente no app da Shopee (pode faltar endereço de coleta, peso/dimensão do produto ou outro dado obrigatório) e tente imprimir a etiqueta de novo depois.',
+      'A Shopee não retornou nenhum modo de envio pra este pedido — organize o envio manualmente no app da Shopee e tente imprimir a etiqueta de novo depois.',
     )
   }
 
