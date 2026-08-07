@@ -556,13 +556,14 @@ export async function getShippingParameter(orderSn: string): Promise<ShippingPar
  *  foi organizado antes, então só segue pra etiqueta). `logistics.lack_of_invoice_data` é
  *  o bloqueio mais comum — a nota fiscal ainda não está registrada na Shopee.
  *
- *  `info_needed` com os 3 modos vazios (nenhum needsPickup/needsDropoff/needsNonIntegrated)
- *  NÃO é erro — é o que a Shopee devolve quando o envio JÁ foi organizado antes (pelo app
- *  da Shopee, ou nesta mesma tela numa tentativa anterior): não sobrou nada "precisando"
- *  de decisão, então não há o que mandar pro ship_order. Nesse caso só retorna (idempotente,
- *  mesmo espírito do `package_already_shipped` abaixo) e o fluxo segue pra imprimir a
- *  etiqueta. Bug real: maduardafreitas (nota fiscal já emitida, envio já organizado)
- *  quebrava aqui com "a Shopee não retornou o que este pedido precisa". */
+ *  ⚠️ `info_needed` com os 3 modos vazios (nenhum needsPickup/needsDropoff/needsNonIntegrated)
+ *  NÃO significa "já organizado" — testado ao vivo contra um pedido REAL ainda
+ *  READY_TO_SHIP (nunca organizado) que devolvia os 3 vazios mesmo assim (caso
+ *  2608017D73AB9A/maduardafreitas, 2026-08-07). Tratar como sucesso mascarava o
+ *  problema real (falta alguma coisa do lado da Shopee — endereço de coleta, peso/
+ *  dimensão do produto etc. — resolvível só organizando manualmente no app da
+ *  Shopee) e fazia o fluxo seguir tentando gerar etiqueta de um pedido que nunca
+ *  foi despachado. É erro real — propaga pro operador. */
 export async function arrangeShipment(orderSn: string): Promise<void> {
   const param = await getShippingParameter(orderSn)
   const body: Record<string, unknown> = { order_sn: orderSn }
@@ -583,7 +584,9 @@ export async function arrangeShipment(orderSn: string): Promise<void> {
       'Este pedido usa transportadora não integrada — informe o código de rastreio manualmente no app da Shopee antes de imprimir a etiqueta.',
     )
   } else {
-    return
+    throw new Error(
+      'A Shopee não retornou nenhuma opção de coleta/despacho pra este pedido — organize o envio manualmente no app da Shopee (pode faltar endereço de coleta, peso/dimensão do produto ou outro dado obrigatório) e tente imprimir a etiqueta de novo depois.',
+    )
   }
 
   const shipped = await shopApiPost('/api/v2/logistics/ship_order', body)
@@ -667,14 +670,10 @@ export async function getShippingDocumentResult(
   const row = resultList?.[0]
   if (!row) {
     if (hasShopeeError(data)) {
-      // "should_print_first" não é falha — é a Shopee dizendo que o documento deste
-      // pedido JÁ está pronto e só falta baixar (aconteceu com 2608017D73AB9A: o job
-      // de criação de uma tentativa anterior já tinha terminado, e re-consultar o
-      // resultado nesse estado devolve esse erro de topo em vez de status READY).
-      // Trata como pronto — fetchShippingLabelPdf segue pro download normalmente.
-      if (String(data.error ?? '') === 'logistics.shipping_document_should_print_first') {
-        return { orderSn, status: 'READY', failReason: null }
-      }
+      // ⚠️ NÃO tratar "should_print_first" como sucesso/READY — testado ao vivo: apareceu
+      // pra um pedido que nunca tinha sido organizado de verdade (2608017D73AB9A), e um
+      // fix anterior que tratava isso como "documento pronto" mascarou o erro real e
+      // deixou o fluxo tentar baixar um documento que não existia. Propaga como erro.
       throw new Error(`get_shipping_document_result: ${data.error}${data.message ? ` — ${data.message}` : ''}`)
     }
     return null
