@@ -786,8 +786,14 @@ router.get('/shopee/shipping-parameter/:orderSn', requireAuth, async (req, res) 
 })
 
 /** GET /api/shopee/shipping-label/:orderSn — organiza o envio (ship_order, escolhendo
- *  automaticamente coleta/despacho) e baixa o PDF da etiqueta térmica pra impressão direto
- *  do navegador. Se o pedido já tinha sido organizado antes, só pula pra etiqueta. */
+ *  automaticamente coleta/despacho) e baixa a etiqueta pra impressão direto do navegador. Se
+ *  o pedido já tinha sido organizado antes, só pula pra etiqueta.
+ *
+ *  Default NORMAL_AIR_WAYBILL: é o formato que a Shopee devolve como PDF de verdade, que o
+ *  navegador abre e imprime. THERMAL_AIR_WAYBILL (via `?type=`) volta um .zip com ZPL
+ *  (`thermal_zpl_shipping_label.txt`) — comandos de impressora Zebra, inúteis no navegador.
+ *  Por isso o Content-Type é detectado do conteúdo real em vez de assumido: rotular ZPL
+ *  como application/pdf só entregava um "PDF" que não abre. */
 router.get('/shopee/shipping-label/:orderSn', requireAuth, async (req, res) => {
   if (!shopeeConfigured()) {
     res.status(400).json({ error: 'Shopee não configurada' })
@@ -798,11 +804,17 @@ router.get('/shopee/shipping-label/:orderSn', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'orderSn obrigatório' })
     return
   }
+  const tipo = String(req.query.type ?? '').trim().toUpperCase()
+  const documentType = tipo === 'THERMAL_AIR_WAYBILL' ? 'THERMAL_AIR_WAYBILL' : 'NORMAL_AIR_WAYBILL'
   try {
-    const pdf = await arrangeShipmentAndFetchLabel(orderSn, 'THERMAL_AIR_WAYBILL')
-    res.setHeader('Content-Type', 'application/pdf')
-    res.setHeader('Content-Disposition', `inline; filename="etiqueta-${orderSn}.pdf"`)
-    res.send(pdf)
+    const label = await arrangeShipmentAndFetchLabel(orderSn, documentType)
+    const isPdf = label.subarray(0, 4).toString('latin1') === '%PDF'
+    res.setHeader('Content-Type', isPdf ? 'application/pdf' : 'application/zip')
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="etiqueta-${orderSn}.${isPdf ? 'pdf' : 'zip'}"`,
+    )
+    res.send(label)
   } catch (error) {
     res.status(502).json({
       ok: false,
