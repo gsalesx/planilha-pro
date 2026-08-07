@@ -20,6 +20,7 @@ import {
   getShopInfo,
   ORDER_BUYER_FIELDS,
   SHOPEE_CONVERSATION_SCAN_MAX,
+  arrangeShipmentAndFetchLabel,
 } from '../shopee-api.js'
 import {
   mapShopeeOrderToItemRows,
@@ -752,6 +753,32 @@ router.post('/shopee/messages/start-conversation', requireAuth, async (req, res)
     }
 
     res.json({ ok: true, buyerUserId, buyerUsername, conversationId })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** GET /api/shopee/shipping-label/:orderSn — organiza o envio (ship_order, escolhendo
+ *  automaticamente coleta/despacho) e baixa o PDF da etiqueta térmica pra impressão direto
+ *  do navegador. Se o pedido já tinha sido organizado antes, só pula pra etiqueta. */
+router.get('/shopee/shipping-label/:orderSn', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const orderSn = req.params.orderSn.trim()
+  if (!orderSn) {
+    res.status(400).json({ error: 'orderSn obrigatório' })
+    return
+  }
+  try {
+    const pdf = await arrangeShipmentAndFetchLabel(orderSn, 'THERMAL_AIR_WAYBILL')
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `inline; filename="etiqueta-${orderSn}.pdf"`)
+    res.send(pdf)
   } catch (error) {
     res.status(502).json({
       ok: false,

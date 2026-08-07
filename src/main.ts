@@ -18,6 +18,7 @@ import {
   uploadImage,
   sendShopeePreview,
   startShopeeConversation,
+  fetchShippingLabel,
   type OrderStyleDelta,
 } from './api'
 import {
@@ -929,6 +930,33 @@ function handleChatRequest(row: number, col: number) {
     return
   }
   openChatPanelForRow(row, col, orderKey, cells, sheet, buyerUsername)
+}
+
+function handlePrintLabelRequest(row: number, col: number) {
+  if (!workbook || col !== RECIPIENT_COLUMN_INDEX) return
+  const sheet = workbook.sheets[workbook.sheetOrder[0]]
+  if (!sheet) return
+  const cells = sheet.rows[row]
+  if (!cells) return
+  const orderSn = cellText(cells, ID_COL)
+  if (!orderSn) {
+    openAlertDialog({ title: 'Imprimir etiqueta', body: 'Esta linha não tem ID do pedido.' })
+    return
+  }
+  void printShippingLabel(orderSn)
+}
+
+async function printShippingLabel(orderSn: string) {
+  setStatusText('Gerando etiqueta…')
+  try {
+    const blob = await fetchShippingLabel(orderSn)
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank')
+    setStatusText('Etiqueta pronta')
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  } catch (error) {
+    handleApiError(error, 'Falha ao gerar etiqueta')
+  }
 }
 
 function openChatPanelForRow(
@@ -2031,6 +2059,7 @@ async function enterWorkbook(workbookId: string) {
     onCommentRequest: handleCommentRequest,
     onChatRequest: handleChatRequest,
     onPreviewRequest: handlePreviewRequest,
+    onPrintLabelRequest: handlePrintLabelRequest,
     onViewStateChange: () => {
       setUrlGridViewState(grid.getViewState())
       updateStatusCounts()

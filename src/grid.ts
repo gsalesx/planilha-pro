@@ -106,6 +106,7 @@ export interface GridCallbacks {
   onCommentRequest?(rowIndex: number, colIndex: number): void
   onChatRequest?(rowIndex: number, colIndex: number): void
   onPreviewRequest?(rowIndex: number, colIndex: number): void
+  onPrintLabelRequest?(rowIndex: number, colIndex: number): void
   onViewStateChange?(): void
 }
 
@@ -1111,6 +1112,7 @@ export class GridView {
     if (buyerUsername) {
       addItem('Abrir chat', () => this.callbacks.onChatRequest?.(row, col))
     }
+    addItem('Imprimir etiqueta', () => this.callbacks.onPrintLabelRequest?.(row, col))
     if (linked && hasPreview) {
       addItem('Enviar prévia', () => this.callbacks.onPreviewRequest?.(row, col))
     }

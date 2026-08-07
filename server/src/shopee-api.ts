@@ -489,6 +489,306 @@ export async function sendChatImageMessage(params: {
   assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'send_message')
 }
 
+/* ===========================================================
+   Organizar envio (logistics/ship_order) — atribui o rastreio
+   =========================================================== */
+
+export interface ShippingPickupAddress {
+  addressId: number
+  timeSlotIds: string[]
+}
+
+export interface ShippingParameter {
+  needsPickup: boolean
+  needsDropoff: boolean
+  needsNonIntegrated: boolean
+  pickupAddresses: ShippingPickupAddress[]
+  dropoffBranchIds: number[]
+}
+
+/** Mensagens amigáveis pra códigos de erro de logistics que aparecem tanto no
+ *  get_shipping_parameter quanto no ship_order. */
+function friendlyLogisticsError(error: string, message: string): string {
+  if (error === 'logistics.lack_of_invoice_data') {
+    return 'Nota fiscal ainda não emitida/registrada na Shopee — emita a nota antes de organizar o envio.'
+  }
+  return `${error}${message ? ` — ${message}` : ''}`
+}
+
+/** A Shopee manda `[]` (array vazio) pros campos de info_needed que NÃO são necessários —
+ *  só um array com itens dentro (ex.: `["address_id","pickup_time_id"]`) indica que o modo
+ *  é o que esse pedido precisa. `Array.isArray` sozinho marcaria até o `[]` como "precisa". */
+function infoNeededHasFields(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0
+}
+
+export async function getShippingParameter(orderSn: string): Promise<ShippingParameter> {
+  const data = await shopApiGet('/api/v2/logistics/get_shipping_parameter', { order_sn: orderSn })
+  if (hasShopeeError(data)) {
+    throw new Error(friendlyLogisticsError(String(data.error ?? ''), String(data.message ?? '')))
+  }
+  const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_shipping_parameter')
+  const infoNeeded = (body.info_needed as Record<string, unknown> | undefined) ?? {}
+  const pickup = (body.pickup as Record<string, unknown> | undefined) ?? {}
+  const dropoff = (body.dropoff as Record<string, unknown> | undefined) ?? {}
+  const addressList = (pickup.address_list as Array<Record<string, unknown>> | undefined) ?? []
+  const branchList = (dropoff.branch_list as Array<Record<string, unknown>> | undefined) ?? []
+  return {
+    needsPickup: infoNeededHasFields(infoNeeded.pickup),
+    needsDropoff: infoNeededHasFields(infoNeeded.dropoff),
+    needsNonIntegrated: infoNeededHasFields(infoNeeded.non_integrated),
+    pickupAddresses: addressList.map((addr) => ({
+      addressId: Number(addr.address_id ?? 0),
+      timeSlotIds: ((addr.time_slot_list as Array<Record<string, unknown>> | undefined) ?? [])
+        .map((slot) => String(slot.pickup_time_id ?? ''))
+        .filter(Boolean),
+    })),
+    dropoffBranchIds: branchList.map((branch) => Number(branch.branch_id ?? 0)).filter((id) => id > 0),
+  }
+}
+
+/** `ship_order` — corresponde ao passo "organizar envio" do fluxo Shopee (emitir nota →
+ *  organizar envio → imprimir etiqueta). Escolhe automaticamente o 1º endereço de coleta
+ *  (com o 1º horário disponível, se houver) ou a 1ª unidade de despacho. Canal
+ *  non_integrated (transportadora própria) não dá pra automatizar — precisa do rastreio
+ *  já emitido por fora da Shopee, então isso vira erro explicativo pro operador.
+ *  `logistics.package_already_shipped` é tratado como sucesso (idempotência: o pedido já
+ *  foi organizado antes, então só segue pra etiqueta). `logistics.lack_of_invoice_data` é
+ *  o bloqueio mais comum — a nota fiscal ainda não está registrada na Shopee. */
+export async function arrangeShipment(orderSn: string): Promise<void> {
+  const param = await getShippingParameter(orderSn)
+  const body: Record<string, unknown> = { order_sn: orderSn }
+
+  if (param.needsPickup) {
+    const addr = param.pickupAddresses[0]
+    if (!addr) throw new Error('Nenhum endereço de coleta cadastrado na Shopee pra este pedido.')
+    body.pickup = {
+      address_id: addr.addressId,
+      ...(addr.timeSlotIds[0] ? { pickup_time_id: addr.timeSlotIds[0] } : {}),
+    }
+  } else if (param.needsDropoff) {
+    const branchId = param.dropoffBranchIds[0]
+    if (!branchId) throw new Error('Nenhuma unidade de despacho disponível na Shopee pra este pedido.')
+    body.dropoff = { branch_id: branchId }
+  } else if (param.needsNonIntegrated) {
+    throw new Error(
+      'Este pedido usa transportadora não integrada — informe o código de rastreio manualmente no app da Shopee antes de imprimir a etiqueta.',
+    )
+  } else {
+    throw new Error('A Shopee não retornou o que este pedido precisa pra organizar o envio.')
+  }
+
+  const shipped = await shopApiPost('/api/v2/logistics/ship_order', body)
+  if (hasShopeeError(shipped)) {
+    if (shipped.error === 'logistics.package_already_shipped') return
+    throw new Error(friendlyLogisticsError(String(shipped.error ?? ''), String(shipped.message ?? '')))
+  }
+}
+
+/* ===========================================================
+   Etiqueta de envio (logistics/shipping document)
+   =========================================================== */
+
+export type ShippingDocumentType = 'THERMAL_AIR_WAYBILL' | 'NORMAL_AIR_WAYBILL'
+
+/** get_tracking_number — só depois do ship_order ter atribuído o rastreio. A maioria dos
+ *  canais exige esse número no create_shipping_document (só alguns canais liberam
+ *  impressão antes de organizar o envio). */
+export async function getTrackingNumber(orderSn: string): Promise<string> {
+  const data = await shopApiGet('/api/v2/logistics/get_tracking_number', { order_sn: orderSn })
+  const body = assertShopeeOk(data as ShopeeApiResponse<Record<string, unknown>>, 'get_tracking_number')
+  return String(body.tracking_number ?? '').trim()
+}
+
+/** shipping_document_type vai DENTRO de cada item de order_list (não é campo separado no
+ *  nível de cima) — confirmado na doc oficial do create_shipping_document. */
+export async function createShippingDocument(
+  orderSn: string,
+  trackingNumber: string,
+  shippingDocumentType: ShippingDocumentType,
+): Promise<{ ok: true } | { ok: false; failError: string; failMessage: string }> {
+  const data = await shopApiPost('/api/v2/logistics/create_shipping_document', {
+    order_list: [
+      {
+        order_sn: orderSn,
+        ...(trackingNumber ? { tracking_number: trackingNumber } : {}),
+        shipping_document_type: shippingDocumentType,
+      },
+    ],
+  })
+  const resultList =
+    data.response != null && typeof data.response === 'object'
+      ? ((data.response as Record<string, unknown>).result_list as Array<Record<string, unknown>> | undefined)
+      : undefined
+  const item = resultList?.[0]
+  if (item?.fail_error) {
+    return {
+      ok: false,
+      failError: String(item.fail_error),
+      failMessage: String(item.fail_message ?? ''),
+    }
+  }
+  if (hasShopeeError(data)) {
+    return { ok: false, failError: String(data.error ?? ''), failMessage: String(data.message ?? '') }
+  }
+  return { ok: true }
+}
+
+export interface ShippingDocumentResultItem {
+  orderSn: string
+  status: string
+  failReason: string | null
+}
+
+/** Quando TODOS os pedidos do lote falham, a Shopee manda erro no nível de cima
+ *  (ex.: `common.batch_api_all_failed`) mas ainda preenche `response.result_list` com o
+ *  motivo real por pedido (`fail_error`/`fail_message`) — por isso lê result_list ANTES de
+ *  checar o erro de topo, senão a mensagem específica (ex.:
+ *  "shipping_document_should_print_first") se perde atrás de um erro genérico. */
+export async function getShippingDocumentResult(
+  orderSn: string,
+  shippingDocumentType: ShippingDocumentType,
+): Promise<ShippingDocumentResultItem | null> {
+  const data = await shopApiPost('/api/v2/logistics/get_shipping_document_result', {
+    order_list: [{ order_sn: orderSn, shipping_document_type: shippingDocumentType }],
+  })
+  const resultList =
+    data.response != null && typeof data.response === 'object'
+      ? ((data.response as Record<string, unknown>).result_list as Array<Record<string, unknown>> | undefined)
+      : undefined
+  const row = resultList?.[0]
+  if (!row) {
+    if (hasShopeeError(data)) {
+      throw new Error(`get_shipping_document_result: ${data.error}${data.message ? ` — ${data.message}` : ''}`)
+    }
+    return null
+  }
+  return {
+    orderSn: String(row.order_sn ?? ''),
+    status: String(row.status ?? '').toUpperCase(),
+    failReason:
+      typeof row.fail_message === 'string' && row.fail_message
+        ? row.fail_message
+        : typeof row.fail_error === 'string' && row.fail_error
+          ? row.fail_error
+          : null,
+  }
+}
+
+async function downloadShippingDocument(
+  orderSn: string,
+  shippingDocumentType: ShippingDocumentType,
+): Promise<Buffer> {
+  const auth = await ensureShopAuth()
+  const path = '/api/v2/logistics/download_shipping_document'
+  const timestamp = Math.floor(Date.now() / 1000)
+  const sign = signShop(path, timestamp, auth.accessToken, auth.shopId)
+  const url = buildSignedUrl(path, sign, timestamp, {
+    access_token: auth.accessToken,
+    shop_id: auth.shopId,
+  })
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      order_list: [{ order_sn: orderSn }],
+      shipping_document_type: shippingDocumentType,
+    }),
+  })
+  const contentType = response.headers.get('content-type') ?? ''
+  if (contentType.includes('application/json') || contentType.includes('text/')) {
+    const text = await response.text()
+    let parsed: ShopeeApiResponse | null = null
+    try {
+      parsed = JSON.parse(text) as ShopeeApiResponse
+    } catch {
+      // resposta não-JSON e não-PDF — reporta como texto bruto
+    }
+    const message = parsed
+      ? `${parsed.error ?? 'erro'}${parsed.message ? ` — ${parsed.message}` : ''}`
+      : text.slice(0, 300)
+    throw new Error(`download_shipping_document: ${message}`)
+  }
+  const arrayBuffer = await response.arrayBuffer()
+  return Buffer.from(arrayBuffer)
+}
+
+const SHIPPING_DOCUMENT_POLL_ATTEMPTS = 6
+const SHIPPING_DOCUMENT_POLL_DELAY_MS = 1200
+const TRACKING_NUMBER_POLL_ATTEMPTS = 4
+const TRACKING_NUMBER_POLL_DELAY_MS = 1500
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** A Shopee pode demorar pra atribuir o rastreio depois do ship_order (depende do 3PL —
+ *  a doc do get_tracking_number recomenda repetir por até 5min). Aqui insiste só uns
+ *  segundos: se ainda não vier, segue sem rastreio — alguns canais liberam impressão
+ *  mesmo assim (create_shipping_document aceita tracking_number vazio nesses casos). */
+async function waitForTrackingNumber(orderSn: string): Promise<string> {
+  for (let attempt = 0; attempt < TRACKING_NUMBER_POLL_ATTEMPTS; attempt++) {
+    try {
+      const tracking = await getTrackingNumber(orderSn)
+      if (tracking) return tracking
+    } catch (error) {
+      console.warn('[shopee] get_tracking_number falhou', orderSn, error instanceof Error ? error.message : error)
+    }
+    if (attempt < TRACKING_NUMBER_POLL_ATTEMPTS - 1) await sleep(TRACKING_NUMBER_POLL_DELAY_MS)
+  }
+  return ''
+}
+
+/** Fluxo completo pra imprimir etiqueta: busca o rastreio (já precisa existir — ver
+ *  arrangeShipment), cria o job do documento, espera ficar READY e baixa o PDF. */
+export async function fetchShippingLabelPdf(
+  orderSn: string,
+  shippingDocumentType: ShippingDocumentType = 'THERMAL_AIR_WAYBILL',
+): Promise<Buffer> {
+  const trackingNumber = await waitForTrackingNumber(orderSn)
+
+  const created = await createShippingDocument(orderSn, trackingNumber, shippingDocumentType)
+  let createErrorMessage: string | null = null
+  if (!created.ok) {
+    createErrorMessage = `${created.failError}${created.failMessage ? ` — ${created.failMessage}` : ''}`
+    console.warn('[shopee] create_shipping_document', orderSn, createErrorMessage)
+  }
+
+  let lastStatus = ''
+  for (let attempt = 0; attempt < SHIPPING_DOCUMENT_POLL_ATTEMPTS; attempt++) {
+    const result = await getShippingDocumentResult(orderSn, shippingDocumentType)
+    lastStatus = result?.status ?? ''
+    // Sem status nenhum e o create falhou de verdade (não é "já existe") — não adianta
+    // insistir, o pedido nem tem job criado. Propaga o erro real da Shopee na hora, em
+    // vez de deixar o operador esperar ~7s pra ver uma mensagem genérica de timeout.
+    if (!lastStatus && createErrorMessage) {
+      throw new Error(createErrorMessage)
+    }
+    if (lastStatus === 'READY') break
+    if (lastStatus === 'FAILED') {
+      throw new Error(result?.failReason ?? 'Shopee não conseguiu gerar a etiqueta deste pedido.')
+    }
+    await sleep(SHIPPING_DOCUMENT_POLL_DELAY_MS)
+  }
+  if (lastStatus !== 'READY') {
+    throw new Error('Etiqueta ainda não ficou pronta na Shopee — tente novamente em alguns segundos.')
+  }
+
+  return downloadShippingDocument(orderSn, shippingDocumentType)
+}
+
+/** Fluxo "organizar envio" + "imprimir etiqueta" num clique só: chama arrangeShipment
+ *  (ship_order) e, se der certo (ou já tiver sido organizado antes), segue pra
+ *  fetchShippingLabelPdf. Se faltar nota fiscal ou o pedido usar transportadora não
+ *  integrada, o erro explicativo de arrangeShipment sobe direto pro operador. */
+export async function arrangeShipmentAndFetchLabel(
+  orderSn: string,
+  shippingDocumentType: ShippingDocumentType = 'THERMAL_AIR_WAYBILL',
+): Promise<Buffer> {
+  await arrangeShipment(orderSn)
+  return fetchShippingLabelPdf(orderSn, shippingDocumentType)
+}
+
 export interface ShopeeConversationEntry {
   conversationId: string
   toId: number

@@ -507,6 +507,19 @@ export async function startShopeeConversation(opts: {
   })
 }
 
+/** Baixa o PDF da etiqueta de envio (térmica) do pedido — Shopee logistics/shipping-document. */
+export async function fetchShippingLabel(orderSn: string): Promise<Blob> {
+  const response = await fetch(`${API_BASE}/shopee/shipping-label/${encodeURIComponent(orderSn)}`, {
+    credentials: 'include',
+  })
+  if (response.status === 401) throw new AuthRequiredError()
+  if (!response.ok) {
+    const detail = await response.json().catch(() => ({ error: response.statusText }))
+    throw new Error(detail.error ?? `HTTP ${response.status}`)
+  }
+  return response.blob()
+}
+
 /* ===========================================================
    Peças por pedido (Fase 2 migração SKU→peça — picker no chat)
    =========================================================== */
