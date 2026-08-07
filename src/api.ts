@@ -507,7 +507,8 @@ export async function startShopeeConversation(opts: {
   })
 }
 
-/** Baixa o PDF da etiqueta de envio (térmica) do pedido — Shopee logistics/shipping-document. */
+/** Baixa o PDF da etiqueta de envio do pedido (NORMAL_AIR_WAYBILL — o formato térmico da
+ *  Shopee vem como .zip de ZPL, que o navegador não abre). */
 export async function fetchShippingLabel(orderSn: string): Promise<Blob> {
   const response = await fetch(`${API_BASE}/shopee/shipping-label/${encodeURIComponent(orderSn)}`, {
     credentials: 'include',
