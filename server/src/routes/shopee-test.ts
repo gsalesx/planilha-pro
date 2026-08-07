@@ -23,6 +23,7 @@ import {
   arrangeShipmentAndFetchLabel,
   getShippingParameterRaw,
 } from '../shopee-api.js'
+import { pruneExpiredLabels, readCachedLabel, saveLabel } from '../shopee-labels.js'
 import {
   mapShopeeOrderToItemRows,
   mapShopeeOrderToRow,
@@ -789,6 +790,9 @@ router.get('/shopee/shipping-parameter/:orderSn', requireAuth, async (req, res) 
  *  automaticamente coleta/despacho) e baixa a etiqueta pra impressão direto do navegador. Se
  *  o pedido já tinha sido organizado antes, só pula pra etiqueta.
  *
+ *  A etiqueta gerada fica guardada em disco por 10 dias (`shopee-labels.ts`): reimprimir
+ *  nesse prazo devolve o mesmo arquivo, sem nova ida à Shopee.
+ *
  *  Default NORMAL_AIR_WAYBILL: é o formato que a Shopee devolve como PDF de verdade, que o
  *  navegador abre e imprime. THERMAL_AIR_WAYBILL (via `?type=`) volta um .zip com ZPL
  *  (`thermal_zpl_shipping_label.txt`) — comandos de impressora Zebra, inúteis no navegador.
@@ -807,13 +811,20 @@ router.get('/shopee/shipping-label/:orderSn', requireAuth, async (req, res) => {
   const tipo = String(req.query.type ?? '').trim().toUpperCase()
   const documentType = tipo === 'THERMAL_AIR_WAYBILL' ? 'THERMAL_AIR_WAYBILL' : 'NORMAL_AIR_WAYBILL'
   try {
-    const label = await arrangeShipmentAndFetchLabel(orderSn, documentType)
-    const isPdf = label.subarray(0, 4).toString('latin1') === '%PDF'
-    res.setHeader('Content-Type', isPdf ? 'application/pdf' : 'application/zip')
-    res.setHeader(
-      'Content-Disposition',
-      `inline; filename="etiqueta-${orderSn}.${isPdf ? 'pdf' : 'zip'}"`,
-    )
+    pruneExpiredLabels()
+    const cached = readCachedLabel(orderSn, documentType)
+    let label: Buffer
+    let ext: string
+    if (cached) {
+      label = cached.buffer
+      ext = cached.ext
+    } else {
+      label = await arrangeShipmentAndFetchLabel(orderSn, documentType)
+      ext = label.subarray(0, 4).toString('latin1') === '%PDF' ? 'pdf' : 'zip'
+      saveLabel(orderSn, documentType, label, ext)
+    }
+    res.setHeader('Content-Type', ext === 'pdf' ? 'application/pdf' : 'application/zip')
+    res.setHeader('Content-Disposition', `inline; filename="etiqueta-${orderSn}.${ext}"`)
     res.send(label)
   } catch (error) {
     res.status(502).json({
