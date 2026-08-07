@@ -803,8 +803,15 @@ async function downloadShippingDocument(
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    // ⚠️ No download_shipping_document o `shipping_document_type` vai no NÍVEL DE CIMA, fora
+    // do order_list (≠ create_shipping_document e get_shipping_document_result, onde vai
+    // DENTRO de cada item — conferido nas 3 docs oficiais). Mandando dentro, a Shopee
+    // ignorava e baixava no default NORMAL_AIR_WAYBILL: com o documento criado como
+    // THERMAL, o download acusava `shipping_document_should_print_first ...
+    // NORMAL_AIR_WAYBILL` — reclamando de um formato que nunca tinha sido criado.
     body: JSON.stringify({
-      order_list: [{ order_sn: orderSn, shipping_document_type: shippingDocumentType }],
+      order_list: [{ order_sn: orderSn }],
+      shipping_document_type: shippingDocumentType,
     }),
   })
   const contentType = response.headers.get('content-type') ?? ''
