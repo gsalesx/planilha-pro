@@ -554,7 +554,15 @@ export async function getShippingParameter(orderSn: string): Promise<ShippingPar
  *  já emitido por fora da Shopee, então isso vira erro explicativo pro operador.
  *  `logistics.package_already_shipped` é tratado como sucesso (idempotência: o pedido já
  *  foi organizado antes, então só segue pra etiqueta). `logistics.lack_of_invoice_data` é
- *  o bloqueio mais comum — a nota fiscal ainda não está registrada na Shopee. */
+ *  o bloqueio mais comum — a nota fiscal ainda não está registrada na Shopee.
+ *
+ *  `info_needed` com os 3 modos vazios (nenhum needsPickup/needsDropoff/needsNonIntegrated)
+ *  NÃO é erro — é o que a Shopee devolve quando o envio JÁ foi organizado antes (pelo app
+ *  da Shopee, ou nesta mesma tela numa tentativa anterior): não sobrou nada "precisando"
+ *  de decisão, então não há o que mandar pro ship_order. Nesse caso só retorna (idempotente,
+ *  mesmo espírito do `package_already_shipped` abaixo) e o fluxo segue pra imprimir a
+ *  etiqueta. Bug real: maduardafreitas (nota fiscal já emitida, envio já organizado)
+ *  quebrava aqui com "a Shopee não retornou o que este pedido precisa". */
 export async function arrangeShipment(orderSn: string): Promise<void> {
   const param = await getShippingParameter(orderSn)
   const body: Record<string, unknown> = { order_sn: orderSn }
@@ -575,7 +583,7 @@ export async function arrangeShipment(orderSn: string): Promise<void> {
       'Este pedido usa transportadora não integrada — informe o código de rastreio manualmente no app da Shopee antes de imprimir a etiqueta.',
     )
   } else {
-    throw new Error('A Shopee não retornou o que este pedido precisa pra organizar o envio.')
+    return
   }
 
   const shipped = await shopApiPost('/api/v2/logistics/ship_order', body)
