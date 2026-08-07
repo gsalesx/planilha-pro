@@ -707,8 +707,7 @@ async function downloadShippingDocument(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      order_list: [{ order_sn: orderSn }],
-      shipping_document_type: shippingDocumentType,
+      order_list: [{ order_sn: orderSn, shipping_document_type: shippingDocumentType }],
     }),
   })
   const contentType = response.headers.get('content-type') ?? ''
