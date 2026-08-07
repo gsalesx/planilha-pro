@@ -21,6 +21,7 @@ import {
   ORDER_BUYER_FIELDS,
   SHOPEE_CONVERSATION_SCAN_MAX,
   arrangeShipmentAndFetchLabel,
+  getShippingParameterRaw,
 } from '../shopee-api.js'
 import {
   mapShopeeOrderToItemRows,
@@ -753,6 +754,29 @@ router.post('/shopee/messages/start-conversation', requireAuth, async (req, res)
     }
 
     res.json({ ok: true, buyerUserId, buyerUsername, conversationId })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/** GET /api/shopee/shipping-parameter/:orderSn — diagnóstico: resposta CRUA do
+ *  get_shipping_parameter, pra ver exatamente quais chaves de `info_needed` a Shopee manda
+ *  num pedido real antes de decidir o modo no ship_order. */
+router.get('/shopee/shipping-parameter/:orderSn', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const orderSn = req.params.orderSn.trim()
+  if (!orderSn) {
+    res.status(400).json({ error: 'orderSn obrigatório' })
+    return
+  }
+  try {
+    res.json(await getShippingParameterRaw(orderSn))
   } catch (error) {
     res.status(502).json({
       ok: false,

@@ -522,6 +522,13 @@ function infoNeededHasFields(value: unknown): boolean {
   return Array.isArray(value) && value.length > 0
 }
 
+/** Resposta CRUA do get_shipping_parameter — usada só pelo endpoint de diagnóstico, pra
+ *  inspecionar quais chaves de `info_needed` a Shopee manda de verdade num pedido real
+ *  (presente-mas-vazia vs ausente muda a decisão do arrangeShipment). */
+export async function getShippingParameterRaw(orderSn: string): Promise<ShopeeApiResponse> {
+  return shopApiGet('/api/v2/logistics/get_shipping_parameter', { order_sn: orderSn })
+}
+
 export async function getShippingParameter(orderSn: string): Promise<ShippingParameter> {
   const data = await shopApiGet('/api/v2/logistics/get_shipping_parameter', { order_sn: orderSn })
   if (hasShopeeError(data)) {
