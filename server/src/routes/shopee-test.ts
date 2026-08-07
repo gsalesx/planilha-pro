@@ -21,6 +21,8 @@ import {
   ORDER_BUYER_FIELDS,
   SHOPEE_CONVERSATION_SCAN_MAX,
   arrangeShipmentAndFetchLabel,
+  getShippingParameter,
+  getShippingDocumentResult,
 } from '../shopee-api.js'
 import {
   mapShopeeOrderToItemRows,
@@ -784,6 +786,28 @@ router.get('/shopee/shipping-label/:orderSn', requireAuth, async (req, res) => {
       ok: false,
       error: error instanceof Error ? error.message : 'Erro na Shopee',
     })
+  }
+})
+
+/** GET /api/shopee/shipping-debug/:orderSn — DIAGNÓSTICO TEMPORÁRIO. Expõe
+ *  get_shipping_parameter e get_shipping_document_result crus pra investigar
+ *  o caso maduardafreitas (2608017D73AB9A): Shopee diz "should_print_first" no
+ *  documento mas o pedido ainda está READY_TO_SHIP (nunca organizado). Remover
+ *  depois de diagnosticar. */
+router.get('/shopee/shipping-debug/:orderSn', requireAuth, async (req, res) => {
+  const orderSn = req.params.orderSn.trim()
+  try {
+    const param = await getShippingParameter(orderSn)
+    let docResult: unknown = null
+    let docError: string | null = null
+    try {
+      docResult = await getShippingDocumentResult(orderSn, 'THERMAL_AIR_WAYBILL')
+    } catch (e) {
+      docError = e instanceof Error ? e.message : String(e)
+    }
+    res.json({ ok: true, orderSn, shippingParameter: param, docResult, docError })
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'Erro na Shopee' })
   }
 })
 
