@@ -667,6 +667,14 @@ export async function getShippingDocumentResult(
   const row = resultList?.[0]
   if (!row) {
     if (hasShopeeError(data)) {
+      // "should_print_first" não é falha — é a Shopee dizendo que o documento deste
+      // pedido JÁ está pronto e só falta baixar (aconteceu com 2608017D73AB9A: o job
+      // de criação de uma tentativa anterior já tinha terminado, e re-consultar o
+      // resultado nesse estado devolve esse erro de topo em vez de status READY).
+      // Trata como pronto — fetchShippingLabelPdf segue pro download normalmente.
+      if (String(data.error ?? '') === 'logistics.shipping_document_should_print_first') {
+        return { orderSn, status: 'READY', failReason: null }
+      }
       throw new Error(`get_shipping_document_result: ${data.error}${data.message ? ` — ${data.message}` : ''}`)
     }
     return null
