@@ -319,6 +319,15 @@ export async function updateItemSku(itemId: number, itemSku: string): Promise<Sh
   })
 }
 
+/** `unlist: false` republica um item que a Shopee despublicou sozinha (ex.: item_status
+ * "UNLIST") — mesmo campo que o toggle "Ativar/Desativar" do Seller Center usa por trás. */
+export async function updateItemUnlist(itemId: number, unlist: boolean): Promise<ShopeeApiResponse> {
+  return shopApiPost('/api/v2/product/update_item', {
+    item_id: itemId,
+    unlist,
+  })
+}
+
 /** Prazo de postagem (dias pra despachar) — `is_pre_order` precisa ir junto, a Shopee rejeita
  * `days_to_ship` sozinho sem o par. Ler o valor atual de `is_pre_order` (get_item_base_info,
  * campo pre_order) antes de chamar, pra não mudar esse flag sem querer. */

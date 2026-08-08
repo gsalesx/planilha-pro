@@ -6,6 +6,7 @@ import {
   applyDaysToShipToItem,
   applyProductSkuUpdate,
   fetchProductCatalog,
+  republishItem,
 } from '../shopee-product-catalog.js'
 
 const router = Router()
@@ -92,6 +93,31 @@ router.post('/shopee/products/days-to-ship', requireAuth, async (req, res) => {
       ok: false,
       itemId,
       error: error instanceof Error ? error.message : 'Erro ao atualizar prazo de postagem',
+    })
+  }
+})
+
+/** POST /api/shopee/products/republish — 1 produto por vez, mesmo padrão de days-to-ship
+ * (progresso real no client, sem estourar rate limit escrevendo em paralelo). */
+router.post('/shopee/products/republish', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const body = req.body as { itemId?: unknown }
+  const itemId = Number(body.itemId)
+  if (!Number.isFinite(itemId) || itemId <= 0) {
+    res.status(400).json({ error: 'itemId obrigatório' })
+    return
+  }
+  try {
+    await republishItem(itemId)
+    res.json({ ok: true, itemId })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      itemId,
+      error: error instanceof Error ? error.message : 'Erro ao publicar produto',
     })
   }
 })

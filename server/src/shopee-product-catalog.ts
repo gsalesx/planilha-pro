@@ -6,6 +6,7 @@ import {
   type ShopeeApiResponse,
   updateItemDaysToShip,
   updateItemSku,
+  updateItemUnlist,
   updateModelSkus,
 } from './shopee-api.js'
 
@@ -191,5 +192,12 @@ export async function applyDaysToShipToItem(itemId: number, daysToShip: number):
 
   const isPreOrder = row.pre_order?.is_pre_order ?? false
   const updateData = await updateItemDaysToShip(itemId, daysToShip, isPreOrder)
+  assertShopeeOk(updateData as ShopeeApiResponse<Record<string, unknown>>, 'update_item')
+}
+
+/** Republica um item com item_status "UNLIST" (a Shopee despublica sozinha às vezes —
+ * violação de política, falta de estoque momentânea, etc.). `unlist: false` = publicar. */
+export async function republishItem(itemId: number): Promise<void> {
+  const updateData = await updateItemUnlist(itemId, false)
   assertShopeeOk(updateData as ShopeeApiResponse<Record<string, unknown>>, 'update_item')
 }

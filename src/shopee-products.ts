@@ -31,6 +31,14 @@ async function saveProductSku(itemId: number, sku: string): Promise<void> {
   })
 }
 
+async function republishProduct(itemId: number): Promise<void> {
+  await api<{ ok: boolean }>('/shopee/products/republish', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ itemId }),
+  })
+}
+
 async function saveProductSkusSequential(
   updates: Array<{ itemId: number; sku: string }>,
   onProgress: (done: number, total: number) => void,
@@ -141,7 +149,14 @@ async function boot(): Promise<void> {
             <input type="number" id="days-to-ship-input" min="1" max="30" step="1" placeholder="dias" />
           </label>
           <button type="button" class="btn" id="btn-days-to-ship">Aplicar a todos</button>
+          <button type="button" class="btn btn-primary" id="btn-republish-all" hidden>Publicar despublicados</button>
           <button type="button" class="btn" id="btn-refresh">Atualizar</button>
+        </div>
+        <div class="shopee-products-bulk-progress" id="republish-all-progress" hidden>
+          <div class="shopee-products-bulk-progress-track">
+            <div class="shopee-products-bulk-progress-bar" id="republish-all-progress-bar"></div>
+          </div>
+          <p class="shopee-products-bulk-progress-text" id="republish-all-progress-text"></p>
         </div>
         <div class="shopee-products-bulk-progress" id="days-to-ship-progress" hidden>
           <div class="shopee-products-bulk-progress-track">
@@ -188,6 +203,10 @@ async function boot(): Promise<void> {
   const progressWrap = root.querySelector('#bulk-progress') as HTMLDivElement
   const progressBar = root.querySelector('#bulk-progress-bar') as HTMLDivElement
   const progressText = root.querySelector('#bulk-progress-text') as HTMLParagraphElement
+  const republishAllBtn = root.querySelector('#btn-republish-all') as HTMLButtonElement
+  const republishAllProgress = root.querySelector('#republish-all-progress') as HTMLDivElement
+  const republishAllProgressBar = root.querySelector('#republish-all-progress-bar') as HTMLDivElement
+  const republishAllProgressText = root.querySelector('#republish-all-progress-text') as HTMLParagraphElement
   const selected = new Set<number>()
   let products: CatalogProduct[] = []
   /** Produtos visíveis após busca/ordenação — "Selecionar todos" e as checagens usam esta lista. */
@@ -270,12 +289,17 @@ async function boot(): Promise<void> {
     const img = p.imageUrl
       ? `<img src="${escapeHtml(p.imageUrl)}" alt="" loading="lazy" />`
       : '<div class="shopee-product-no-img">Sem foto</div>'
+    const isUnlisted = p.status === 'UNLIST'
+    const badge = isUnlisted ? '<span class="shopee-product-badge-unlist">Despublicado</span>' : ''
+    const republishBtn = isUnlisted
+      ? `<button type="button" class="btn btn-primary shopee-product-republish" data-id="${p.itemId}" title="Publicar de novo na Shopee">Publicar</button>`
+      : ''
     return `
-      <article class="shopee-product-card" data-id="${p.itemId}">
+      <article class="shopee-product-card${isUnlisted ? ' is-unlisted' : ''}" data-id="${p.itemId}">
         <label class="shopee-product-check">
           <input type="checkbox" class="product-select" data-id="${p.itemId}"${checked} />
         </label>
-        <div class="shopee-product-image">${img}</div>
+        <div class="shopee-product-image">${img}${badge}</div>
         <div class="shopee-product-body">
           <h3 class="shopee-product-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</h3>
           <div class="shopee-product-meta">
@@ -285,6 +309,7 @@ async function boot(): Promise<void> {
           <div class="shopee-product-sku">SKU: <code>${escapeHtml(p.sku || '—')}</code></div>
         </div>
         <footer class="shopee-product-footer">
+          ${republishBtn}
           <button type="button" class="btn shopee-product-edit" data-id="${p.itemId}" title="Editar SKU">✎ SKU</button>
         </footer>
       </article>
@@ -321,6 +346,27 @@ async function boot(): Promise<void> {
         })
       })
     })
+    gridEl.querySelectorAll<HTMLButtonElement>('.shopee-product-republish').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = Number(btn.dataset.id)
+        const product = products.find((p) => p.itemId === id)
+        if (!product) return
+        btn.disabled = true
+        btn.textContent = 'Publicando…'
+        republishProduct(id)
+          .then(() => {
+            // A Shopee pode levar um instante pra refletir o novo status — atualiza
+            // localmente na hora (feedback imediato) e não força reload do catálogo inteiro.
+            product.status = 'NORMAL'
+            applyFilters()
+          })
+          .catch((error) => {
+            btn.disabled = false
+            btn.textContent = 'Publicar'
+            alert(`Não deu pra publicar "${product.name}":\n\n${(error as Error).message}`)
+          })
+      })
+    })
   }
 
   function renderGrid(): void {
@@ -345,12 +391,18 @@ async function boot(): Promise<void> {
     }
 
     visibleProducts = list
+    const unlistedCount = products.filter((p) => p.status === 'UNLIST').length
+    const unlistedSuffix = unlistedCount > 0 ? ` · ${unlistedCount} despublicado(s)` : ''
     statusEl.textContent =
-      list.length === products.length
-        ? `${products.length} produto(s) · NORMAL e UNLIST`
-        : `${list.length} de ${products.length} produto(s)`
+      (list.length === products.length
+        ? `${products.length} produto(s)`
+        : `${list.length} de ${products.length} produto(s)`) + unlistedSuffix
     renderGrid()
     selectAllEl.checked = visibleProducts.length > 0 && visibleProducts.every((p) => selected.has(p.itemId))
+    if (!republishAllBtn.disabled) {
+      republishAllBtn.hidden = unlistedCount === 0
+      republishAllBtn.textContent = `Publicar ${unlistedCount} despublicado(s)`
+    }
   }
 
   async function loadCatalog(): Promise<void> {
@@ -466,6 +518,49 @@ async function boot(): Promise<void> {
         daysToShipBtn.disabled = false
         setTimeout(() => {
           daysToShipProgress.hidden = true
+        }, 4000)
+      },
+    })
+  })
+
+  function setRepublishAllProgress(done: number, total: number, label: string): void {
+    republishAllProgress.hidden = false
+    republishAllProgressBar.style.width = `${total > 0 ? Math.round((done / total) * 100) : 0}%`
+    republishAllProgressText.textContent = label
+  }
+
+  republishAllBtn.addEventListener('click', () => {
+    const unlisted = products.filter((p) => p.status === 'UNLIST')
+    const total = unlisted.length
+    if (total === 0) return
+    openConfirmDialog({
+      title: 'Publicar todos os despublicados',
+      body: `A Shopee despublicou <strong>${total} produto(s)</strong> sozinha. Isso republica todos, 1 de cada vez (evita estourar o limite de chamadas da Shopee) — pode demorar um pouco. Confirma?`,
+      confirmLabel: 'Publicar todos',
+      onConfirm: async () => {
+        republishAllBtn.disabled = true
+        republishAllBtn.hidden = false
+        const failed: string[] = []
+        for (let i = 0; i < total; i++) {
+          const product = unlisted[i]
+          setRepublishAllProgress(i, total, `Publicando (${i} de ${total}) — ${product.name}`)
+          try {
+            await republishProduct(product.itemId)
+            product.status = 'NORMAL'
+          } catch (error) {
+            failed.push(product.name)
+            console.warn('[republish-all] falhou', product.itemId, (error as Error).message)
+          }
+        }
+        setRepublishAllProgress(total, total, `Concluído: ${total - failed.length}/${total}`)
+        statusEl.textContent =
+          failed.length === 0
+            ? `${total} produto(s) publicado(s) de novo.`
+            : `${total - failed.length}/${total} publicado(s) — falhou em: ${failed.join(', ')}`
+        republishAllBtn.disabled = false
+        applyFilters()
+        setTimeout(() => {
+          republishAllProgress.hidden = true
         }, 4000)
       },
     })
