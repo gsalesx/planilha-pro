@@ -8,6 +8,7 @@ import {
   fetchProductCatalog,
   republishItem,
 } from '../shopee-product-catalog.js'
+import { updateItemUnlist } from '../shopee-api.js'
 
 const router = Router()
 
@@ -119,6 +120,25 @@ router.post('/shopee/products/republish', requireAuth, async (req, res) => {
       itemId,
       error: error instanceof Error ? error.message : 'Erro ao publicar produto',
     })
+  }
+})
+
+/** GET /api/shopee/products/republish-debug/:itemId — DIAGNÓSTICO TEMPORÁRIO. Expõe
+ * a resposta CRUA do update_item(unlist:false) — o fix anterior chamava assertShopeeOk,
+ * que só olha o campo `error` (vazio = sucesso) e descarta `warning`/`response` inteiros;
+ * o item continuou UNLIST depois da chamada "bem-sucedida", suspeita de warning silencioso
+ * ou de a Shopee simplesmente ignorar o campo `unlist` nesse contexto. Remover depois. */
+router.get('/shopee/products/republish-debug/:itemId', requireAuth, async (req, res) => {
+  const itemId = Number(req.params.itemId)
+  if (!Number.isFinite(itemId) || itemId <= 0) {
+    res.status(400).json({ error: 'itemId inválido' })
+    return
+  }
+  try {
+    const raw = await updateItemUnlist(itemId, false)
+    res.json({ ok: true, itemId, raw })
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'Erro na Shopee' })
   }
 })
 
