@@ -8,7 +8,6 @@ import {
   fetchProductCatalog,
   republishItem,
 } from '../shopee-product-catalog.js'
-import { shopApiPostDebug, updateItemUnlist } from '../shopee-api.js'
 
 const router = Router()
 
@@ -120,28 +119,6 @@ router.post('/shopee/products/republish', requireAuth, async (req, res) => {
       itemId,
       error: error instanceof Error ? error.message : 'Erro ao publicar produto',
     })
-  }
-})
-
-/** GET /api/shopee/products/republish-debug/:itemId — DIAGNÓSTICO TEMPORÁRIO. Testa os
- * DOIS jeitos de republicar: update_item(unlist:false) — confirmado que a Shopee aceita
- * mas NÃO aplica (a própria resposta volta com item_status:UNLIST ainda) — e o endpoint
- * dedicado /api/v2/product/unlist_item, que é o oficial pra alternar esse status em massa,
- * diferente do update_item genérico. Remover depois. */
-router.get('/shopee/products/republish-debug/:itemId', requireAuth, async (req, res) => {
-  const itemId = Number(req.params.itemId)
-  if (!Number.isFinite(itemId) || itemId <= 0) {
-    res.status(400).json({ error: 'itemId inválido' })
-    return
-  }
-  try {
-    const viaUpdateItem = await updateItemUnlist(itemId, false)
-    const viaUnlistItem = await shopApiPostDebug('/api/v2/product/unlist_item', {
-      item_list: [{ item_id: itemId, unlist: false }],
-    })
-    res.json({ ok: true, itemId, viaUpdateItem, viaUnlistItem })
-  } catch (error) {
-    res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'Erro na Shopee' })
   }
 })
 

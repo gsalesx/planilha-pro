@@ -189,12 +189,6 @@ async function shopApiGet(path: string, query: Record<string, string | number> =
   return parseShopeeJson(response)
 }
 
-/** Export temporário só pra diagnóstico (rota /products/republish-debug) — remover junto
- * com a rota quando o diagnóstico do unlist_item terminar. */
-export async function shopApiPostDebug(path: string, body: unknown): Promise<ShopeeApiResponse> {
-  return shopApiPost(path, body)
-}
-
 async function shopApiPost(
   path: string,
   body: unknown,
@@ -325,12 +319,14 @@ export async function updateItemSku(itemId: number, itemSku: string): Promise<Sh
   })
 }
 
-/** `unlist: false` republica um item que a Shopee despublicou sozinha (ex.: item_status
- * "UNLIST") — mesmo campo que o toggle "Ativar/Desativar" do Seller Center usa por trás. */
+/** Publica/despublica via o endpoint DEDICADO — `update_item` também aceita um campo
+ * `unlist`, mas testado ao vivo contra um item real preso em UNLIST: a Shopee aceita a
+ * chamada (sem erro) e simplesmente IGNORA o campo, a própria resposta volta com
+ * item_status ainda UNLIST. unlist_item é o mecanismo que realmente funciona (confirmado:
+ * success_list com o item, e o catálogo reconsultado depois mostra NORMAL de verdade). */
 export async function updateItemUnlist(itemId: number, unlist: boolean): Promise<ShopeeApiResponse> {
-  return shopApiPost('/api/v2/product/update_item', {
-    item_id: itemId,
-    unlist,
+  return shopApiPost('/api/v2/product/unlist_item', {
+    item_list: [{ item_id: itemId, unlist }],
   })
 }
 

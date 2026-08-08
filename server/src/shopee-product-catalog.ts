@@ -195,9 +195,26 @@ export async function applyDaysToShipToItem(itemId: number, daysToShip: number):
   assertShopeeOk(updateData as ShopeeApiResponse<Record<string, unknown>>, 'update_item')
 }
 
+interface UnlistItemResponse {
+  failure_list?: Array<{ item_id?: number; failed_reason?: string }>
+  success_list?: Array<{ item_id?: number }>
+}
+
 /** Republica um item com item_status "UNLIST" (a Shopee despublica sozinha às vezes —
- * violação de política, falta de estoque momentânea, etc.). `unlist: false` = publicar. */
+ * violação de política, falta de estoque momentânea, etc.). `unlist: false` = publicar.
+ *
+ * unlist_item devolve `error` vazio (sucesso no nível de topo) MESMO quando o item cai
+ * em `failure_list` — o resultado por item só existe dentro de response.failure_list/
+ * success_list, então assertShopeeOk sozinho (só olha `error`) não bastava: precisa
+ * checar failure_list explicitamente ou um item rejeitado passaria como sucesso. */
 export async function republishItem(itemId: number): Promise<void> {
   const updateData = await updateItemUnlist(itemId, false)
-  assertShopeeOk(updateData as ShopeeApiResponse<Record<string, unknown>>, 'update_item')
+  const body = assertShopeeOk(
+    updateData as ShopeeApiResponse<Record<string, unknown>>,
+    'unlist_item',
+  ) as UnlistItemResponse
+  const failure = body.failure_list?.find((f) => f.item_id === itemId)
+  if (failure) {
+    throw new Error(`unlist_item: ${failure.failed_reason ?? 'falha desconhecida'}`)
+  }
 }
