@@ -319,11 +319,13 @@ export async function updateItemSku(itemId: number, itemSku: string): Promise<Sh
   })
 }
 
-/** Publica/despublica via o endpoint DEDICADO — `update_item` também aceita um campo
- * `unlist`, mas testado ao vivo contra um item real preso em UNLIST: a Shopee aceita a
- * chamada (sem erro) e simplesmente IGNORA o campo, a própria resposta volta com
- * item_status ainda UNLIST. unlist_item é o mecanismo que realmente funciona (confirmado:
- * success_list com o item, e o catálogo reconsultado depois mostra NORMAL de verdade). */
+/** Publica/despublica via o endpoint DEDICADO. `update_item` também aceita um campo
+ * `unlist`, e ele até funciona, mas de forma ASSÍNCRONA: medido ao vivo em dois itens
+ * reais, a resposta ecoa item_status:UNLIST e o item só vira NORMAL ~3min depois (o
+ * update_time do item nem muda antes disso) — era isso que fazia parecer que a
+ * publicação não acontecia. unlist_item aplica na hora (item já NORMAL em segundos) e,
+ * melhor ainda, devolve o resultado POR ITEM em success_list/failure_list, com o motivo
+ * de cada recusa (ex: item em promoção) em vez de silêncio. */
 export async function updateItemUnlist(itemId: number, unlist: boolean): Promise<ShopeeApiResponse> {
   return shopApiPost('/api/v2/product/unlist_item', {
     item_list: [{ item_id: itemId, unlist }],
