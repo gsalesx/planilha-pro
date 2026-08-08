@@ -189,6 +189,12 @@ async function shopApiGet(path: string, query: Record<string, string | number> =
   return parseShopeeJson(response)
 }
 
+/** Export temporário só pra diagnóstico (rota /products/republish-debug) — remover junto
+ * com a rota quando o diagnóstico do unlist_item terminar. */
+export async function shopApiPostDebug(path: string, body: unknown): Promise<ShopeeApiResponse> {
+  return shopApiPost(path, body)
+}
+
 async function shopApiPost(
   path: string,
   body: unknown,

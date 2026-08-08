@@ -8,7 +8,7 @@ import {
   fetchProductCatalog,
   republishItem,
 } from '../shopee-product-catalog.js'
-import { updateItemUnlist } from '../shopee-api.js'
+import { shopApiPostDebug, updateItemUnlist } from '../shopee-api.js'
 
 const router = Router()
 
@@ -123,11 +123,11 @@ router.post('/shopee/products/republish', requireAuth, async (req, res) => {
   }
 })
 
-/** GET /api/shopee/products/republish-debug/:itemId — DIAGNÓSTICO TEMPORÁRIO. Expõe
- * a resposta CRUA do update_item(unlist:false) — o fix anterior chamava assertShopeeOk,
- * que só olha o campo `error` (vazio = sucesso) e descarta `warning`/`response` inteiros;
- * o item continuou UNLIST depois da chamada "bem-sucedida", suspeita de warning silencioso
- * ou de a Shopee simplesmente ignorar o campo `unlist` nesse contexto. Remover depois. */
+/** GET /api/shopee/products/republish-debug/:itemId — DIAGNÓSTICO TEMPORÁRIO. Testa os
+ * DOIS jeitos de republicar: update_item(unlist:false) — confirmado que a Shopee aceita
+ * mas NÃO aplica (a própria resposta volta com item_status:UNLIST ainda) — e o endpoint
+ * dedicado /api/v2/product/unlist_item, que é o oficial pra alternar esse status em massa,
+ * diferente do update_item genérico. Remover depois. */
 router.get('/shopee/products/republish-debug/:itemId', requireAuth, async (req, res) => {
   const itemId = Number(req.params.itemId)
   if (!Number.isFinite(itemId) || itemId <= 0) {
@@ -135,8 +135,11 @@ router.get('/shopee/products/republish-debug/:itemId', requireAuth, async (req, 
     return
   }
   try {
-    const raw = await updateItemUnlist(itemId, false)
-    res.json({ ok: true, itemId, raw })
+    const viaUpdateItem = await updateItemUnlist(itemId, false)
+    const viaUnlistItem = await shopApiPostDebug('/api/v2/product/unlist_item', {
+      item_list: [{ item_id: itemId, unlist: false }],
+    })
+    res.json({ ok: true, itemId, viaUpdateItem, viaUnlistItem })
   } catch (error) {
     res.status(502).json({ ok: false, error: error instanceof Error ? error.message : 'Erro na Shopee' })
   }
