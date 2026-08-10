@@ -5,7 +5,7 @@ FROM node:22-alpine AS client-build
 WORKDIR /app/client
 COPY package.json package-lock.json* ./
 RUN npm install --no-audit --no-fund
-COPY index.html shopee-test.html shopee-products.html parse-issues.html emoji-catalog.html ./
+COPY index.html shopee-test.html shopee-products.html parse-issues.html emoji-catalog.html artes.html ./
 COPY vite.config.ts tsconfig.json tailwind.config.js postcss.config.js ./
 COPY src ./src
 RUN npx vite build

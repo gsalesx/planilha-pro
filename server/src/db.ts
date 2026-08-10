@@ -535,6 +535,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_piece_arte_cache_expira ON piece_arte_cache (expira_em);
 `)
 
+/**
+ * Artes avulsas — página independente de criação de artes (artes.html), sem vínculo com
+ * pedido/planilha nenhum. As peças em si continuam morando em `order_pieces` (reaproveita
+ * TODO o picker/editor de foto já existente — ver routes/artes.ts), usando o id do projeto
+ * aqui como `order_key` e o sentinel ARTES_WORKBOOK_ID (routes/artes.ts) como `workbook_id`.
+ * `order_pieces` não tem FK pra `orders`/`workbooks`, então isso funciona sem precisar criar
+ * uma planilha/pedido "fantasma" por trás.
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS art_projects (
+    id TEXT PRIMARY KEY,
+    nome TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_art_projects_updated_at ON art_projects (updated_at);
+`)
+
 export function nowMs(): number {
   return Date.now()
 }

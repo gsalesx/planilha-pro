@@ -27,6 +27,7 @@ import {
   saveLinkStartCursor,
 } from './shopee-link-conversations.js'
 import { ensureShopeeWorkbook, SHOPEE_WORKBOOK_ID } from './shopee-workbook.js'
+import artesRouter from './routes/artes.js'
 import auditRouter from './routes/audit.js'
 import backupRouter from './routes/backup.js'
 import emojiCatalogRouter from './routes/emoji-catalog.js'
@@ -86,6 +87,7 @@ app.use('/api', shopeeProductsRouter)
 app.use('/api', parseIssuesRouter)
 app.use('/api', piecesRouter)
 app.use('/api', pickerRouter)
+app.use('/api', artesRouter)
 app.use('/api', emojiCatalogRouter)
 app.use('/api', auditRouter)
 

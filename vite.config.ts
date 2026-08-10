@@ -10,6 +10,7 @@ export default defineConfig({
         shopeeProducts: resolve(__dirname, 'shopee-products.html'),
         parseIssues: resolve(__dirname, 'parse-issues.html'),
         emojiCatalog: resolve(__dirname, 'emoji-catalog.html'),
+        artes: resolve(__dirname, 'artes.html'),
       },
     },
   },

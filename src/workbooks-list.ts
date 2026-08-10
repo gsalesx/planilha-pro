@@ -42,6 +42,7 @@ export function showWorkbooksList(opts: {
         <h1>Planilha Pro</h1>
         <div class="workbooks-header-spacer"></div>
         <div class="toolbar-actions">
+          <a class="btn" href="/artes.html" title="Criar artes soltas, sem vínculo com pedido — monta e baixa na hora">🎨 Criador de artes</a>
           <a class="btn" href="/shopee-products.html" title="Gerenciar produtos da loja Shopee">Produtos Shopee</a>
           <a class="btn" href="/emoji-catalog.html" title="Ver e editar o catálogo de emojis (mapeamentos)">Emojis</a>
           <label class="btn btn-primary" id="wb-new-btn" title="Crie uma planilha nova a partir de um XLSX">

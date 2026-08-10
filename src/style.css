@@ -3721,6 +3721,148 @@ table.sheet tbody th.row-num.is-active {
   border-radius: 4px;
 }
 
+/* ===========================================================
+   Criador de Artes (artes.html) — página independente pra montar arte sem
+   vínculo com pedido. Reaproveita as classes de piece-card/emoji-picker/
+   color-picker já usadas no chat Shopee (shopee-chat-piece-*, emoji-picker*,
+   color-picker*) — só o "shell" da página (header/sidebar/main) é novo.
+   =========================================================== */
+
+.artes-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.artes-page .app-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #fff;
+}
+
+.artes-page .app-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.artes-header-spacer {
+  flex: 1;
+}
+
+.artes-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.artes-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  border-right: 1px solid #e2e8f0;
+  background: #fff;
+  padding: 14px;
+  overflow-y: auto;
+}
+
+.artes-sidebar h2 {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #64748b;
+}
+
+.artes-projects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.artes-project-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: none;
+  cursor: pointer;
+}
+
+.artes-project-item:hover {
+  background: #f8fafc;
+}
+
+.artes-project-item.is-selected {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.artes-project-nome {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artes-project-meta {
+  font-size: 0.72rem;
+  color: #94a3b8;
+}
+
+.artes-empty-sidebar {
+  color: #94a3b8;
+  font-size: 0.85rem;
+  padding: 8px 2px;
+}
+
+.artes-main {
+  flex: 1;
+  padding: 20px 24px 40px;
+  overflow-y: auto;
+}
+
+.artes-empty,
+.artes-loading {
+  color: #94a3b8;
+  font-size: 0.95rem;
+  padding: 24px 0;
+}
+
+.artes-project-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.artes-project-title {
+  margin: 0;
+  font-size: 1.1rem;
+  flex: 1;
+  min-width: 160px;
+}
+
+.artes-project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.artes-pieces-list.shopee-chat-pieces-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  align-items: start;
+  gap: 14px;
+}
+
 /* ============================================================
    Catálogo de emojis (emoji-catalog.html)
    ============================================================ */

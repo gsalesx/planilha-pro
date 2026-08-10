@@ -682,6 +682,49 @@ export async function copyPieceFrom(pieceId: number, sourceId: number): Promise<
 }
 
 /* ===========================================================
+   Artes avulsas (artes.html) — criação de arte independente de pedido.
+   As peças em si reaproveitam toda a API de OrderPiece acima (patch/delete/foto/emoji).
+   =========================================================== */
+
+export interface ArtProject {
+  id: string
+  nome: string
+  created_at: number
+  updated_at: number
+  pieces: number
+}
+
+export async function listArtProjects(): Promise<{ projects: ArtProject[] }> {
+  return request('/artes/projects')
+}
+
+export async function createArtProject(nome?: string): Promise<{ project: ArtProject }> {
+  return request('/artes/projects', {
+    method: 'POST',
+    body: JSON.stringify({ nome: nome ?? '' }),
+  })
+}
+
+export async function renameArtProject(id: string, nome: string): Promise<{ ok: boolean }> {
+  return request(`/artes/projects/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ nome }),
+  })
+}
+
+export async function deleteArtProject(id: string): Promise<{ ok: boolean }> {
+  return request(`/artes/projects/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export async function getArtProjectPieces(id: string): Promise<{ pieces: OrderPiece[] }> {
+  return request(`/artes/projects/${encodeURIComponent(id)}/pieces`)
+}
+
+export async function addArtProjectPiece(id: string): Promise<{ piece: OrderPiece }> {
+  return request(`/artes/projects/${encodeURIComponent(id)}/pieces`, { method: 'POST' })
+}
+
+/* ===========================================================
    Catálogo de emojis (picker de peças — Emoji 1/2)
    =========================================================== */
 
