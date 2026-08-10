@@ -305,6 +305,14 @@ export async function getItemBaseInfo(itemIds: number[]): Promise<ShopeeApiRespo
   })
 }
 
+/** Views/likes/sales/média de estrelas/contagem de avaliações — até 50 ids por chamada. */
+export async function getItemExtraInfo(itemIds: number[]): Promise<ShopeeApiResponse> {
+  if (!itemIds.length) throw new Error('itemIds obrigatório')
+  return shopApiGet('/api/v2/product/get_item_extra_info', {
+    item_id_list: itemIds.join(','),
+  })
+}
+
 export async function getModelList(itemId: number): Promise<ShopeeApiResponse> {
   return shopApiGet('/api/v2/product/get_model_list', {
     item_id: itemId,

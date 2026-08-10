@@ -2,6 +2,7 @@ import {
   assertShopeeOk,
   fetchAllItemIds,
   getItemBaseInfo,
+  getItemExtraInfo,
   getModelList,
   type ShopeeApiResponse,
   updateItemDaysToShip,
@@ -217,4 +218,86 @@ export async function republishItem(itemId: number): Promise<void> {
   if (failure) {
     throw new Error(`unlist_item: ${failure.failed_reason ?? 'falha desconhecida'}`)
   }
+}
+
+export interface ProductRatingRow {
+  itemId: number
+  name: string
+  status: string
+  ratingStar: number
+  commentCount: number
+  sale: number
+  views: number
+  likes: number
+}
+
+/** Lista produtos com média de estrelas (get_item_extra_info), ordenados do pior pro melhor. */
+export async function fetchProductRatings(): Promise<ProductRatingRow[]> {
+  const itemIds = await fetchAllItemIds()
+  const meta = new Map<number, { name: string; status: string }>()
+  const extra = new Map<
+    number,
+    { ratingStar: number; commentCount: number; sale: number; views: number; likes: number }
+  >()
+
+  for (let i = 0; i < itemIds.length; i += 50) {
+    const batch = itemIds.slice(i, i + 50)
+    const baseData = await getItemBaseInfo(batch)
+    for (const row of parseItemList(baseData)) {
+      if (!row.item_id) continue
+      meta.set(row.item_id, {
+        name: row.item_name ?? '',
+        status: row.item_status ?? '',
+      })
+    }
+    const extraData = await getItemExtraInfo(batch)
+    const body = assertShopeeOk(
+      extraData as ShopeeApiResponse<Record<string, unknown>>,
+      'get_item_extra_info',
+    ) as {
+      item_list?: Array<{
+        item_id?: number
+        rating_star?: number
+        comment_count?: number
+        sale?: number
+        views?: number
+        likes?: number
+      }>
+    }
+    for (const row of body.item_list ?? []) {
+      if (!row.item_id) continue
+      extra.set(row.item_id, {
+        ratingStar: Number(row.rating_star ?? 0),
+        commentCount: Number(row.comment_count ?? 0),
+        sale: Number(row.sale ?? 0),
+        views: Number(row.views ?? 0),
+        likes: Number(row.likes ?? 0),
+      })
+    }
+  }
+
+  const rows: ProductRatingRow[] = itemIds.map((itemId) => {
+    const m = meta.get(itemId)
+    const e = extra.get(itemId)
+    return {
+      itemId,
+      name: m?.name ?? '',
+      status: m?.status ?? '',
+      ratingStar: e?.ratingStar ?? 0,
+      commentCount: e?.commentCount ?? 0,
+      sale: e?.sale ?? 0,
+      views: e?.views ?? 0,
+      likes: e?.likes ?? 0,
+    }
+  })
+
+  rows.sort((a, b) => {
+    const aRated = a.commentCount > 0 ? 1 : 0
+    const bRated = b.commentCount > 0 ? 1 : 0
+    if (aRated !== bRated) return bRated - aRated
+    if (a.ratingStar !== b.ratingStar) return a.ratingStar - b.ratingStar
+    if (a.commentCount !== b.commentCount) return b.commentCount - a.commentCount
+    return a.name.localeCompare(b.name, 'pt-BR')
+  })
+  return rows
 }

@@ -6,6 +6,7 @@ import {
   applyDaysToShipToItem,
   applyProductSkuUpdate,
   fetchProductCatalog,
+  fetchProductRatings,
   republishItem,
 } from '../shopee-product-catalog.js'
 
@@ -28,6 +29,29 @@ router.get('/shopee/products/catalog', requireAuth, async (_req, res) => {
     res.status(502).json({
       ok: false,
       error: error instanceof Error ? error.message : 'Erro ao carregar produtos',
+    })
+  }
+})
+
+/** GET /api/shopee/products/ratings — média de estrelas + contagem, pior → melhor */
+router.get('/shopee/products/ratings', requireAuth, async (_req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  try {
+    const products = await fetchProductRatings()
+    const withReviews = products.filter((p) => p.commentCount > 0)
+    res.json({
+      ok: true,
+      count: products.length,
+      withReviews: withReviews.length,
+      products,
+    })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao carregar avaliações',
     })
   }
 })
