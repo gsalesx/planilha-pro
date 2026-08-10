@@ -104,6 +104,12 @@ function joinField(values: string[]): string {
   return values.filter(Boolean).join('; ')
 }
 
+/** Nome mascarado pela Shopee ("H******a", "****") ou ausente — nunca deve sobrescrever um nome real já salvo. */
+export function isMaskedOrEmptyRecipient(name: string | undefined): boolean {
+  const v = (name ?? '').trim()
+  return !v || v.includes('*')
+}
+
 function itemSku(item: ShopeeItemRow): string {
   return (item.model_sku ?? item.item_sku ?? '').trim()
 }
@@ -516,6 +522,14 @@ export function upsertShopeeOrder(
       row[SHOPEE_COL_MODEL] = prev[SHOPEE_COL_MODEL]
       row[SHOPEE_COL_QTY] = prev[SHOPEE_COL_QTY]
       row[SHOPEE_COL_USERNAME] = prev[SHOPEE_COL_USERNAME]
+      // Desde 2026-07-24 a Shopee às vezes manda o nome do destinatário mascarado
+      // ("H******a", "****") em vez do nome completo. G é a única coluna de texto que
+      // o resync sempre atualiza (ver docstring de upsertShopeeOrder) — sem esta guarda,
+      // um poll normal substituía o nome de verdade já salvo pelo mascarado. Só troca o
+      // valor salvo se o novo vier melhor (não vazio, sem asterisco) que o antigo.
+      if (isMaskedOrEmptyRecipient(row[SHOPEE_COL_RECIPIENT]) && !isMaskedOrEmptyRecipient(prev[SHOPEE_COL_RECIPIENT])) {
+        row[SHOPEE_COL_RECIPIENT] = prev[SHOPEE_COL_RECIPIENT]
+      }
       applyInternalStatusFromShopee(row, shopeeStatus)
       const rowJson = JSON.stringify(row)
       const nextImageUrl = productImageUrl || existing.product_image_url

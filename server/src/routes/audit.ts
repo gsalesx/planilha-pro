@@ -3,8 +3,8 @@ import { Router } from 'express'
 import { auditSummary, queryAudit, recordAudit } from '../audit.js'
 import { requireAuth } from '../auth.js'
 import { db, nowMs } from '../db.js'
-import { SHOPEE_COL_INTERNAL_STATUS } from '../shopee-columns.js'
-import { reagruparLinhasDoPedido } from '../shopee-order-sync.js'
+import { SHOPEE_COL_INTERNAL_STATUS, SHOPEE_COL_RECIPIENT } from '../shopee-columns.js'
+import { isMaskedOrEmptyRecipient, reagruparLinhasDoPedido } from '../shopee-order-sync.js'
 import { SHOPEE_WORKBOOK_ID } from '../shopee-workbook.js'
 
 const router = Router()
@@ -734,6 +734,95 @@ router.post('/audit/explodir-quantidade', requireAuth, (req, res) => {
     planos,
     aviso: aplicar
       ? 'As linhas novas nascem sem prévia — cada uma precisa passar pelo picker.'
+      : 'DRY-RUN — nada foi alterado. Repita com ?aplicar=1 pra executar.',
+  })
+})
+
+/**
+ * POST /api/audit/recuperar-destinatario — restaura o nome do destinatário (col G) mascarado
+ * pela Shopee ("H******a", "****", desde 2026-07-24) usando o próprio audit_log: acha, por
+ * pedido, o registro mais recente de `order.atualizada` cujo `rowAntes`/`rowDepois` ainda tinha
+ * o nome de verdade, e devolve pra linha atual.
+ *
+ * Só recupera pedido que (a) está com nome mascarado/vazio HOJE e (b) tem algum nome de
+ * verdade registrado no log. Pedido que já nasceu mascarado antes do audit_log existir
+ * (2026-07-28) fica de fora — o nome real nunca foi gravado em lugar nenhum do nosso lado.
+ *
+ * DRY-RUN por padrão; executa com `?aplicar=1`.
+ */
+router.post('/audit/recuperar-destinatario', requireAuth, (req, res) => {
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
+
+  const aplicar = req.query.aplicar === '1' || req.query.aplicar === 'true'
+
+  const eventos = db
+    .prepare(
+      `SELECT order_key, detail_json, at FROM audit_log
+        WHERE event = 'order.atualizada' AND workbook_id = ? ORDER BY at ASC`,
+    )
+    .all(workbookId) as Array<{ order_key: string | null; detail_json: string; at: number }>
+
+  const melhorNome = new Map<string, { nome: string; at: number }>()
+  for (const ev of eventos) {
+    if (!ev.order_key) continue
+    let detail: { rowAntes?: string[]; rowDepois?: string[] }
+    try {
+      detail = JSON.parse(ev.detail_json)
+    } catch {
+      continue
+    }
+    for (const row of [detail.rowAntes, detail.rowDepois]) {
+      const nome = row?.[SHOPEE_COL_RECIPIENT]
+      if (nome && !isMaskedOrEmptyRecipient(nome)) {
+        const atual = melhorNome.get(ev.order_key)
+        if (!atual || ev.at >= atual.at) melhorNome.set(ev.order_key, { nome, at: ev.at })
+      }
+    }
+  }
+
+  const linhas = db
+    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ?')
+    .all(workbookId) as Array<{ order_key: string; row_json: string }>
+
+  const planos: Array<{ orderKey: string; de: string; para: string }> = []
+  for (const l of linhas) {
+    const row = JSON.parse(l.row_json) as string[]
+    const nomeAtual = row[SHOPEE_COL_RECIPIENT] ?? ''
+    if (!isMaskedOrEmptyRecipient(nomeAtual)) continue
+    const achado = melhorNome.get(l.order_key)
+    if (!achado) continue
+    planos.push({ orderKey: l.order_key, de: nomeAtual, para: achado.nome })
+  }
+
+  if (aplicar && planos.length > 0) {
+    const now = nowMs()
+    const upd = db.prepare('UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?')
+    db.transaction(() => {
+      for (const p of planos) {
+        const linha = linhas.find((l) => l.order_key === p.orderKey)!
+        const row = JSON.parse(linha.row_json) as string[]
+        row[SHOPEE_COL_RECIPIENT] = p.para
+        upd.run(JSON.stringify(row), now, workbookId, p.orderKey)
+      }
+      db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
+    })()
+    recordAudit({
+      source: 'api',
+      event: 'destinatario.recuperado',
+      level: 'warn',
+      workbookId,
+      detail: { total: planos.length, planos },
+    })
+  }
+
+  res.json({
+    ok: true,
+    aplicado: aplicar,
+    workbookId,
+    totalRecuperaveis: planos.length,
+    planos,
+    aviso: aplicar
+      ? undefined
       : 'DRY-RUN — nada foi alterado. Repita com ?aplicar=1 pra executar.',
   })
 })
