@@ -9,6 +9,7 @@ import {
   fetchWorkbook,
   logout,
   patchOrderDelta,
+  patchOrdersStatus,
   replaceWorkbook,
   serverWorkbookToLocal,
   linkShopeeConversationsScanChunk,
@@ -23,6 +24,7 @@ import {
 } from './api'
 import {
   openAlertDialog,
+  openBaixarAprovadosDialog,
   openCalendarPickerDialog,
   openConfirmDialog,
   openPreviewPickerDialog,
@@ -109,17 +111,8 @@ function buildShell() {
           <button type="button" class="btn btn-primary" id="shopee-link-conversations-btn" hidden title="Cruza username da col E com to_name do chat Shopee e grava conversation_id (não altera a planilha)">
             💬 Vincular conversas Shopee
           </button>
-          <button type="button" class="btn btn-primary" id="gerar-previas-btn" hidden title="Monta a arte de cada peça da data e grava o print 4x4 na coluna de foto; o pedido vira Pronto quando TODAS as peças dele têm prévia">
-            🖨 Gerar prévias (data)
-          </button>
-          <button type="button" class="btn" id="gerar-todas-artes-btn" hidden title="Pré-gera (deixa cacheada) a arte de cada peça da data — roda no servidor, dá pra sair da tela e voltar depois só pra baixar">
-            🖼 Gerar todas as artes (data)
-          </button>
           <button type="button" class="btn" id="baixar-aprovados-data-btn" hidden title="Baixa as artes dos pedidos Aprovado da data selecionada (usa o cache se já foram geradas)">
             ⬇ Baixar aprovados (data)
-          </button>
-          <button type="button" class="btn" id="baixar-aprovados-todos-btn" hidden title="Gera e baixa as artes de TODOS os pedidos Aprovado, de todas as datas (substitui a Remessa manual)">
-            ⬇ Baixar todos aprovados
           </button>
           <button class="btn" id="logout-btn" title="Sair">Sair</button>
         </div>
@@ -1859,26 +1852,33 @@ function bindShopeeLinkConversations() {
 }
 
 /**
- * Baixa as artes dos pedidos Aprovado — substitui a Remessa manual (varrer
- * aprovados, copiar arte por arte pra uma pasta). As artes são montadas na
- * hora no servidor e vêm num zip; o status NÃO muda, então dá pra baixar só
- * pra conferir.
+ * Baixa as artes dos pedidos Aprovado da data. Popup oferece só baixar
+ * ou baixar e marcar Em produção 1/2/3 (substitui a Remessa manual).
  */
 function bindBaixarAprovados() {
   const porData = document.querySelector<HTMLButtonElement>('#baixar-aprovados-data-btn')
-  const todos = document.querySelector<HTMLButtonElement>('#baixar-aprovados-todos-btn')
 
-  async function baixar(btn: HTMLButtonElement, sheetDate: string | null) {
+  function idsAprovadosDaData(sheetDate: string): string[] {
+    const sheet = workbook?.sheets[workbook.sheetOrder[0]]
+    if (!sheet) return []
+    const ids = new Set<string>()
+    for (let i = 0; i < sheet.rows.length; i++) {
+      if ((sheet.rowDates?.[i] ?? '') !== sheetDate) continue
+      const status = String(sheet.rows[i]?.[STATUS_COLUMN_INDEX] ?? '').trim()
+      if (status !== 'Aprovado') continue
+      const id = String(sheet.rows[i]?.[ID_COL] ?? '').trim()
+      if (id) ids.add(id)
+    }
+    return [...ids]
+  }
+
+  async function baixar(btn: HTMLButtonElement, sheetDate: string, marcarStatus?: string) {
     const rotulo = btn.textContent
     btn.disabled = true
     btn.textContent = '⏳ Gerando artes…'
-    setStatusText(
-      sheetDate
-        ? `Gerando artes dos aprovados de ${sheetDate}…`
-        : 'Gerando artes de todos os aprovados… (pode levar alguns minutos)',
-    )
+    setStatusText(`Gerando artes dos aprovados de ${sheetDate}…`)
     try {
-      const qs = sheetDate ? `?sheetDate=${encodeURIComponent(sheetDate)}` : ''
+      const qs = `?sheetDate=${encodeURIComponent(sheetDate)}`
       const r = await fetch(`/api/picker/artes-aprovadas.zip${qs}`, { credentials: 'include' })
       if (!r.ok) {
         const detalhe = (await r.json().catch(() => ({}))) as { error?: string }
@@ -1888,9 +1888,28 @@ function bindBaixarAprovados() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = sheetDate ? `aprovados ${sheetDate}.zip` : 'aprovados (todas as datas).zip'
+      a.download = `aprovados ${sheetDate}.zip`
       a.click()
       URL.revokeObjectURL(url)
+
+      if (marcarStatus && currentWorkbookId) {
+        const ids = idsAprovadosDaData(sheetDate)
+        if (ids.length > 0) {
+          setStatusText(`Marcando ${ids.length} pedido(s) como ${marcarStatus}…`)
+          await withPollingPaused(async () => {
+            const result = await patchOrdersStatus(
+              currentWorkbookId!,
+              ids.map((id) => ({ id, status: marcarStatus })),
+            )
+            serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
+            await refreshFromServer({ force: true })
+          })
+          setStatusText(
+            `Download pronto (${(blob.size / 1024 / 1024).toFixed(1)}MB) · ${ids.length} marcado(s) ${marcarStatus}.`,
+          )
+          return
+        }
+      }
       setStatusText(`Download pronto (${(blob.size / 1024 / 1024).toFixed(1)}MB).`)
     } catch (error) {
       setStatusText(`Falha ao gerar artes: ${(error as Error).message}`)
@@ -1906,125 +1925,22 @@ function bindBaixarAprovados() {
       setStatusText('Selecione uma data primeiro.')
       return
     }
-    void baixar(porData, data)
-  })
-  todos?.addEventListener('click', () => void baixar(todos, null))
-}
-
-/**
- * "Gerar todas as artes" — pré-gera (cacheia) a arte de cada peça da data, rodando no
- * SERVIDOR, fora do ciclo de vida da request: o operador pode sair da tela ou fechar o
- * navegador que o lote continua, e mais tarde "Baixar aprovados" sai instantâneo por já
- * estar pronto. Faz polling do progresso enquanto a aba ficar aberta, só por conforto —
- * fechar a aba não cancela o lote no servidor.
- */
-function bindGerarTodasArtes() {
-  const el = document.querySelector<HTMLButtonElement>('#gerar-todas-artes-btn')
-  if (!el) return
-  const btn: HTMLButtonElement = el
-  const rotuloOriginal = btn.textContent
-
-  async function consultarStatus(): Promise<void> {
-    const r = await fetch('/api/picker/gerar-todas-artes/status', { credentials: 'include' })
-    const body = (await r.json().catch(() => ({}))) as {
-      job?: { rodando: boolean; total: number; feitas: number; falhas: unknown[] } | null
-    }
-    const job = body.job
-    if (!job || !job.rodando) {
-      btn.disabled = false
-      btn.textContent = rotuloOriginal
-      if (job && job.total > 0) {
-        setStatusText(`Artes prontas: ${job.feitas}/${job.total}${job.falhas.length ? ` (${job.falhas.length} falha(s))` : ''}.`)
-      }
-      return
-    }
-    btn.textContent = `⏳ Gerando ${job.feitas}/${job.total}…`
-    setStatusText(`Gerando artes em segundo plano: ${job.feitas}/${job.total}…`)
-    window.setTimeout(() => void consultarStatus(), 1500)
-  }
-
-  btn.addEventListener('click', async () => {
-    const data = document.querySelector<HTMLSelectElement>('#date-select')?.value ?? ''
-    if (!data) {
-      setStatusText('Selecione uma data primeiro.')
-      return
-    }
-    btn.disabled = true
-    try {
-      const r = await fetch(`/api/picker/gerar-todas-artes?sheetDate=${encodeURIComponent(data)}`, {
-        method: 'POST',
-        credentials: 'include',
-      })
-      const body = (await r.json().catch(() => ({}))) as { error?: string }
-      if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
-      void consultarStatus()
-    } catch (error) {
-      setStatusText(`Falha ao iniciar: ${(error as Error).message}`)
-      btn.disabled = false
-      btn.textContent = rotuloOriginal
-    }
-  })
-}
-
-/**
- * Gera as prévias (print 4×4) da data e grava na coluna de foto de cada linha.
- *
- * Substitui `gerar_prints_4x4.py` + `planilha_upload_previews.py` do pipeline local, que
- * liam o staging em disco — inexistente pros pedidos montados no picker web. Peça sem foto
- * ajustada ainda entra como falha esperada (é o estado normal no meio do dia), por isso o
- * resumo separa gerado / pulado / faltando.
- */
-function bindGerarPrevias() {
-  const btn = document.querySelector<HTMLButtonElement>('#gerar-previas-btn')
-  btn?.addEventListener('click', async () => {
-    const data = document.querySelector<HTMLSelectElement>('#date-select')?.value ?? ''
-    if (!data) {
-      setStatusText('Selecione uma data primeiro.')
-      return
-    }
-    const rotulo = btn.textContent
-    btn.disabled = true
-    btn.textContent = '⏳ Gerando prévias…'
-    setStatusText(`Montando as artes de ${data} e recortando as prévias…`)
-    try {
-      const r = await fetch(`/api/picker/prints?sheetDate=${encodeURIComponent(data)}`, {
-        method: 'POST',
-        credentials: 'include',
-      })
-      const body = (await r.json()) as {
-        error?: string
-        previasGeradas?: number
-        pedidosMarcadosPronto?: number
-        puladas?: number
-        falhas?: Array<{ orderSn: string; erro: string }>
-      }
-      if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
-      const partes = [
-        `${body.previasGeradas ?? 0} prévia(s) gerada(s)`,
-        `${body.pedidosMarcadosPronto ?? 0} pedido(s) marcado(s) Pronto`,
-      ]
-      if (body.puladas) partes.push(`${body.puladas} já tinha(m)`)
-      if (body.falhas?.length) partes.push(`${body.falhas.length} sem foto ajustada`)
-      setStatusText(partes.join(' · '))
-      if (body.falhas?.length) {
-        console.warn('[prévias] peças que ainda não deu pra gerar:', body.falhas)
-      }
-      await refreshFromServer({ force: true })
-    } catch (error) {
-      setStatusText(`Falha ao gerar prévias: ${(error as Error).message}`)
-    } finally {
-      btn.disabled = false
-      btn.textContent = rotulo
-    }
+    openBaixarAprovadosDialog({
+      sheetDate: data,
+      onChoose: async (action) => {
+        if (action.kind === 'download') {
+          await baixar(porData, data)
+        } else {
+          await baixar(porData, data, action.status)
+        }
+      },
+    })
   })
 }
 
 function applyShopeeWorkbookToolbar(workbookId: string) {
   const isShopee = isShopeeWorkbookId(workbookId)
-  setToolbarBtnVisible(document.querySelector('#gerar-previas-btn'), isShopee)
-  setToolbarBtnVisible(document.querySelector('#gerar-todas-artes-btn'), isShopee)
   setToolbarBtnVisible(document.querySelector('#baixar-aprovados-data-btn'), isShopee)
-  setToolbarBtnVisible(document.querySelector('#baixar-aprovados-todos-btn'), isShopee)
   // "Vincular conversas" sai da barra (pedido do user), mas a FUNÇÃO continua:
   // passou a rodar sozinha junto do poll de 2h no servidor. Sem isso, comprador
   // novo nunca vincularia e o disparo automático o pularia como "sem chat".
@@ -2078,8 +1994,6 @@ async function enterWorkbook(workbookId: string) {
   bindPendingMutationsButton()
   applyShopeeWorkbookToolbar(workbookId)
   bindBaixarAprovados()
-  bindGerarTodasArtes()
-  bindGerarPrevias()
   bindShopeeLinkConversations()
   try {
     await refreshFromServer({ force: true })

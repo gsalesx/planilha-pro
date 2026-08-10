@@ -204,6 +204,17 @@ export async function patchOrderDelta(
   )
 }
 
+/** Bulk: só status. Body `[{id, status}]` — atualiza todas as linhas com aquele id. */
+export async function patchOrdersStatus(
+  workbookId: string,
+  updates: Array<{ id: string; status: string }>,
+): Promise<{ ok: boolean; updatedAt: number }> {
+  return request(`/workbooks/${encodeURIComponent(workbookId)}/orders`, {
+    method: 'PATCH',
+    body: JSON.stringify(updates),
+  })
+}
+
 export async function uploadImage(
   workbookId: string,
   orderId: string,

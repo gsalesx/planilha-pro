@@ -501,3 +501,65 @@ export function openPreviewPickerDialog(opts: {
   document.addEventListener('keydown', onKey)
   cancelBtn.focus()
 }
+
+export type BaixarAprovadosAction =
+  | { kind: 'download' }
+  | { kind: 'download-and-mark'; status: 'Em produção 1' | 'Em produção 2' | 'Em produção 3' }
+
+/** Escolha ao baixar aprovados da data: só baixar, ou baixar e marcar Em produção 1/2/3. */
+export function openBaixarAprovadosDialog(opts: {
+  sheetDate: string
+  onChoose: (action: BaixarAprovadosAction) => Promise<void> | void
+}): void {
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal modal-baixar-aprovados" role="dialog" aria-modal="true" aria-labelledby="baixar-aprovados-title">
+      <div class="modal-title" id="baixar-aprovados-title">Baixar aprovados — ${opts.sheetDate}</div>
+      <div class="modal-body">
+        <button type="button" class="btn btn-primary baixar-aprovados-so-baixar">Baixar sem alterar status</button>
+        <div class="baixar-aprovados-mark-label">Baixar e marcar como:</div>
+        <div class="baixar-aprovados-mark-row" role="group" aria-label="Baixar e marcar em produção">
+          <button type="button" class="btn baixar-aprovados-mark" data-status="Em produção 1" style="background:#1e3a8a;color:#fff;border-color:#1e3a8a">Em produção 1</button>
+          <button type="button" class="btn baixar-aprovados-mark" data-status="Em produção 2" style="background:#fb923c;color:#0f172a;border-color:#fb923c">Em produção 2</button>
+          <button type="button" class="btn baixar-aprovados-mark" data-status="Em produção 3" style="background:#7e22ce;color:#fff;border-color:#7e22ce">Em produção 3</button>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn modal-cancel">Cancelar</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(overlay)
+
+  let busy = false
+  function close() {
+    overlay.remove()
+    document.removeEventListener('keydown', onKey)
+  }
+  function onKey(event: KeyboardEvent) {
+    if (event.key === 'Escape' && !busy) close()
+  }
+  const run = async (action: BaixarAprovadosAction) => {
+    if (busy) return
+    busy = true
+    close()
+    await opts.onChoose(action)
+  }
+
+  overlay.querySelector('.modal-cancel')!.addEventListener('click', close)
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay && !busy) close()
+  })
+  overlay.querySelector('.baixar-aprovados-so-baixar')!.addEventListener('click', () => {
+    void run({ kind: 'download' })
+  })
+  overlay.querySelectorAll<HTMLButtonElement>('.baixar-aprovados-mark').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const status = btn.dataset.status as 'Em produção 1' | 'Em produção 2' | 'Em produção 3'
+      void run({ kind: 'download-and-mark', status })
+    })
+  })
+  document.addEventListener('keydown', onKey)
+  overlay.querySelector<HTMLButtonElement>('.baixar-aprovados-so-baixar')!.focus()
+}

@@ -598,6 +598,37 @@ button {
   background: #b91c1c;
   border-color: #b91c1c;
 }
+.modal-baixar-aprovados {
+  max-width: 440px;
+}
+.modal-baixar-aprovados .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.baixar-aprovados-so-baixar {
+  width: 100%;
+  justify-content: center;
+}
+.baixar-aprovados-mark-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  margin-top: 4px;
+}
+.baixar-aprovados-mark-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.baixar-aprovados-mark-row .btn {
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
+}
+.baixar-aprovados-mark-row .btn:hover {
+  filter: brightness(0.95);
+}
 .modal-preview-picker {
   max-width: min(920px, calc(100% - 32px));
 }
