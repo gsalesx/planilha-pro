@@ -3,6 +3,7 @@ import './style.css'
 import {
   addArtProjectPiece,
   checkAuth,
+  copyPieceFrom,
   createArtProject,
   createCustomEmoji,
   deleteArtProject,
@@ -313,7 +314,13 @@ async function boot(): Promise<void> {
         </div>
       </div>
       <div class="shopee-chat-pieces-list artes-pieces-list" id="artes-pieces-list">
-        ${currentPieces.length === 0 ? '<div class="artes-empty-sidebar">Nenhuma peça ainda — clique em "+ Peça".</div>' : currentPieces.map((p) => pieceCardHtml(p)).join('')}
+        ${
+          currentPieces.length === 0
+            ? '<div class="artes-empty-sidebar">Nenhuma peça ainda — clique em "+ Peça".</div>'
+            : currentPieces
+                .map((p) => pieceCardHtml(p, p.id === currentPieces[0].id ? null : currentPieces[0].id))
+                .join('')
+        }
       </div>
     `
     bindMainActions()
@@ -407,7 +414,7 @@ async function boot(): Promise<void> {
     }
   }
 
-  function pieceCardHtml(piece: OrderPiece): string {
+  function pieceCardHtml(piece: OrderPiece, firstPieceId: number | null): string {
     const showGenero = piece.tipo !== 'CAMISOLA'
     const generoOpts = (['MASCULINO', 'FEMININO'] as PecaGenero[])
       .map((g) => `<option value="${g}"${piece.genero === g ? ' selected' : ''}>${g === 'MASCULINO' ? 'Masculino' : 'Feminino'}</option>`)
@@ -474,6 +481,11 @@ async function boot(): Promise<void> {
         <header class="shopee-chat-piece-head">
           <span class="shopee-chat-piece-seq">Peça ${piece.seq}</span>
           <span class="shopee-chat-piece-molde">${escapeHtml(piece.molde)}</span>
+          ${
+            firstPieceId != null
+              ? `<button type="button" class="shopee-chat-piece-copy-first" data-piece-id="${piece.id}" data-source-id="${firstPieceId}" title="Copiar fotos e emojis da 1ª peça">📋 copiar da 1ª</button>`
+              : ''
+          }
           <button type="button" class="shopee-chat-piece-delete" data-piece-id="${piece.id}" title="Remover peça">🗑</button>
         </header>
         <div class="shopee-chat-piece-row">
@@ -513,6 +525,15 @@ async function boot(): Promise<void> {
               ? { genero: value as PecaGenero }
               : { tamanho: value as PecaTamanho }
         void updateOrderPiece(pieceId, patch).then(() => refreshCurrent())
+      })
+    })
+
+    listEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-copy-first').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        void acionarBotaoAssincrono(btn, '⏳…', async () => {
+          await copyPieceFrom(Number(btn.dataset.pieceId), Number(btn.dataset.sourceId))
+          await refreshCurrent()
+        })
       })
     })
 

@@ -3752,6 +3752,28 @@ table.sheet tbody th.row-num.is-active {
   flex: 1;
 }
 
+/* .btn/.btn-primary por padrão são feitos pra sentar em cima do toolbar verde escuro
+   do grid (#217346) — translúcido branco em branco, ou branco-sobre-branco no
+   primary, some quase por completo em cima do fundo branco desta página. */
+.artes-page .btn {
+  background: #fff;
+  color: #1e293b;
+  border: 1px solid #cbd5e1;
+}
+.artes-page .btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+.artes-page .btn-primary {
+  background: #217346;
+  color: #fff;
+  border-color: #217346;
+}
+.artes-page .btn-primary:hover {
+  background: #1a5d39;
+  border-color: #1a5d39;
+}
+
 .artes-body {
   flex: 1;
   display: flex;
