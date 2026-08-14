@@ -1,4 +1,6 @@
 import { Router } from 'express'
+import multer from 'multer'
+import * as XLSX from 'xlsx'
 
 import { auditSummary, queryAudit, recordAudit } from '../audit.js'
 import { requireAuth } from '../auth.js'
@@ -8,6 +10,11 @@ import { isMaskedOrEmptyRecipient, reagruparLinhasDoPedido } from '../shopee-ord
 import { SHOPEE_WORKBOOK_ID } from '../shopee-workbook.js'
 
 const router = Router()
+
+const uploadXlsx = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 },
+})
 
 function num(v: unknown): number | undefined {
   const n = Number(v)
@@ -819,6 +826,124 @@ router.post('/audit/recuperar-destinatario', requireAuth, (req, res) => {
     ok: true,
     aplicado: aplicar,
     workbookId,
+    totalRecuperaveis: planos.length,
+    planos,
+    aviso: aplicar
+      ? undefined
+      : 'DRY-RUN — nada foi alterado. Repita com ?aplicar=1 pra executar.',
+  })
+})
+
+function normalizeHeader(s: string): string {
+  return s
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .trim()
+}
+
+const XLSX_COL_ID = normalizeHeader('ID do pedido')
+const XLSX_COL_STATUS = normalizeHeader('Status do pedido')
+const XLSX_COL_NOME = normalizeHeader('Nome do destinatário')
+
+/**
+ * POST /api/audit/importar-nomes-xlsx — recupera o nome do destinatário (col G) mascarado
+ * pela Shopee usando um export bruto do Seller Center (Pedidos > Exportar), que NÃO mascara
+ * o nome — só a API pública mascara.
+ *
+ * Só considera linha do XLSX com "Status do pedido" == "A Enviar" (pedido usa esse export
+ * justamente pra resolver pedidos presos em `****` que ainda vão ser enviados) e só sobrescreve
+ * pedido que está com nome mascarado/vazio HOJE — nunca pisa em nome real já resolvido nem em
+ * edição manual. Mexe única e exclusivamente na col G (SHOPEE_COL_RECIPIENT).
+ *
+ * DRY-RUN por padrão; executa com `?aplicar=1`.
+ */
+router.post('/audit/importar-nomes-xlsx', requireAuth, uploadXlsx.single('file'), (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ ok: false, error: 'Envie o arquivo XLSX no campo "file".' })
+    return
+  }
+
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
+  const aplicar = req.query.aplicar === '1' || req.query.aplicar === 'true'
+
+  let rows: unknown[][]
+  try {
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const sheet = wb.Sheets[wb.SheetNames[0]]
+    rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][]
+  } catch {
+    res.status(400).json({ ok: false, error: 'Não consegui ler o XLSX — arquivo corrompido ou formato inesperado.' })
+    return
+  }
+
+  const header = (rows[0] ?? []).map((h) => normalizeHeader(String(h ?? '')))
+  const idxId = header.indexOf(XLSX_COL_ID)
+  const idxStatus = header.indexOf(XLSX_COL_STATUS)
+  const idxNome = header.indexOf(XLSX_COL_NOME)
+  if (idxId < 0 || idxStatus < 0 || idxNome < 0) {
+    res.status(400).json({
+      ok: false,
+      error: 'XLSX não tem as colunas esperadas ("ID do pedido", "Status do pedido", "Nome do destinatário"). É o export de Pedidos do Seller Center?',
+    })
+    return
+  }
+
+  const nomeById = new Map<string, string>()
+  let linhasAEnviar = 0
+  for (const row of rows.slice(1)) {
+    const status = String(row[idxStatus] ?? '').trim()
+    if (status.toLowerCase() !== 'a enviar') continue
+    linhasAEnviar++
+    const id = String(row[idxId] ?? '').trim()
+    const nome = String(row[idxNome] ?? '').trim()
+    if (!id || isMaskedOrEmptyRecipient(nome)) continue
+    if (!nomeById.has(id)) nomeById.set(id, nome)
+  }
+
+  const linhas = db
+    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ?')
+    .all(workbookId) as Array<{ order_key: string; row_json: string }>
+
+  const planos: Array<{ orderKey: string; de: string; para: string }> = []
+  for (const l of linhas) {
+    const row = JSON.parse(l.row_json) as string[]
+    const nomeAtual = row[SHOPEE_COL_RECIPIENT] ?? ''
+    if (!isMaskedOrEmptyRecipient(nomeAtual)) continue
+    const baseId = l.order_key.split('#')[0]
+    const achado = nomeById.get(baseId)
+    if (!achado) continue
+    planos.push({ orderKey: l.order_key, de: nomeAtual, para: achado })
+  }
+
+  if (aplicar && planos.length > 0) {
+    const now = nowMs()
+    const upd = db.prepare('UPDATE orders SET row_json = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?')
+    db.transaction(() => {
+      for (const p of planos) {
+        const linha = linhas.find((l) => l.order_key === p.orderKey)!
+        const row = JSON.parse(linha.row_json) as string[]
+        row[SHOPEE_COL_RECIPIENT] = p.para
+        upd.run(JSON.stringify(row), now, workbookId, p.orderKey)
+      }
+      db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(now, workbookId)
+    })()
+    recordAudit({
+      source: 'api',
+      event: 'destinatario.importado_xlsx',
+      level: 'warn',
+      workbookId,
+      detail: { total: planos.length, arquivo: req.file.originalname, planos },
+    })
+  }
+
+  res.json({
+    ok: true,
+    aplicado: aplicar,
+    workbookId,
+    linhasNoXlsx: rows.length - 1,
+    linhasAEnviarNoXlsx: linhasAEnviar,
+    nomesUtilizaveisNoXlsx: nomeById.size,
     totalRecuperaveis: planos.length,
     planos,
     aviso: aplicar
