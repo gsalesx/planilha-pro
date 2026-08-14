@@ -901,17 +901,20 @@ router.post('/audit/importar-nomes-xlsx', requireAuth, uploadXlsx.single('file')
     if (!nomeById.has(id)) nomeById.set(id, nome)
   }
 
+  // `id` é o order_sn cru da Shopee (coluna própria, distinta de order_key — que ganha sufixo
+  // `#2`, `#3`... quando um pedido tem múltiplos itens). Casar por `id` em vez de derivar a
+  // base a partir de order_key evita qualquer risco de parsing errado cair no pedido errado;
+  // todas as linhas de um mesmo pedido (mesmo `id`) recebem o mesmo nome, que é o esperado.
   const linhas = db
-    .prepare('SELECT order_key, row_json FROM orders WHERE workbook_id = ?')
-    .all(workbookId) as Array<{ order_key: string; row_json: string }>
+    .prepare('SELECT order_key, id, row_json FROM orders WHERE workbook_id = ?')
+    .all(workbookId) as Array<{ order_key: string; id: string; row_json: string }>
 
   const planos: Array<{ orderKey: string; de: string; para: string }> = []
   for (const l of linhas) {
     const row = JSON.parse(l.row_json) as string[]
     const nomeAtual = row[SHOPEE_COL_RECIPIENT] ?? ''
     if (!isMaskedOrEmptyRecipient(nomeAtual)) continue
-    const baseId = l.order_key.split('#')[0]
-    const achado = nomeById.get(baseId)
+    const achado = nomeById.get(l.id)
     if (!achado) continue
     planos.push({ orderKey: l.order_key, de: nomeAtual, para: achado })
   }
