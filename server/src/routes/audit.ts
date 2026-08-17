@@ -6,7 +6,14 @@ import { auditSummary, queryAudit, recordAudit } from '../audit.js'
 import { requireAuth } from '../auth.js'
 import { db, nowMs } from '../db.js'
 import { SHOPEE_COL_INTERNAL_STATUS, SHOPEE_COL_RECIPIENT } from '../shopee-columns.js'
-import { isMaskedOrEmptyRecipient, reagruparLinhasDoPedido } from '../shopee-order-sync.js'
+import {
+  isMaskedOrEmptyRecipient,
+  reagruparLinhasDoPedido,
+  shopeeOrderExists,
+  upsertShopeeOrder,
+  type ShopeeItemRow,
+  type ShopeeOrderDetail,
+} from '../shopee-order-sync.js'
 import { SHOPEE_WORKBOOK_ID } from '../shopee-workbook.js'
 
 const router = Router()
@@ -952,6 +959,193 @@ router.post('/audit/importar-nomes-xlsx', requireAuth, uploadXlsx.single('file')
     aviso: aplicar
       ? undefined
       : 'DRY-RUN — nada foi alterado. Repita com ?aplicar=1 pra executar.',
+  })
+})
+
+const XLSX_COL_SKU = normalizeHeader('Número de referência SKU')
+const XLSX_COL_SKU_PRINCIPAL = normalizeHeader('Nº de referência do SKU principal')
+const XLSX_COL_VARIACAO = normalizeHeader('Nome da variação')
+const XLSX_COL_QTD = normalizeHeader('Quantidade')
+const XLSX_COL_USERNAME = normalizeHeader('Nome de usuário (comprador)')
+const XLSX_COL_SHIP_DATE = normalizeHeader('Data prevista de envio')
+
+/** Status do Seller Center (PT) → enum da API Shopee, pra bater com o que o sync automático grava na col H. */
+const XLSX_STATUS_MAP: Record<string, string> = {
+  'nao pago': 'UNPAID',
+  'a enviar': 'READY_TO_SHIP',
+  processando: 'PROCESSED',
+  enviado: 'SHIPPED',
+  concluido: 'COMPLETED',
+  cancelado: 'CANCELLED',
+  'devolucao / reembolso': 'TO_RETURN',
+  'devolucao/reembolso': 'TO_RETURN',
+  'em disputa': 'IN_CANCEL',
+}
+
+/**
+ * "Data prevista de envio" do export vem em texto local (BRT, sem timezone) — ex. "2026-08-14 08:46".
+ * `upsertShopeeOrder` espera um unix timestamp e formata em America/Sao_Paulo (ver `resolveSheetDate`
+ * em shopee-order-sync.ts), então somamos 3h pra reconstruir o instante UTC equivalente (Brasil não
+ * observa horário de verão desde 2019 — sem essa soma o pedido podia cair no dia errado perto da
+ * virada da meia-noite). String vazia/ilegível vira 0 → cai em "Sem data de envio", igual à API.
+ */
+function unixSecFromBrtDateString(s: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s.trim())
+  if (!m) return 0
+  const [, y, mo, d, hh, mi] = m
+  return Math.floor(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(hh) + 3, Number(mi)) / 1000)
+}
+
+/**
+ * POST /api/audit/importar-pedidos-xlsx — importa pedidos NOVOS e atualiza os já existentes
+ * (nome do destinatário, status, itens) a partir do export bruto do Seller Center (Pedidos >
+ * Exportar), pra usar como substituto manual do poll automático quando a API Shopee está fora
+ * do ar (ex.: penalidade/bloqueio de app). Cada linha do XLSX é um item do pedido (mesmo formato
+ * de `order.item_list`); pedidos com mais de uma unidade comprada do mesmo item OU múltiplos
+ * itens diferentes são explodidos em sublinhas por `upsertShopeeOrder` — mesma lógica de sempre,
+ * unidade por unidade (ver `mapShopeeOrderToUnitRows`).
+ *
+ * DRY-RUN por padrão (não escreve nada, só devolve o diagnóstico); executa com `?aplicar=1`.
+ */
+router.post('/audit/importar-pedidos-xlsx', requireAuth, uploadXlsx.single('file'), (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ ok: false, error: 'Envie o arquivo XLSX no campo "file".' })
+    return
+  }
+
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
+  const aplicar = req.query.aplicar === '1' || req.query.aplicar === 'true'
+
+  let rows: unknown[][]
+  try {
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const sheet = wb.Sheets[wb.SheetNames[0]]
+    rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][]
+  } catch {
+    res.status(400).json({ ok: false, error: 'Não consegui ler o XLSX — arquivo corrompido ou formato inesperado.' })
+    return
+  }
+
+  const header = (rows[0] ?? []).map((h) => normalizeHeader(String(h ?? '')))
+  const idxId = header.indexOf(XLSX_COL_ID)
+  const idxStatus = header.indexOf(XLSX_COL_STATUS)
+  const idxNome = header.indexOf(XLSX_COL_NOME)
+  const idxSku = header.indexOf(XLSX_COL_SKU) >= 0 ? header.indexOf(XLSX_COL_SKU) : header.indexOf(XLSX_COL_SKU_PRINCIPAL)
+  const idxVariacao = header.indexOf(XLSX_COL_VARIACAO)
+  const idxQtd = header.indexOf(XLSX_COL_QTD)
+  const idxUsername = header.indexOf(XLSX_COL_USERNAME)
+  const idxShipDate = header.indexOf(XLSX_COL_SHIP_DATE)
+  if (idxId < 0 || idxStatus < 0 || idxNome < 0 || idxSku < 0 || idxQtd < 0) {
+    res.status(400).json({
+      ok: false,
+      error: 'XLSX não tem as colunas esperadas do export de Pedidos do Seller Center (ID do pedido, Status do pedido, Nome do destinatário, Número de referência SKU, Quantidade).',
+    })
+    return
+  }
+
+  // agrupa linhas por pedido, preservando a ordem de 1ª aparição no arquivo
+  const ordemPedidos: string[] = []
+  const linhasPorPedido = new Map<string, unknown[][]>()
+  for (const row of rows.slice(1)) {
+    const id = String(row[idxId] ?? '').trim()
+    if (!id) continue
+    if (!linhasPorPedido.has(id)) {
+      linhasPorPedido.set(id, [])
+      ordemPedidos.push(id)
+    }
+    linhasPorPedido.get(id)!.push(row)
+  }
+
+  const statusNaoMapeados = new Map<string, number>()
+  const pedidos: ShopeeOrderDetail[] = []
+  for (const id of ordemPedidos) {
+    const linhas = linhasPorPedido.get(id)!
+    const primeira = linhas[0]
+    const statusBruto = String(primeira[idxStatus] ?? '').trim()
+    const statusNorm = normalizeHeader(statusBruto)
+    const status = XLSX_STATUS_MAP[statusNorm]
+    if (!status) statusNaoMapeados.set(statusBruto, (statusNaoMapeados.get(statusBruto) ?? 0) + 1)
+
+    const item_list: ShopeeItemRow[] = linhas.map((row) => ({
+      item_sku: String(row[idxSku] ?? '').trim(),
+      model_sku: String(row[idxSku] ?? '').trim(),
+      model_name: idxVariacao >= 0 ? String(row[idxVariacao] ?? '').trim() : '',
+      model_quantity_purchased: Number(row[idxQtd]) || 1,
+    }))
+
+    pedidos.push({
+      order_sn: id,
+      order_status: status ?? statusBruto,
+      buyer_username: idxUsername >= 0 ? String(primeira[idxUsername] ?? '').trim() : '',
+      ship_by_date: idxShipDate >= 0 ? unixSecFromBrtDateString(String(primeira[idxShipDate] ?? '')) : 0,
+      recipient_address: { name: String(primeira[idxNome] ?? '').trim() },
+      item_list,
+    })
+  }
+
+  const novos = pedidos.filter((p) => !shopeeOrderExists(p.order_sn!, workbookId))
+  const multiplasLinhas = pedidos.filter((p) => (p.item_list?.length ?? 0) > 1)
+  const unidadesExplodidas = pedidos.filter((p) => (p.item_list ?? []).some((i) => (i.model_quantity_purchased ?? 1) > 1))
+
+  if (!aplicar) {
+    res.json({
+      ok: true,
+      aplicado: false,
+      workbookId,
+      totalPedidosNoXlsx: pedidos.length,
+      pedidosNovos: novos.length,
+      idsNovos: novos.slice(0, 50).map((p) => p.order_sn),
+      pedidosJaExistentes: pedidos.length - novos.length,
+      pedidosComMultiplosItens: multiplasLinhas.length,
+      pedidosComAlgumaUnidadeMultipla: unidadesExplodidas.length,
+      statusNaoMapeados: Object.fromEntries(statusNaoMapeados),
+      amostraExplosao: [...multiplasLinhas, ...unidadesExplodidas]
+        .filter((p, i, arr) => arr.indexOf(p) === i)
+        .slice(0, 5)
+        .map((p) => ({
+          orderSn: p.order_sn,
+          itens: p.item_list?.map((i) => ({ sku: i.item_sku, variacao: i.model_name, qtd: i.model_quantity_purchased })),
+          unidadesQueSeriamCriadas: p.item_list?.reduce((s, i) => s + Math.max(1, i.model_quantity_purchased ?? 1), 0),
+        })),
+      aviso: 'DRY-RUN — nada foi alterado. Repita com ?aplicar=1 pra executar.',
+    })
+    return
+  }
+
+  const runId = `xlsx-${nowMs()}`
+  let created = 0
+  let updated = 0
+  let unchanged = 0
+  const errors: string[] = []
+  for (const pedido of pedidos) {
+    try {
+      const acao = upsertShopeeOrder(pedido, workbookId, { source: 'manual', runId, rotina: 'importarPedidosXlsx' })
+      if (acao === 'created') created++
+      else if (acao === 'updated') updated++
+      else unchanged++
+    } catch (error) {
+      errors.push(`${pedido.order_sn}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  recordAudit({
+    source: 'manual',
+    runId,
+    workbookId,
+    event: 'import.xlsx_pedidos',
+    level: errors.length > 0 ? 'warn' : 'info',
+    detail: { arquivo: req.file.originalname, totalPedidosNoXlsx: pedidos.length, created, updated, unchanged, errors },
+  })
+
+  res.json({
+    ok: true,
+    aplicado: true,
+    workbookId,
+    totalPedidosNoXlsx: pedidos.length,
+    created,
+    updated,
+    unchanged,
+    errors,
   })
 })
 

@@ -22,7 +22,7 @@ import {
 } from './shopee-columns.js'
 import { ensureShopeeWorkbook, SHOPEE_WORKBOOK_ID } from './shopee-workbook.js'
 
-interface ShopeeItemRow {
+export interface ShopeeItemRow {
   item_name?: string
   item_sku?: string
   model_name?: string
@@ -34,7 +34,7 @@ interface ShopeeItemRow {
   image_info?: { image_url?: string }
 }
 
-interface ShopeeOrderDetail {
+export interface ShopeeOrderDetail {
   order_sn?: string
   order_status?: string
   buyer_username?: string
