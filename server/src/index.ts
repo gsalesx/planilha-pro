@@ -26,7 +26,15 @@ import {
   loadLinkStartCursor,
   saveLinkStartCursor,
 } from './shopee-link-conversations.js'
-import { ensureShopeeWorkbook, SHOPEE_WORKBOOK_ID } from './shopee-workbook.js'
+import { ensureMarketplaceWorkbooks, SHOPEE_WORKBOOK_ID, TIKTOK_WORKBOOK_ID, MERCADOLIVRE_WORKBOOK_ID } from './marketplace.js'
+import { syncRecentTikTokOrders, TIKTOK_POLL_LOOKBACK_HOURS } from './tiktok-order-sync.js'
+import { tiktokConfigured } from './tiktok-api.js'
+import { loadTikTokAuth } from './tiktok-store.js'
+import { linkConversationsScan as tiktokLinkConversationsScan } from './tiktok-link-conversations.js'
+import { syncRecentMercadoLivreOrders, ML_POLL_LOOKBACK_HOURS } from './mercadolivre-order-sync.js'
+import { mlConfigured } from './mercadolivre-api.js'
+import { loadMercadoLivreAuth } from './mercadolivre-store.js'
+import { linkConversationsScan as mlLinkConversationsScan } from './mercadolivre-link-conversations.js'
 import artesRouter from './routes/artes.js'
 import auditRouter from './routes/audit.js'
 import backupRouter from './routes/backup.js'
@@ -39,6 +47,10 @@ import piecesRouter from './routes/pieces.js'
 import shopeePushRouter, { handleShopeePushPost } from './routes/shopee-push.js'
 import shopeeProductsRouter from './routes/shopee-products.js'
 import shopeeTestRouter from './routes/shopee-test.js'
+import tiktokRouter from './routes/tiktok.js'
+import tiktokPushRouter from './routes/tiktok-push.js'
+import mercadolivreRouter from './routes/mercadolivre.js'
+import mercadolivrePushRouter from './routes/mercadolivre-push.js'
 import workbookRouter from './routes/workbook.js'
 import workbooksRouter from './routes/workbooks.js'
 
@@ -89,6 +101,10 @@ app.use('/api', piecesRouter)
 app.use('/api', pickerRouter)
 app.use('/api', artesRouter)
 app.use('/api', emojiCatalogRouter)
+app.use('/api', tiktokRouter)
+app.use('/api', tiktokPushRouter)
+app.use('/api', mercadolivreRouter)
+app.use('/api', mercadolivrePushRouter)
 app.use('/api', auditRouter)
 
 // imagens builtin do catálogo de emoji (server/assets/emojis, servido em build-time) —
@@ -125,7 +141,7 @@ if (existsSync(publicDir)) {
 // limpar sessões expiradas a cada hora
 setInterval(cleanupExpiredSessions, 60 * 60 * 1000)
 cleanupExpiredSessions()
-ensureShopeeWorkbook()
+ensureMarketplaceWorkbooks()
 ensureEmojiCatalogSeeded()
 
 // Arte cacheada expira em 10 dias ou quando o pedido vira "Concluído" (ver
@@ -283,6 +299,92 @@ async function vincularConversasAuto(runId?: string): Promise<void> {
 
 setTimeout(() => void runShopeeRecentPoll(), 60_000)
 setInterval(() => void runShopeeRecentPoll(), SHOPEE_POLL_MS)
+
+// TikTok poll — independente do Shopee
+const TIKTOK_POLL_MS = 2 * 60 * 60 * 1000
+let tiktokPollBusy = false
+
+async function runTikTokRecentPoll(): Promise<void> {
+  if (tiktokPollBusy || !tiktokConfigured() || !loadTikTokAuth()) return
+  tiktokPollBusy = true
+  const runId = newRunId('tiktok-poll')
+  const t0 = Date.now()
+  recordAudit({ source: 'poll', runId, event: 'tiktok_poll.inicio', detail: { lookbackHours: TIKTOK_POLL_LOOKBACK_HOURS } })
+  try {
+    const result = await syncRecentTikTokOrders({
+      hours: TIKTOK_POLL_LOOKBACK_HOURS,
+      ctx: { source: 'poll', runId },
+    })
+    if (result.created > 0 || result.errors.length > 0) {
+      console.log('[tiktok-poll] concluído', result)
+    }
+    recordAudit({
+      source: 'poll',
+      runId,
+      event: 'tiktok_poll.fim',
+      level: result.errors.length > 0 ? 'warn' : 'info',
+      detail: { ...result, duracaoMs: Date.now() - t0 },
+    })
+    try {
+      const link = await tiktokLinkConversationsScan(TIKTOK_WORKBOOK_ID)
+      if (link.linked > 0) console.log('[tiktok-link-auto]', link)
+    } catch (e) {
+      console.warn('[tiktok-link-auto]', e instanceof Error ? e.message : e)
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    console.warn('[tiktok-poll]', msg)
+    recordAudit({ source: 'poll', runId, event: 'tiktok_poll.falhou', level: 'error', detail: { erro: msg, duracaoMs: Date.now() - t0 } })
+  } finally {
+    tiktokPollBusy = false
+  }
+}
+
+setTimeout(() => void runTikTokRecentPoll(), 90_000)
+setInterval(() => void runTikTokRecentPoll(), TIKTOK_POLL_MS)
+
+// Mercado Livre poll — independente dos demais
+const ML_POLL_MS = 2 * 60 * 60 * 1000
+let mlPollBusy = false
+
+async function runMercadoLivreRecentPoll(): Promise<void> {
+  if (mlPollBusy || !mlConfigured() || !loadMercadoLivreAuth()) return
+  mlPollBusy = true
+  const runId = newRunId('ml-poll')
+  const t0 = Date.now()
+  recordAudit({ source: 'poll', runId, event: 'ml_poll.inicio', detail: { lookbackHours: ML_POLL_LOOKBACK_HOURS } })
+  try {
+    const result = await syncRecentMercadoLivreOrders({
+      hours: ML_POLL_LOOKBACK_HOURS,
+      ctx: { source: 'poll', runId },
+    })
+    if (result.created > 0 || result.errors.length > 0) {
+      console.log('[ml-poll] concluído', result)
+    }
+    recordAudit({
+      source: 'poll',
+      runId,
+      event: 'ml_poll.fim',
+      level: result.errors.length > 0 ? 'warn' : 'info',
+      detail: { ...result, duracaoMs: Date.now() - t0 },
+    })
+    try {
+      const link = await mlLinkConversationsScan(MERCADOLIVRE_WORKBOOK_ID)
+      if (link.linked > 0) console.log('[ml-link-auto]', link)
+    } catch (e) {
+      console.warn('[ml-link-auto]', e instanceof Error ? e.message : e)
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    console.warn('[ml-poll]', msg)
+    recordAudit({ source: 'poll', runId, event: 'ml_poll.falhou', level: 'error', detail: { erro: msg, duracaoMs: Date.now() - t0 } })
+  } finally {
+    mlPollBusy = false
+  }
+}
+
+setTimeout(() => void runMercadoLivreRecentPoll(), 120_000)
+setInterval(() => void runMercadoLivreRecentPoll(), ML_POLL_MS)
 
 app.listen(env.port, () => {
   console.log(`Planilha Pro server on http://localhost:${env.port}`)

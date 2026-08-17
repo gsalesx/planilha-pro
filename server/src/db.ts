@@ -553,6 +553,29 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_art_projects_updated_at ON art_projects (updated_at);
 `)
 
+// Mapa comprador TikTok → chat
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tiktok_buyer_chats (
+    buyer_user_id TEXT NOT NULL PRIMARY KEY,
+    buyer_username TEXT NOT NULL DEFAULT '',
+    conversation_id TEXT NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_tiktok_buyer_chats_username ON tiktok_buyer_chats (buyer_username);
+`)
+
+// Mapa comprador Mercado Livre → pack (chat)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS mercadolivre_buyer_chats (
+    buyer_user_id TEXT NOT NULL PRIMARY KEY,
+    buyer_username TEXT NOT NULL DEFAULT '',
+    pack_id TEXT NOT NULL DEFAULT '',
+    order_id TEXT NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ml_buyer_chats_username ON mercadolivre_buyer_chats (buyer_username);
+`)
+
 export function nowMs(): number {
   return Date.now()
 }

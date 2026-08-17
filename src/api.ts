@@ -439,6 +439,78 @@ export type ShopeeChatMessage = {
   quotedMessage: ShopeeQuotedMessage | null
 }
 
+/** Prefixo de API por canal de marketplace (`/shopee`, `/tiktok`, `/mercadolivre`). */
+export type MarketplaceChatChannel = 'shopee' | 'tiktok' | 'mercadolivre'
+
+function marketplaceApiPrefix(channel: MarketplaceChatChannel): string {
+  if (channel === 'tiktok') return '/tiktok'
+  if (channel === 'mercadolivre') return '/mercadolivre'
+  return '/shopee'
+}
+
+export type MarketplaceChatHistory = {
+  ok: boolean
+  chat: {
+    buyerUsername: string
+    conversationId: string
+    toId: number
+    updatedAt: number
+  }
+  messages: ShopeeChatMessage[]
+  pages: number
+  truncated: boolean
+}
+
+export async function fetchMarketplaceChatHistory(
+  channel: MarketplaceChatChannel,
+  username: string,
+): Promise<MarketplaceChatHistory> {
+  const qs = new URLSearchParams({ username })
+  return request(`${marketplaceApiPrefix(channel)}/chat-history?${qs}`)
+}
+
+export async function sendMarketplaceChatMessage(
+  channel: MarketplaceChatChannel,
+  opts: { toId: number; conversationId: string; text: string },
+): Promise<unknown> {
+  return request(`${marketplaceApiPrefix(channel)}/messages/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+}
+
+export async function sendMarketplacePreview(
+  channel: MarketplaceChatChannel,
+  opts: { username: string; workbookId: string; orderKey: string; col: number },
+): Promise<{ ok: boolean; shopeeImageUrl?: string; imageUrl?: string }> {
+  return request(`${marketplaceApiPrefix(channel)}/messages/send-preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+}
+
+export async function fetchMarketplaceLinkedBuyerUsernames(
+  channel: MarketplaceChatChannel,
+): Promise<string[]> {
+  const data = await request<{ ok: boolean; usernames: string[] }>(
+    `${marketplaceApiPrefix(channel)}/buyer-chats`,
+  )
+  return data.usernames ?? []
+}
+
+export async function startMarketplaceConversation(
+  channel: MarketplaceChatChannel,
+  opts: { orderKey: string; message?: string },
+): Promise<{ ok: boolean; buyerUserId: number; buyerUsername: string; conversationId: string }> {
+  return request(`${marketplaceApiPrefix(channel)}/messages/start-conversation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+}
+
 export async function fetchShopeeLinkStatus(workbookId: string): Promise<{
   ok: boolean
   workbookId: string
@@ -460,24 +532,11 @@ export async function clearShopeeBuyerChats(workbookId: string): Promise<{ ok: b
 }
 
 export async function fetchLinkedBuyerUsernames(): Promise<string[]> {
-  const data = await request<{ ok: boolean; usernames: string[] }>('/shopee/buyer-chats')
-  return data.usernames ?? []
+  return fetchMarketplaceLinkedBuyerUsernames('shopee')
 }
 
-export async function fetchShopeeChatHistory(username: string): Promise<{
-  ok: boolean
-  chat: {
-    buyerUsername: string
-    conversationId: string
-    toId: number
-    updatedAt: number
-  }
-  messages: ShopeeChatMessage[]
-  pages: number
-  truncated: boolean
-}> {
-  const qs = new URLSearchParams({ username })
-  return request(`/shopee/chat-history?${qs}`)
+export async function fetchShopeeChatHistory(username: string): Promise<MarketplaceChatHistory> {
+  return fetchMarketplaceChatHistory('shopee', username)
 }
 
 export async function sendShopeeChatMessage(opts: {
@@ -485,11 +544,7 @@ export async function sendShopeeChatMessage(opts: {
   conversationId: string
   text: string
 }): Promise<unknown> {
-  return request('/shopee/messages/send', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(opts),
-  })
+  return sendMarketplaceChatMessage('shopee', opts)
 }
 
 export async function sendShopeePreview(opts: {
@@ -498,11 +553,7 @@ export async function sendShopeePreview(opts: {
   orderKey: string
   col: number
 }): Promise<{ ok: boolean; shopeeImageUrl?: string }> {
-  return request('/shopee/messages/send-preview', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(opts),
-  })
+  return sendMarketplacePreview('shopee', opts)
 }
 
 /** Manda uma mensagem inicial (ex. "Oi") pro comprador de um pedido sem chat vinculado
@@ -511,11 +562,7 @@ export async function startShopeeConversation(opts: {
   orderKey: string
   message?: string
 }): Promise<{ ok: boolean; buyerUserId: number; buyerUsername: string; conversationId: string }> {
-  return request('/shopee/messages/start-conversation', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(opts),
-  })
+  return startMarketplaceConversation('shopee', opts)
 }
 
 /** Baixa o PDF da etiqueta de envio do pedido (NORMAL_AIR_WAYBILL — o formato térmico da

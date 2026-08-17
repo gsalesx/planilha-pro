@@ -7,6 +7,7 @@ import {
   type WorkbookSummary,
 } from './api'
 import { openConfirmDialog, openPromptDialog } from './dialog'
+import { channelOfWorkbook } from './marketplace'
 
 type OpenHandler = (workbookId: string) => void
 type AuthLostHandler = () => void
@@ -25,6 +26,22 @@ function formatTimestamp(ms: number): string {
   if (!ms) return '—'
   const d = new Date(ms)
   return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+}
+
+function channelSyncLabel(id: string): string {
+  const channel = channelOfWorkbook(id)
+  if (channel === 'shopee') return 'Sincronizada com a Shopee · '
+  if (channel === 'tiktok') return 'Sincronizada com o TikTok · '
+  if (channel === 'mercadolivre') return 'Sincronizada com o Mercado Livre · '
+  return 'Planilha automática · '
+}
+
+function channelBadge(id: string): string {
+  const channel = channelOfWorkbook(id)
+  if (channel === 'shopee') return 'Shopee'
+  if (channel === 'tiktok') return 'TikTok'
+  if (channel === 'mercadolivre') return 'Mercado Livre'
+  return 'Automática'
 }
 
 export function showWorkbooksList(opts: {
@@ -112,10 +129,10 @@ export function showWorkbooksList(opts: {
         <article class="workbook-card${wb.system ? ' workbook-card--system' : ''}" data-id="${escapeHtml(wb.id)}">
           <header class="workbook-card-head">
             <h3 class="workbook-card-name" title="${escapeHtml(wb.name)}">${escapeHtml(wb.name)}</h3>
-            ${wb.system ? '<span class="workbook-card-badge">Automática</span>' : ''}
+            ${wb.system ? `<span class="workbook-card-badge">${escapeHtml(channelBadge(wb.id))}</span>` : ''}
             <span class="workbook-card-count">${wb.count} pedidos</span>
           </header>
-          <p class="workbook-card-meta">${wb.system ? 'Sincronizada com a Shopee · ' : ''}Atualizada em ${formatTimestamp(wb.updatedAt)}</p>
+          <p class="workbook-card-meta">${wb.system ? channelSyncLabel(wb.id) : ''}Atualizada em ${formatTimestamp(wb.updatedAt)}</p>
           <div class="workbook-card-actions">
             <button class="btn btn-primary wb-open">Abrir</button>
             ${wb.system ? '' : '<button class="btn wb-rename" title="Renomear">Renomear</button>'}

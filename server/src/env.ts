@@ -60,6 +60,17 @@ export const env = {
    * pipeline local). Sem ela, só o modo coração funciona.
    */
   picwishApiKey: envTrim('PICWISH_API_KEY'),
+  /** TikTok Shop Partner API */
+  tiktokAppKey: envTrim('TIKTOK_APP_KEY'),
+  tiktokAppSecret: envTrim('TIKTOK_APP_SECRET'),
+  tiktokRedirectUrl: envTrim('TIKTOK_REDIRECT_URL'),
+  tiktokShopCipher: envTrim('TIKTOK_SHOP_CIPHER'),
+  tiktokApiBase: envTrim('TIKTOK_API_BASE') || 'https://open-api.tiktokglobalshop.com',
+  /** Mercado Livre Open Platform */
+  mlAppId: envTrim('ML_APP_ID') || envTrim('MERCADOLIVRE_APP_ID'),
+  mlClientSecret: envTrim('ML_CLIENT_SECRET') || envTrim('MERCADOLIVRE_CLIENT_SECRET'),
+  mlRedirectUrl: envTrim('ML_REDIRECT_URL') || envTrim('MERCADOLIVRE_REDIRECT_URL'),
+  mlSiteId: envTrim('ML_SITE_ID') || envTrim('MERCADOLIVRE_SITE_ID') || 'MLB',
 }
 
 export const isProd = env.nodeEnv === 'production'

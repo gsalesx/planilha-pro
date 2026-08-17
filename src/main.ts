@@ -13,12 +13,12 @@ import {
   replaceWorkbook,
   serverWorkbookToLocal,
   linkShopeeConversationsScanChunk,
-  fetchLinkedBuyerUsernames,
+  fetchMarketplaceLinkedBuyerUsernames,
   fetchShopeeLinkStatus,
   clearShopeeBuyerChats,
   uploadImage,
-  sendShopeePreview,
-  startShopeeConversation,
+  sendMarketplacePreview,
+  startMarketplaceConversation,
   fetchShippingLabel,
   type OrderStyleDelta,
 } from './api'
@@ -42,11 +42,10 @@ import { STATUS_COLUMN_INDEX, PREVIEW_SENT_STATUS } from './status'
 import type { CellValue, SheetData, WorkbookData } from './types'
 import { showWorkbooksList } from './workbooks-list'
 import {
-  isShopeeWorkbookId,
-  SHOPEE_DEFAULT_STATUS_FILTER,
-  SHOPEE_STATUS_COLUMN_INDEX,
-  SHOPEE_STATUS_FILTER_OPTIONS,
-  shopeeStatusMatchValues,
+  channelOfWorkbook,
+  isMarketplaceWorkbookId,
+  marketplaceDef,
+  marketplaceStatusMatchValues,
 } from './shopee-workbook'
 import { openShopeeChatPanel } from './shopee-chat-panel'
 import { FIXED_HEADERS, parseXlsx } from './xlsx-parser'
@@ -547,9 +546,9 @@ function renderDateSelect() {
   }
   wrap.hidden = false
   const active = grid.getDateFilter()
-  const isShopee = isShopeeWorkbookId(currentWorkbookId ?? '')
+  const mpDef = marketplaceDef(currentWorkbookId ?? '')
 
-  if (!isShopee) {
+  if (!mpDef) {
     const sorted = sortDates(allDates)
     select.innerHTML = sorted
       .map((d) => `<option value="${d}"${d === active ? ' selected' : ''}>${formatDateForDisplay(d)}</option>`)
@@ -560,12 +559,12 @@ function renderDateSelect() {
       updateStatusCounts()
     }
   } else {
-    // Quick-list: só datas com pedido "a enviar" (READY_TO_SHIP) + a data ativa (se for outra,
+    // Quick-list: só datas com pedido "a enviar" + a data ativa (se for outra,
     // ex.: chegou via busca/pendência) + "Personalizado" abrindo o calendário com TODAS as datas.
     const readyDates = sortDates(
       grid.getAvailableDatesForColumnValue(
-        SHOPEE_STATUS_COLUMN_INDEX,
-        shopeeStatusMatchValues(SHOPEE_DEFAULT_STATUS_FILTER),
+        mpDef.statusColumnIndex,
+        marketplaceStatusMatchValues(mpDef.id, mpDef.defaultStatusFilter),
       ),
     )
     const quickDates = active && !readyDates.includes(active) ? sortDates([...readyDates, active]) : readyDates
@@ -620,35 +619,40 @@ function renderDateSelect() {
   }
 }
 
-/** Vale só na planilha Shopee — sobrevive ao grid.setWorkbook() (limpa filtros a cada poll). */
-let currentShopeeStatusFilter: string = SHOPEE_DEFAULT_STATUS_FILTER
+/** Vale nas planilhas de marketplace — sobrevive ao grid.setWorkbook() (limpa filtros a cada poll). */
+let currentMarketplaceStatusFilter = ''
 /** true depois que a data padrão (1º dia "a enviar") já foi aplicada nesta sessão de enterWorkbook. */
-let shopeeDateDefaultApplied = false
+let marketplaceDateDefaultApplied = false
 
-function renderShopeeStatusSelect() {
+function renderMarketplaceStatusSelect() {
   const wrap = el<HTMLDivElement>('#shopee-status-filter-wrap')
   const select = el<HTMLSelectElement>('#shopee-status-select')
-  if (!isShopeeWorkbookId(currentWorkbookId ?? '')) {
+  const mpDef = marketplaceDef(currentWorkbookId ?? '')
+  if (!mpDef) {
     wrap.hidden = true
     return
   }
   wrap.hidden = false
-  select.innerHTML = SHOPEE_STATUS_FILTER_OPTIONS.map(
+  select.innerHTML = mpDef.statusFilterOptions.map(
     (opt) =>
-      `<option value="${opt.value}"${opt.value === currentShopeeStatusFilter ? ' selected' : ''}>${opt.label}</option>`,
+      `<option value="${opt.value}"${opt.value === currentMarketplaceStatusFilter ? ' selected' : ''}>${opt.label}</option>`,
   ).join('')
   select.onchange = () => {
-    currentShopeeStatusFilter = select.value
+    currentMarketplaceStatusFilter = select.value
     grid.setColumnFilter(
-      SHOPEE_STATUS_COLUMN_INDEX,
-      currentShopeeStatusFilter ? shopeeStatusMatchValues(currentShopeeStatusFilter) : null,
+      mpDef.statusColumnIndex,
+      currentMarketplaceStatusFilter
+        ? marketplaceStatusMatchValues(mpDef.id, currentMarketplaceStatusFilter)
+        : null,
     )
     updateStatusCounts()
   }
   // Reaplica após poll/applyUrlGridViewState — o dropdown sozinho não restaura o filtro na grid.
   grid.setColumnFilter(
-    SHOPEE_STATUS_COLUMN_INDEX,
-    currentShopeeStatusFilter ? shopeeStatusMatchValues(currentShopeeStatusFilter) : null,
+    mpDef.statusColumnIndex,
+    currentMarketplaceStatusFilter
+      ? marketplaceStatusMatchValues(mpDef.id, currentMarketplaceStatusFilter)
+      : null,
   )
 }
 
@@ -809,7 +813,8 @@ function cellText(row: CellValue[], col: number): string {
 async function refreshLinkedBuyerChats() {
   if (!grid) return
   try {
-    const usernames = await fetchLinkedBuyerUsernames()
+    const channel = channelOfWorkbook(currentWorkbookId ?? '') ?? 'shopee'
+    const usernames = await fetchMarketplaceLinkedBuyerUsernames(channel)
     grid.setLinkedChatUsernames(usernames)
   } catch {
     grid.setLinkedChatUsernames([])
@@ -836,8 +841,9 @@ async function sendPreviewForRow(row: number, photoCol: number): Promise<void> {
 
   setStatusText('Enviando prévia...')
   try {
+    const channel = channelOfWorkbook(workbookId) ?? 'shopee'
     await withPollingPaused(async () => {
-      await sendShopeePreview({
+      await sendMarketplacePreview(channel, {
         username: buyerUsername,
         workbookId,
         orderKey,
@@ -961,6 +967,7 @@ function openChatPanelForRow(
   buyerUsername: string,
 ) {
   if (!currentWorkbookId) return
+  const channel = channelOfWorkbook(currentWorkbookId) ?? 'shopee'
   void openShopeeChatPanel({
     workbookId: currentWorkbookId,
     orderKey,
@@ -971,6 +978,7 @@ function openChatPanelForRow(
     status: cellText(cells, STATUS_COLUMN_INDEX),
     buyerUsername,
     recipient: cellText(cells, RECIPIENT_COLUMN_INDEX),
+    channel,
     sheetDate: sheet.rowDates?.[row] ?? '',
     productImageUrl: sheet.rowProductImages?.[row] ?? '',
     onConfirmed: () => grid?.selectAndReveal(row, col),
@@ -987,7 +995,8 @@ async function startChatForRow(
 ): Promise<void> {
   setStatusText('Iniciando conversa...')
   try {
-    await startShopeeConversation({ orderKey })
+    const channel = channelOfWorkbook(currentWorkbookId ?? '') ?? 'shopee'
+    await startMarketplaceConversation(channel, { orderKey })
     await refreshLinkedBuyerChats()
     setStatusText('Conversa iniciada')
     const sheet = workbook?.sheets[workbook.sheetOrder[0]]
@@ -1534,25 +1543,28 @@ async function refreshFromServer(options: { force?: boolean } = {}): Promise<boo
     }
     workbook = serverWorkbookToLocal(currentWorkbookId, response)
     grid.setWorkbook(workbook)
-    if (isShopeeWorkbookId(currentWorkbookId)) {
+    const mpDef = marketplaceDef(currentWorkbookId)
+    if (mpDef) {
       // grid.setWorkbook() limpa this.filters a cada poll — reaplica o status ativo.
       grid.setColumnFilter(
-      SHOPEE_STATUS_COLUMN_INDEX,
-      currentShopeeStatusFilter ? shopeeStatusMatchValues(currentShopeeStatusFilter) : null,
-    )
-      if (!shopeeDateDefaultApplied) {
-        shopeeDateDefaultApplied = true
+        mpDef.statusColumnIndex,
+        currentMarketplaceStatusFilter
+          ? marketplaceStatusMatchValues(mpDef.id, currentMarketplaceStatusFilter)
+          : null,
+      )
+      if (!marketplaceDateDefaultApplied) {
+        marketplaceDateDefaultApplied = true
         const readyDates = sortDates(
           grid.getAvailableDatesForColumnValue(
-        SHOPEE_STATUS_COLUMN_INDEX,
-        shopeeStatusMatchValues(SHOPEE_DEFAULT_STATUS_FILTER),
-      ),
+            mpDef.statusColumnIndex,
+            marketplaceStatusMatchValues(mpDef.id, mpDef.defaultStatusFilter),
+          ),
         )
         const requestedUrlDate = getUrlDate()
         const requestedHasReady =
           requestedUrlDate != null && readyDates.some((d) => formatDateForUrl(d) === requestedUrlDate)
         // Só pula pro 1º dia "a enviar" se a data da URL (se houver) não tiver
-        // nenhum pedido READY_TO_SHIP — senão isso sempre sobrescrevia a data
+        // nenhum pedido no filtro default — senão isso sempre sobrescrevia a data
         // pedida na URL a cada recarregamento, antes de applyUrlDateFilter() rodar.
         if (!requestedHasReady && readyDates.length > 0) {
           grid.setDateFilter(readyDates[0])
@@ -1566,7 +1578,7 @@ async function refreshFromServer(options: { force?: boolean } = {}): Promise<boo
       grid.restoreSelection(previousSelection.row, previousSelection.col)
     }
     renderDateSelect()
-    renderShopeeStatusSelect()
+    renderMarketplaceStatusSelect()
     updateStatusCounts()
     setFilename(workbook.name)
     serverUpdatedAt = response.updatedAt
@@ -1938,15 +1950,15 @@ function bindBaixarAprovados() {
   })
 }
 
-function applyShopeeWorkbookToolbar(workbookId: string) {
-  const isShopee = isShopeeWorkbookId(workbookId)
-  setToolbarBtnVisible(document.querySelector('#baixar-aprovados-data-btn'), isShopee)
+function applyMarketplaceWorkbookToolbar(workbookId: string) {
+  const isMp = isMarketplaceWorkbookId(workbookId)
+  setToolbarBtnVisible(document.querySelector('#baixar-aprovados-data-btn'), isMp)
   // "Vincular conversas" sai da barra (pedido do user), mas a FUNÇÃO continua:
   // passou a rodar sozinha junto do poll de 2h no servidor. Sem isso, comprador
   // novo nunca vincularia e o disparo automático o pularia como "sem chat".
   setToolbarBtnVisible(document.querySelector('#shopee-link-conversations-btn'), false)
-  setToolbarBtnVisible(document.querySelector('#xlsx-update-label'), !isShopee)
-  setToolbarBtnVisible(document.querySelector('#xlsx-photos-label'), !isShopee)
+  setToolbarBtnVisible(document.querySelector('#xlsx-update-label'), !isMp)
+  setToolbarBtnVisible(document.querySelector('#xlsx-photos-label'), !isMp)
   setShopeeActionBanner('', 'hidden')
 }
 
@@ -1955,8 +1967,9 @@ async function enterWorkbook(workbookId: string) {
   setUrlWorkbookId(workbookId)
   serverUpdatedAt = 0
   workbook = null
-  currentShopeeStatusFilter = SHOPEE_DEFAULT_STATUS_FILTER
-  shopeeDateDefaultApplied = false
+  const mpDef = marketplaceDef(workbookId)
+  currentMarketplaceStatusFilter = mpDef?.defaultStatusFilter ?? ''
+  marketplaceDateDefaultApplied = false
   buildShell()
   grid = new GridView(el<HTMLDivElement>('#sheet-root'), {
     onSelectCell: handleSelect,
@@ -1992,7 +2005,7 @@ async function enterWorkbook(workbookId: string) {
   bindBackButton()
   bindZoomControls()
   bindPendingMutationsButton()
-  applyShopeeWorkbookToolbar(workbookId)
+  applyMarketplaceWorkbookToolbar(workbookId)
   bindBaixarAprovados()
   bindShopeeLinkConversations()
   try {

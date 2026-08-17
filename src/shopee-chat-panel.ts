@@ -5,18 +5,19 @@ import {
   copyPieceFrom,
   createCustomEmoji,
   deleteOrderPiece,
-  fetchShopeeChatHistory,
+  fetchMarketplaceChatHistory,
   getEmojiCatalog,
   getOrderPieces,
   patchOrderDelta,
   removePiecePhoto,
-  sendShopeeChatMessage,
-  sendShopeePreview,
+  sendMarketplaceChatMessage,
+  sendMarketplacePreview,
   setPiecePhotoCrop,
   updateEmojiAliases,
   updateOrderPiece,
   uploadPiecePhoto,
   type EmojiCatalogItem,
+  type MarketplaceChatChannel,
   type OrderPiece,
   type PecaGenero,
   type PecaTamanho,
@@ -49,10 +50,11 @@ export interface ShopeeChatOrderInfo {
   status: string
   buyerUsername: string
   recipient: string
+  /** Canal do marketplace — roteia chat/histórico/envio. Default Shopee. */
+  channel?: MarketplaceChatChannel
   sheetDate?: string
-  /** Foto do anúncio/produto (Shopee) — pra conferir "o que o cliente comprou de fato"
-   * sem precisar entrar na Shopee (ex. quando ele pede "quero igual do anúncio" e a
-   * loja tem vários anúncios parecidos). */
+  /** Foto do anúncio/produto — pra conferir "o que o cliente comprou de fato"
+   * sem precisar entrar no marketplace (ex. quando ele pede "quero igual do anúncio"). */
   productImageUrl?: string
   /** Chamado depois que "Confirmar pedido" fecha o painel — main.ts usa pra selecionar
    * e rolar até a linha do cliente que acabou de ser confirmado. */
@@ -392,13 +394,14 @@ export function closeShopeeChatPanel(): void {
 }
 
 export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<void> {
+  const channel: MarketplaceChatChannel = order.channel ?? 'shopee'
   closeShopeeChatPanel()
   document.body.classList.add('shopee-chat-open')
 
   const overlay = document.createElement('div')
   overlay.className = 'shopee-chat-backdrop'
   overlay.innerHTML = `
-    <aside class="shopee-chat-panel" role="dialog" aria-label="Chat Shopee">
+    <aside class="shopee-chat-panel" role="dialog" aria-label="Chat">
       <header class="shopee-chat-header">
         <div class="shopee-chat-header-main">
           <div class="shopee-chat-avatar" aria-hidden="true">${escapeHtml(order.buyerUsername.slice(0, 1).toUpperCase() || '?')}</div>
@@ -1177,7 +1180,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
             // Só manda a imagem — NÃO mexe em status. O operador pode mandar quantas
             // peças quiser (o modal fica aberto, cada uma vira "✓ Enviada") antes de
             // decidir fechar o ciclo em "Marcar como prévia".
-            await sendShopeePreview({
+            await sendMarketplacePreview(channel, {
               username: order.buyerUsername,
               workbookId: order.workbookId,
               orderKey: item.orderKey ?? order.orderKey,
@@ -1398,13 +1401,13 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     sendBtn.disabled = true
     inputEl.disabled = true
     try {
-      await sendShopeeChatMessage({
+      await sendMarketplaceChatMessage(channel, {
         toId: chatMeta.toId,
         conversationId: chatMeta.conversationId,
         text,
       })
       inputEl.value = ''
-      const history = await fetchShopeeChatHistory(order.buyerUsername)
+      const history = await fetchMarketplaceChatHistory(channel, order.buyerUsername)
       chatMeta = { conversationId: history.chat.conversationId, toId: history.chat.toId }
       messagesEl.innerHTML = renderMessages(history.messages, order.buyerUsername)
       wireChatImages(messagesEl)
@@ -1429,7 +1432,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   })
 
   try {
-    const history = await fetchShopeeChatHistory(order.buyerUsername)
+    const history = await fetchMarketplaceChatHistory(channel, order.buyerUsername)
     chatMeta = { conversationId: history.chat.conversationId, toId: history.chat.toId }
     messagesEl.innerHTML = renderMessages(history.messages, order.buyerUsername)
     wireChatImages(messagesEl)

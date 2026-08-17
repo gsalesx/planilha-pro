@@ -1,32 +1,24 @@
-/** Layout da planilha automática Shopee (wb_shopee). */
+/**
+ * Layout da planilha automática Shopee (wb_shopee).
+ * Constantes reexportadas do layout compartilhado de marketplace — valores idênticos.
+ */
+export {
+  MP_COL_ORDER_ID as SHOPEE_COL_ORDER_ID,
+  MP_COL_PRODUCT as SHOPEE_COL_PRODUCT,
+  MP_COL_MODEL as SHOPEE_COL_MODEL,
+  MP_COL_QTY as SHOPEE_COL_QTY,
+  MP_COL_USERNAME as SHOPEE_COL_USERNAME,
+  MP_COL_INTERNAL_STATUS as SHOPEE_COL_INTERNAL_STATUS,
+  MP_COL_RECIPIENT as SHOPEE_COL_RECIPIENT,
+  MP_COL_MARKETPLACE_STATUS as SHOPEE_COL_SHOPEE_STATUS,
+  MP_PHOTO_COL_START as SHOPEE_PHOTO_COL_START,
+  MP_PHOTO_COUNT as SHOPEE_PHOTO_COUNT,
+  MP_ROW_COLS as SHOPEE_ROW_COLS,
+  MP_INTERNAL_STATUS_CANCELLED as SHOPEE_INTERNAL_STATUS_CANCELLED,
+  MP_INTERNAL_STATUS_SHIPPED as SHOPEE_INTERNAL_STATUS_SHIPPED,
+  emptyMarketplaceRow as emptyShopeeRow,
+} from './marketplace-columns.js'
 
-export const SHOPEE_COL_ORDER_ID = 0 // A
-export const SHOPEE_COL_PRODUCT = 1 // B
-export const SHOPEE_COL_MODEL = 2 // C
-export const SHOPEE_COL_QTY = 3 // D
-export const SHOPEE_COL_USERNAME = 4 // E
-export const SHOPEE_COL_INTERNAL_STATUS = 5 // F — fluxo manual (Pronto, Separado…)
-export const SHOPEE_COL_RECIPIENT = 6 // G
-export const SHOPEE_COL_SHOPEE_STATUS = 7 // H — READY_TO_SHIP, SHIPPED, CANCELLED…
-export const SHOPEE_PHOTO_COL_START = 8 // I — Foto 1
-export const SHOPEE_PHOTO_COUNT = 10
-export const SHOPEE_ROW_COLS = SHOPEE_PHOTO_COL_START + SHOPEE_PHOTO_COUNT // 18 (A–R)
+import { marketplaceHeaders } from './marketplace-columns.js'
 
-export const SHOPEE_HEADERS = [
-  'ID do pedido',
-  'SKU',
-  'Modelo',
-  'Qnt.',
-  'Nome de usuário',
-  'Status',
-  'Nome do destinatário',
-  'Status Shopee',
-  ...Array.from({ length: SHOPEE_PHOTO_COUNT }, (_, i) => `Foto ${i + 1}`),
-]
-
-export const SHOPEE_INTERNAL_STATUS_CANCELLED = 'Cancelado'
-export const SHOPEE_INTERNAL_STATUS_SHIPPED = 'Concluído'
-
-export function emptyShopeeRow(): string[] {
-  return Array.from({ length: SHOPEE_ROW_COLS }, () => '')
-}
+export const SHOPEE_HEADERS = marketplaceHeaders('Status Shopee')
