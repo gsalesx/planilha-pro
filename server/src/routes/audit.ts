@@ -980,6 +980,20 @@ const XLSX_STATUS_MAP: Record<string, string> = {
   'devolucao / reembolso': 'TO_RETURN',
   'devolucao/reembolso': 'TO_RETURN',
   'em disputa': 'IN_CANCEL',
+  entregue: 'TO_CONFIRM_RECEIVE',
+}
+
+/**
+ * "O comprador pode pedir uma devolução até DD-MM-AAAA" — texto do export de "Todos os
+ * pedidos" pro pedido entregue mas ainda dentro da janela de contestação (mesmo status que
+ * "Entregue"; a data no fim muda por pedido, então não dá pra casar por igualdade no mapa acima).
+ */
+const XLSX_STATUS_PREFIX_RETURN_WINDOW = normalizeHeader('o comprador pode pedir uma devolucao')
+
+function mapXlsxStatus(statusNorm: string): string | undefined {
+  if (XLSX_STATUS_MAP[statusNorm]) return XLSX_STATUS_MAP[statusNorm]
+  if (statusNorm.startsWith(XLSX_STATUS_PREFIX_RETURN_WINDOW)) return 'TO_CONFIRM_RECEIVE'
+  return undefined
 }
 
 /**
@@ -1063,7 +1077,7 @@ router.post('/audit/importar-pedidos-xlsx', requireAuth, uploadXlsx.single('file
     const primeira = linhas[0]
     const statusBruto = String(primeira[idxStatus] ?? '').trim()
     const statusNorm = normalizeHeader(statusBruto)
-    const status = XLSX_STATUS_MAP[statusNorm]
+    const status = mapXlsxStatus(statusNorm)
     if (!status) statusNaoMapeados.set(statusBruto, (statusNaoMapeados.get(statusBruto) ?? 0) + 1)
 
     const item_list: ShopeeItemRow[] = linhas.map((row) => ({
