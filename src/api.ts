@@ -280,6 +280,47 @@ export async function syncShopeeWorkbook(
   })
 }
 
+export interface ImportShopeeOrdersXlsxResult {
+  ok: boolean
+  aplicado: boolean
+  workbookId: string
+  totalPedidosNoXlsx: number
+  pedidosNovos?: number
+  idsNovos?: string[]
+  pedidosJaExistentes?: number
+  pedidosComMultiplosItens?: number
+  pedidosComAlgumaUnidadeMultipla?: number
+  statusNaoMapeados?: Record<string, number>
+  created?: number
+  updated?: number
+  unchanged?: number
+  errors?: string[]
+  aviso?: string
+}
+
+/** Export bruto do Seller Center (Pedidos > Exportar) — dry-run por padrão; `aplicar` grava no banco. */
+export async function importShopeeOrdersXlsx(
+  file: File,
+  options?: { workbookId?: string; aplicar?: boolean },
+): Promise<ImportShopeeOrdersXlsxResult> {
+  const body = new FormData()
+  body.append('file', file)
+  const params = new URLSearchParams()
+  if (options?.workbookId) params.set('workbookId', options.workbookId)
+  if (options?.aplicar) params.set('aplicar', '1')
+  const qs = params.toString()
+  const response = await fetch(
+    `${API_BASE}/audit/importar-pedidos-xlsx${qs ? `?${qs}` : ''}`,
+    { method: 'POST', credentials: 'include', body },
+  )
+  if (response.status === 401) throw new AuthRequiredError()
+  const detail = await response.json().catch(() => ({ error: response.statusText }))
+  if (!response.ok) {
+    throw new Error(detail.error ?? `HTTP ${response.status}`)
+  }
+  return detail as ImportShopeeOrdersXlsxResult
+}
+
 /** Sincronização manual — mesma rotina do poll de 8h, sob demanda. */
 export async function syncShopeeNow(): Promise<{
   ok: boolean

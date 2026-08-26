@@ -20,6 +20,7 @@ import {
   sendMarketplacePreview,
   startMarketplaceConversation,
   fetchShippingLabel,
+  importShopeeOrdersXlsx,
   type OrderStyleDelta,
 } from './api'
 import {
@@ -44,6 +45,7 @@ import { showWorkbooksList } from './workbooks-list'
 import {
   channelOfWorkbook,
   isMarketplaceWorkbookId,
+  isShopeeWorkbookId,
   marketplaceDef,
   marketplaceStatusMatchValues,
 } from './shopee-workbook'
@@ -106,6 +108,10 @@ function buildShell() {
           <label class="btn" id="xlsx-photos-label" title="Atualiza só as fotos a partir de um XLSX, casando por ID do pedido. Pedidos sem match são ignorados.">
             <input type="file" id="photos-input" accept=".xlsx,.xls" hidden />
             🖼 Atualizar Fotos
+          </label>
+          <label class="btn btn-primary" id="shopee-xlsx-import-label" hidden title="Importa o XLSX exportado no Seller Center (Pedidos > Exportar). Cria pedidos novos e atualiza nome, status Shopee e itens dos existentes.">
+            <input type="file" id="shopee-xlsx-input" accept=".xlsx,.xls" hidden />
+            ⟳ Importar XLSX Shopee
           </label>
           <button type="button" class="btn btn-primary" id="shopee-link-conversations-btn" hidden title="Cruza username da col E com to_name do chat Shopee e grava conversation_id (não altera a planilha)">
             💬 Vincular conversas Shopee
@@ -1486,6 +1492,105 @@ function bindPhotosInput() {
   })
 }
 
+function formatStatusNaoMapeados(map: Record<string, number> | undefined): string {
+  if (!map) return ''
+  const entries = Object.entries(map)
+  if (!entries.length) return ''
+  return entries.map(([status, qtd]) => `• ${status} (${qtd})`).join('\n')
+}
+
+function bindShopeeXlsxImport() {
+  const input = document.querySelector<HTMLInputElement>('#shopee-xlsx-input')
+  if (!input) return
+  input.addEventListener('change', () => {
+    const file = input.files?.[0]
+    input.value = ''
+    if (file) void importShopeeXlsxFromFile(file)
+  })
+}
+
+async function importShopeeXlsxFromFile(file: File) {
+  if (!currentWorkbookId || !isShopeeWorkbookId(currentWorkbookId)) return
+  const workbookId = currentWorkbookId
+  setStatusText('Conferindo XLSX do Seller Center…')
+  setShopeeActionBanner('Conferindo export da Shopee…', 'loading')
+  try {
+    const preview = await importShopeeOrdersXlsx(file, { workbookId })
+    const naoMapeados = formatStatusNaoMapeados(preview.statusNaoMapeados)
+    if (naoMapeados) {
+      setShopeeActionBanner('Importação cancelada — status não reconhecidos no XLSX', 'error')
+      openAlertDialog({
+        title: 'Status não reconhecidos',
+        body: `O export tem status que ainda não estão mapeados. Avise quem mantém o sistema antes de importar.\n\n${naoMapeados}`,
+      })
+      setStatusText('Importação cancelada — status não mapeados')
+      return
+    }
+
+    const novos = preview.pedidosNovos ?? 0
+    const existentes = preview.pedidosJaExistentes ?? 0
+    const amostraNovos = (preview.idsNovos ?? []).slice(0, 8).join(', ')
+    const corpo = [
+      `${preview.totalPedidosNoXlsx} pedidos no arquivo`,
+      `${novos} novos · ${existentes} já existentes`,
+      '',
+      'Novos serão criados; existentes atualizam destinatário (G), status Shopee (H) e itens.',
+      'Status interno, fotos e etiquetas são preservados.',
+    ]
+    if (amostraNovos) {
+      corpo.push('', `Exemplos de novos: ${amostraNovos}${novos > 8 ? '…' : ''}`)
+    }
+
+    openConfirmDialog({
+      title: 'Importar XLSX da Shopee?',
+      body: corpo.join('\n'),
+      confirmLabel: 'Importar',
+      onConfirm: async () => {
+        setStatusText('Importando pedidos da Shopee…')
+        setShopeeActionBanner('Importando export da Shopee…', 'loading')
+        try {
+          const result = await withPollingPaused(async () =>
+            importShopeeOrdersXlsx(file, { workbookId, aplicar: true }),
+          )
+          await refreshFromServer({ force: true })
+          const erros = result.errors?.length ?? 0
+          const msg = `${result.created ?? 0} criados · ${result.updated ?? 0} atualizados · ${result.unchanged ?? 0} sem mudança${erros ? ` · ${erros} erro(s)` : ''}`
+          setStatusText(`Importação concluída — ${msg}`)
+          setShopeeActionBanner(`Importação concluída: ${msg}`, erros ? 'error' : 'success')
+          if (erros) {
+            openAlertDialog({
+              title: 'Importação com erros',
+              body: (result.errors ?? []).slice(0, 20).join('\n'),
+            })
+          }
+        } catch (error) {
+          if (error instanceof AuthRequiredError) {
+            handleApiError(error)
+            return
+          }
+          const msg = error instanceof Error ? error.message : String(error)
+          setStatusText(`Falha na importação: ${msg}`)
+          setShopeeActionBanner(`Falha na importação: ${msg}`, 'error')
+        }
+      },
+      onCancel: () => {
+        setShopeeActionBanner('', 'hidden')
+        setStatusText('Importação cancelada')
+      },
+    })
+    setStatusText(`${preview.totalPedidosNoXlsx} pedidos no XLSX — aguardando confirmação`)
+    setShopeeActionBanner('', 'hidden')
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      handleApiError(error)
+      return
+    }
+    const msg = error instanceof Error ? error.message : String(error)
+    setStatusText(`Falha ao ler XLSX: ${msg}`)
+    setShopeeActionBanner(`Falha ao ler XLSX: ${msg}`, 'error')
+  }
+}
+
 function bindDropZone() {
   const sheetRoot = el<HTMLDivElement>('#sheet-root')
   sheetRoot.addEventListener('dragover', (event) => {
@@ -1952,11 +2057,13 @@ function bindBaixarAprovados() {
 
 function applyMarketplaceWorkbookToolbar(workbookId: string) {
   const isMp = isMarketplaceWorkbookId(workbookId)
+  const isShopee = isShopeeWorkbookId(workbookId)
   setToolbarBtnVisible(document.querySelector('#baixar-aprovados-data-btn'), isMp)
   // "Vincular conversas" sai da barra (pedido do user), mas a FUNÇÃO continua:
   // passou a rodar sozinha junto do poll de 2h no servidor. Sem isso, comprador
   // novo nunca vincularia e o disparo automático o pularia como "sem chat".
   setToolbarBtnVisible(document.querySelector('#shopee-link-conversations-btn'), false)
+  setToolbarBtnVisible(document.querySelector('#shopee-xlsx-import-label'), isShopee)
   setToolbarBtnVisible(document.querySelector('#xlsx-update-label'), !isMp)
   setToolbarBtnVisible(document.querySelector('#xlsx-photos-label'), !isMp)
   setShopeeActionBanner('', 'hidden')
@@ -1997,6 +2104,7 @@ async function enterWorkbook(workbookId: string) {
   renderSheetLoading()
   bindFileInput()
   bindPhotosInput()
+  bindShopeeXlsxImport()
   bindDropZone()
   bindSearch()
   bindEtiquetas()
