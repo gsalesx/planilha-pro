@@ -18,7 +18,6 @@ import {
   clearShopeeBuyerChats,
   uploadImage,
   sendMarketplacePreview,
-  startMarketplaceConversation,
   fetchShippingLabel,
   importShopeeOrdersXlsx,
   type OrderStyleDelta,
@@ -921,19 +920,6 @@ function handleChatRequest(row: number, col: number) {
     openAlertDialog({ title: 'Chat Shopee', body: 'Não foi possível identificar o pedido desta linha.' })
     return
   }
-  const linked = grid?.getLinkedChatUsernames().has(buyerUsername.toLowerCase())
-  if (!linked) {
-    openConfirmDialog({
-      title: 'Chat Shopee',
-      body:
-        'Chat não vinculado ainda (comprador nunca mandou mensagem). Use "Vincular conversas Shopee" ' +
-        'na barra de ferramentas se ele já tiver conversado, ou clique em "Iniciar conversa" pra mandar ' +
-        'um "Oi" agora e abrir o chat.',
-      confirmLabel: 'Iniciar conversa',
-      onConfirm: () => startChatForRow(row, col, orderKey, buyerUsername),
-    })
-    return
-  }
   openChatPanelForRow(row, col, orderKey, cells, sheet, buyerUsername)
 }
 
@@ -989,29 +975,6 @@ function openChatPanelForRow(
     productImageUrl: sheet.rowProductImages?.[row] ?? '',
     onConfirmed: () => grid?.selectAndReveal(row, col),
   })
-}
-
-/** Manda "Oi" pro comprador via order_detail (sem precisar de chat prévio), religa
- * o cache local de chats vinculados e abre o painel de chat na sequência. */
-async function startChatForRow(
-  row: number,
-  col: number,
-  orderKey: string,
-  buyerUsername: string,
-): Promise<void> {
-  setStatusText('Iniciando conversa...')
-  try {
-    const channel = channelOfWorkbook(currentWorkbookId ?? '') ?? 'shopee'
-    await startMarketplaceConversation(channel, { orderKey })
-    await refreshLinkedBuyerChats()
-    setStatusText('Conversa iniciada')
-    const sheet = workbook?.sheets[workbook.sheetOrder[0]]
-    const cells = sheet?.rows[row]
-    if (!sheet || !cells) return
-    openChatPanelForRow(row, col, orderKey, cells, sheet, buyerUsername)
-  } catch (error) {
-    handleApiError(error, 'Falha ao iniciar conversa')
-  }
 }
 
 function getCurrentSelectedRows(): number[] {
