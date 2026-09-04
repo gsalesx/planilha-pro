@@ -109,6 +109,19 @@ export const MARKETPLACE_WORKBOOKS: readonly MarketplaceWorkbookDef[] = [
     minColumnCount: MP_MIN_COLS,
     defaultStatusFilter: 'ready_to_ship',
     statusFilterOptions: ML_STATUS_FILTER_OPTIONS,
+    // Col H grava "order.status/shipment.status" (ex. paid/ready_to_ship).
+    // O filtro casa o valor completo — não só o token isolado.
+    statusFilterMatch: {
+      paid: ['paid', 'paid/pending', 'paid/handling'],
+      ready_to_ship: [
+        'ready_to_ship',
+        'paid/ready_to_ship',
+        'paid/ready_to_print',
+      ],
+      shipped: ['shipped', 'paid/shipped'],
+      delivered: ['delivered', 'paid/delivered'],
+      cancelled: ['cancelled', 'cancelled/cancelled'],
+    },
   },
 ] as const
 

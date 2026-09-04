@@ -44,12 +44,13 @@ function formatSheetDate(isoOrMs: string | number): string {
 
 export const ML_PENDING_DATE_LABEL = 'Sem data de envio'
 
-function resolveSheetDate(order: MlOrder, shipment?: MlShipment | null): string {
+/**
+ * Data do `<select>` — prazo de envio (estimated_handling_limit), NUNCA data da venda
+ * (date_created). Espelha a regra da Shopee (ship_by_date). Sem prazo → aba provisória.
+ */
+function resolveSheetDate(_order: MlOrder, shipment?: MlShipment | null): string {
   const handlingDate = shipment?.shipping_option?.estimated_handling_limit?.date
   if (handlingDate) return formatSheetDate(handlingDate)
-  const readyToShip = shipment?.status_history?.date_ready_to_ship
-  if (readyToShip) return formatSheetDate(readyToShip)
-  if (order.date_created) return formatSheetDate(order.date_created)
   return ML_PENDING_DATE_LABEL
 }
 
