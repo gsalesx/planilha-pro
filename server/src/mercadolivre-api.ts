@@ -179,6 +179,18 @@ export async function getShipment(shippingId: number): Promise<MlShipment> {
   return apiCall('GET', `/shipments/${shippingId}`)
 }
 
+/** Prazo máximo de despacho (substitui estimated_handling_limit, deprecado em 2025-05). */
+export interface MlShipmentSla {
+  status?: string
+  service?: string
+  expected_date?: string
+  last_updated?: string
+}
+
+export async function getShipmentSla(shippingId: number): Promise<MlShipmentSla> {
+  return apiCall('GET', `/shipments/${shippingId}/sla`)
+}
+
 // ─── messages (packs) ───────────────────────────────────────────────────────
 
 export interface MlMessage {

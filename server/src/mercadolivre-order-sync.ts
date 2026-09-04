@@ -21,6 +21,7 @@ import { marketplaceUpsertOrder } from './marketplace-order-upsert.js'
 import {
   getOrder,
   getShipment,
+  getShipmentSla,
   searchOrders,
   type MlOrder,
   type MlShipment,
@@ -45,12 +46,18 @@ function formatSheetDate(isoOrMs: string | number): string {
 export const ML_PENDING_DATE_LABEL = 'Sem data de envio'
 
 /**
- * Data do `<select>` — prazo de envio (estimated_handling_limit), NUNCA data da venda
- * (date_created). Espelha a regra da Shopee (ship_by_date). Sem prazo → aba provisória.
+ * Data do `<select>` — prazo de despacho do vendedor, NUNCA data da venda.
+ * Preferência: GET /shipments/{id}/sla → expected_date (API atual).
+ * Fallback legado: estimated_handling_limit (deprecado 2025-05).
+ * Sem prazo → "Sem data de envio".
  */
-function resolveSheetDate(_order: MlOrder, shipment?: MlShipment | null): string {
-  const handlingDate = shipment?.shipping_option?.estimated_handling_limit?.date
-  if (handlingDate) return formatSheetDate(handlingDate)
+function resolveSheetDate(
+  shipment?: MlShipment | null,
+  slaExpectedDate?: string | null,
+): string {
+  if (slaExpectedDate) return formatSheetDate(slaExpectedDate)
+  const legacy = shipment?.shipping_option?.estimated_handling_limit?.date
+  if (legacy) return formatSheetDate(legacy)
   return ML_PENDING_DATE_LABEL
 }
 
@@ -133,6 +140,16 @@ async function fetchShipmentSafe(shippingId: number | undefined): Promise<MlShip
   }
 }
 
+async function fetchShipmentSlaExpectedDate(shippingId: number | undefined): Promise<string | null> {
+  if (!shippingId) return null
+  try {
+    const sla = await getShipmentSla(shippingId)
+    return sla.expected_date ?? null
+  } catch {
+    return null
+  }
+}
+
 export async function importMercadoLivreOrderById(
   orderId: number,
   ctx: { source?: AuditSource; runId?: string | null; rotina?: string } = {},
@@ -147,12 +164,16 @@ export async function importMercadoLivreOrderById(
         console.warn(`[ml-sync] detalhe vazio tentativa ${attempt + 1}/${retries.length}`, orderId)
         continue
       }
-      const shipment = await fetchShipmentSafe(order.shipping?.id)
+      const shippingId = order.shipping?.id
+      const [shipment, slaExpectedDate] = await Promise.all([
+        fetchShipmentSafe(shippingId),
+        fetchShipmentSlaExpectedDate(shippingId),
+      ])
       const { unitRows, productImageUrls } = mapMlOrderToUnitRows(order, shipment)
       return marketplaceUpsertOrder({
         workbookId: MERCADOLIVRE_WORKBOOK_ID,
         orderId: String(order.id),
-        sheetDate: resolveSheetDate(order, shipment),
+        sheetDate: resolveSheetDate(shipment, slaExpectedDate),
         unitRows,
         productImageUrls,
         applyInternalStatus,
@@ -193,12 +214,16 @@ export async function syncRecentMercadoLivreOrders(options: {
 
       for (const order of orders) {
         try {
-          const shipment = await fetchShipmentSafe(order.shipping?.id)
+          const shippingId = order.shipping?.id
+          const [shipment, slaExpectedDate] = await Promise.all([
+            fetchShipmentSafe(shippingId),
+            fetchShipmentSlaExpectedDate(shippingId),
+          ])
           const { unitRows, productImageUrls } = mapMlOrderToUnitRows(order, shipment)
           const action = marketplaceUpsertOrder({
             workbookId: MERCADOLIVRE_WORKBOOK_ID,
             orderId: String(order.id ?? ''),
-            sheetDate: resolveSheetDate(order, shipment),
+            sheetDate: resolveSheetDate(shipment, slaExpectedDate),
             unitRows,
             productImageUrls,
             applyInternalStatus,
