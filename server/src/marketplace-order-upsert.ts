@@ -160,3 +160,19 @@ export function marketplaceUpsertOrder(input: MarketplaceUpsertInput): 'created'
   }
   return anyCreated ? 'created' : anyChanged ? 'updated' : 'unchanged'
 }
+
+/** Apaga linhas cujo `id` é um order.id antigo — usado ao fundir pack em um pedido só. */
+export function marketplaceDeleteOrdersById(workbookId: string, orderId: string): number {
+  if (!workbookId || !orderId) return 0
+  const keys = db
+    .prepare('SELECT order_key FROM orders WHERE workbook_id = ? AND id = ?')
+    .all(workbookId, orderId) as Array<{ order_key: string }>
+  if (keys.length === 0) return 0
+  const delPieces = db.prepare('DELETE FROM order_pieces WHERE workbook_id = ? AND order_key = ?')
+  for (const row of keys) delPieces.run(workbookId, row.order_key)
+  const info = db.prepare('DELETE FROM orders WHERE workbook_id = ? AND id = ?').run(workbookId, orderId)
+  if (info.changes > 0) {
+    db.prepare('UPDATE workbooks SET updated_at = ? WHERE id = ?').run(nowMs(), workbookId)
+  }
+  return info.changes
+}

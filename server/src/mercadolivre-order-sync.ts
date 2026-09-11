@@ -17,7 +17,7 @@ import {
   MP_INTERNAL_STATUS_SHIPPED,
   emptyMarketplaceRow,
 } from './marketplace-columns.js'
-import { marketplaceUpsertOrder } from './marketplace-order-upsert.js'
+import { marketplaceDeleteOrdersById, marketplaceUpsertOrder } from './marketplace-order-upsert.js'
 import {
   getOrder,
   getPack,
@@ -86,6 +86,7 @@ function applyInternalStatus(row: string[], marketplaceStatus: string): void {
 export function mapMlOrderToUnitRows(
   order: MlOrder,
   shipment?: MlShipment | null,
+  sheetOrderId?: string,
 ): { unitRows: string[][]; productImageUrls: (string | undefined)[] } {
   const items = order.order_items ?? []
   const recipientName =
@@ -94,7 +95,7 @@ export function mapMlOrderToUnitRows(
     ''
   const buyerNickname = order.buyer?.nickname ?? ''
   const mktStatus = resolveMarketplaceStatus(order, shipment)
-  const orderId = String(order.id ?? '')
+  const orderId = sheetOrderId || String(order.id ?? '')
 
   if (items.length === 0) {
     const row = emptyMarketplaceRow()
@@ -161,23 +162,100 @@ function isOrderNotFound(error: unknown): boolean {
   return msg.includes('404') || msg.includes('order_not_found')
 }
 
-/** Aceita order.id ou pack_id (número da venda no painel do ML). */
-async function resolveMlOrderIds(id: number): Promise<number[]> {
-  try {
-    const order = await getOrder(id)
-    if (order?.id) return [Number(order.id)]
-  } catch (error) {
-    if (!isOrderNotFound(error)) throw error
+function packMemberIds(pack: { orders?: Array<{ id?: number }> }): number[] {
+  return (pack.orders ?? []).map((o) => Number(o.id)).filter((n) => Number.isFinite(n) && n > 0)
+}
+
+type PackMemberCache = Map<string, number[]>
+
+async function memberIdsForOrder(order: MlOrder, cache: PackMemberCache): Promise<number[]> {
+  const self = Number(order.id)
+  if (!Number.isFinite(self) || self <= 0) return []
+  if (!order.pack_id) return [self]
+  const key = String(order.pack_id)
+  if (!cache.has(key)) {
+    try {
+      const ids = packMemberIds(await getPack(order.pack_id))
+      cache.set(key, ids.length > 0 ? ids : [self])
+    } catch {
+      cache.set(key, [self])
+    }
   }
-  const pack = await getPack(id)
-  const ids = (pack.orders ?? []).map((o) => Number(o.id)).filter((n) => Number.isFinite(n) && n > 0)
-  if (ids.length === 0) throw new Error(`Pack ${id} sem pedidos`)
-  return ids
+  return cache.get(key) ?? [self]
+}
+
+function sheetIdForMembers(order: MlOrder, memberIds: number[]): string {
+  if (memberIds.length >= 2 && order.pack_id) return String(order.pack_id)
+  return String(order.id ?? '')
+}
+
+async function loadOrdersByIds(ids: number[]): Promise<MlOrder[]> {
+  const out: MlOrder[] = []
+  for (const id of ids) {
+    try {
+      const order = await getOrder(id)
+      if (order?.id) out.push(order)
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      console.warn('[ml-sync] getOrder membro falhou', id, msg)
+    }
+  }
+  return out
+}
+
+async function upsertMlSale(
+  seed: MlOrder,
+  ctx: { source?: AuditSource; runId?: string | null; rotina?: string },
+  cache: PackMemberCache,
+): Promise<'created' | 'updated' | 'unchanged' | 'failed'> {
+  if (!seed.id) return 'failed'
+  const memberIds = await memberIdsForOrder(seed, cache)
+  const sheetId = sheetIdForMembers(seed, memberIds)
+  const orders = memberIds.length > 1 ? await loadOrdersByIds(memberIds) : [seed]
+  if (orders.length === 0) return 'failed'
+
+  const unitRows: string[][] = []
+  const productImageUrls: (string | undefined)[] = []
+  let sheetDate = ML_PENDING_DATE_LABEL
+
+  for (const order of orders) {
+    const shippingId = order.shipping?.id
+    const [shipment, slaExpectedDate] = await Promise.all([
+      fetchShipmentSafe(shippingId),
+      fetchShipmentSlaExpectedDate(shippingId),
+    ])
+    const mapped = mapMlOrderToUnitRows(order, shipment, sheetId)
+    unitRows.push(...mapped.unitRows)
+    productImageUrls.push(...mapped.productImageUrls)
+    const nextDate = resolveSheetDate(shipment, slaExpectedDate, order.manufacturing_ending_date)
+    if (sheetDate === ML_PENDING_DATE_LABEL) sheetDate = nextDate
+  }
+
+  if (unitRows.length === 0) return 'failed'
+
+  const action = marketplaceUpsertOrder({
+    workbookId: MERCADOLIVRE_WORKBOOK_ID,
+    orderId: sheetId,
+    sheetDate,
+    unitRows,
+    productImageUrls,
+    applyInternalStatus,
+    ...ctx,
+  })
+
+  if (memberIds.length >= 2) {
+    for (const id of memberIds) {
+      if (String(id) !== sheetId) marketplaceDeleteOrdersById(MERCADOLIVRE_WORKBOOK_ID, String(id))
+    }
+  }
+
+  return action
 }
 
 async function importSingleMlOrder(
   orderId: number,
   ctx: { source?: AuditSource; runId?: string | null; rotina?: string } = {},
+  cache: PackMemberCache = new Map(),
 ): Promise<'created' | 'updated' | 'unchanged' | 'failed'> {
   const retries = [0, 3000, 10000]
   for (let attempt = 0; attempt < retries.length; attempt++) {
@@ -188,21 +266,7 @@ async function importSingleMlOrder(
         console.warn(`[ml-sync] detalhe vazio tentativa ${attempt + 1}/${retries.length}`, orderId)
         continue
       }
-      const shippingId = order.shipping?.id
-      const [shipment, slaExpectedDate] = await Promise.all([
-        fetchShipmentSafe(shippingId),
-        fetchShipmentSlaExpectedDate(shippingId),
-      ])
-      const { unitRows, productImageUrls } = mapMlOrderToUnitRows(order, shipment)
-      return marketplaceUpsertOrder({
-        workbookId: MERCADOLIVRE_WORKBOOK_ID,
-        orderId: String(order.id),
-        sheetDate: resolveSheetDate(shipment, slaExpectedDate, order.manufacturing_ending_date),
-        unitRows,
-        productImageUrls,
-        applyInternalStatus,
-        ...ctx,
-      })
+      return upsertMlSale(order, ctx, cache)
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       console.warn(`[ml-sync] erro tentativa ${attempt + 1}/${retries.length}`, orderId, msg)
@@ -211,26 +275,29 @@ async function importSingleMlOrder(
   return 'failed'
 }
 
+/** Aceita order.id ou pack_id (número da venda no painel do ML). Pack com 2+ pedidos vira 1 linha-pai + filhas. */
 export async function importMercadoLivreOrderById(
   orderId: number,
   ctx: { source?: AuditSource; runId?: string | null; rotina?: string } = {},
 ): Promise<'created' | 'updated' | 'unchanged' | 'failed'> {
   if (!orderId) return 'failed'
+  const cache: PackMemberCache = new Map()
   try {
-    const ids = await resolveMlOrderIds(orderId)
-    let anyCreated = false
-    let anyUpdated = false
-    let anyUnchanged = false
-    for (const id of ids) {
-      const action = await importSingleMlOrder(id, ctx)
-      if (action === 'created') anyCreated = true
-      else if (action === 'updated') anyUpdated = true
-      else if (action === 'unchanged') anyUnchanged = true
+    const order = await getOrder(orderId)
+    if (order?.id) return importSingleMlOrder(orderId, ctx, cache)
+  } catch (error) {
+    if (!isOrderNotFound(error)) {
+      const msg = error instanceof Error ? error.message : String(error)
+      console.warn('[ml-sync] resolve falhou', orderId, msg)
+      return 'failed'
     }
-    if (anyCreated) return 'created'
-    if (anyUpdated) return 'updated'
-    if (anyUnchanged) return 'unchanged'
-    return 'failed'
+  }
+  try {
+    const pack = await getPack(orderId)
+    const ids = packMemberIds(pack)
+    if (ids.length === 0) throw new Error(`Pack ${orderId} sem pedidos`)
+    cache.set(String(pack.id ?? orderId), ids)
+    return importSingleMlOrder(ids[0], ctx, cache)
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.warn('[ml-sync] resolve falhou', orderId, msg)
@@ -251,6 +318,8 @@ export async function syncRecentMercadoLivreOrders(options: {
   const result: MlSyncResult = { listed: 0, created: 0, updated: 0, errors: [] }
   let offset = 0
   const limit = 50
+  const packCache: PackMemberCache = new Map()
+  const processedSheets = new Set<string>()
 
   try {
     let hasMore = true
@@ -265,23 +334,16 @@ export async function syncRecentMercadoLivreOrders(options: {
 
       for (const order of orders) {
         try {
-          const shippingId = order.shipping?.id
-          const [shipment, slaExpectedDate] = await Promise.all([
-            fetchShipmentSafe(shippingId),
-            fetchShipmentSlaExpectedDate(shippingId),
-          ])
-          const { unitRows, productImageUrls } = mapMlOrderToUnitRows(order, shipment)
-          const action = marketplaceUpsertOrder({
-            workbookId: MERCADOLIVRE_WORKBOOK_ID,
-            orderId: String(order.id ?? ''),
-            sheetDate: resolveSheetDate(shipment, slaExpectedDate, order.manufacturing_ending_date),
-            unitRows,
-            productImageUrls,
-            applyInternalStatus,
+          if (!order.id) continue
+          const memberIds = await memberIdsForOrder(order, packCache)
+          const sheetId = sheetIdForMembers(order, memberIds)
+          if (processedSheets.has(sheetId)) continue
+          processedSheets.add(sheetId)
+          const action = await upsertMlSale(order, {
             source: options.ctx?.source ?? 'poll',
             runId: options.ctx?.runId ?? null,
             rotina: 'syncRecentMercadoLivreOrders',
-          })
+          }, packCache)
           if (action === 'created') result.created++
           else if (action === 'updated') result.updated++
         } catch (error) {
