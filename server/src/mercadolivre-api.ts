@@ -284,5 +284,6 @@ export async function fetchAllMlMessages(
     fromBuyer: (m.from?.user_id ?? 0) !== sellerId,
     quotedMessage: null,
   }))
+  messages.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
   return { messages, pages: 1, truncated: false }
 }
