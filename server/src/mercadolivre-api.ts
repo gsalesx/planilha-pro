@@ -197,7 +197,8 @@ export interface MlMessage {
   id?: string
   from?: { user_id?: number; email?: string }
   to?: { user_id?: number }
-  text?: string
+  /** API nova devolve string; formato antigo pode vir `{ plain }`. */
+  text?: string | { plain?: string }
   message_date?: { created?: string }
   message_attachments?: Array<{ filename?: string; original_filename?: string; type?: string }>
   status?: string
@@ -205,7 +206,16 @@ export interface MlMessage {
 
 export interface MlMessagesResponse {
   paging?: { total?: number; offset?: number; limit?: number }
+  /** Formato oficial: `messages`. `results` fica de fallback. */
+  messages?: MlMessage[]
   results?: MlMessage[]
+}
+
+function mlMessageText(m: MlMessage): string {
+  const t = m.text
+  if (typeof t === 'string') return t
+  if (t && typeof t === 'object' && typeof t.plain === 'string') return t.plain
+  return ''
 }
 
 export async function getPackMessages(
@@ -249,13 +259,13 @@ export async function fetchAllMlMessages(
   truncated: boolean
 }> {
   const resp = await getPackMessages(packId, sellerId)
-  const raw = resp.results ?? []
+  const raw = resp.messages ?? resp.results ?? []
   const messages = raw.map((m) => ({
     id: m.id ?? '',
     fromId: m.from?.user_id ?? 0,
     toId: m.to?.user_id ?? 0,
     type: 'text' as const,
-    text: m.text ?? '',
+    text: mlMessageText(m),
     imageUrl: null,
     createdAt: m.message_date?.created ? new Date(m.message_date.created).getTime() : null,
     fromBuyer: (m.from?.user_id ?? 0) !== sellerId,
