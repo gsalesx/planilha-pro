@@ -235,16 +235,23 @@ function isMlImageAttachment(att: { filename?: string; original_filename?: strin
   return Boolean(String(att.filename ?? '').trim())
 }
 
-function firstMlImageAttachmentId(m: MlMessage): string | null {
+function mlImageAttachmentIds(m: MlMessage): string[] {
+  const ids: string[] = []
+  const seen = new Set<string>()
+  const add = (id: string) => {
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    ids.push(id)
+  }
   for (const att of m.message_attachments ?? []) {
     const id = String(att.filename ?? '').trim()
-    if (id && isMlImageAttachment(att)) return id
+    if (id && isMlImageAttachment(att)) add(id)
   }
   for (const raw of m.attachments ?? []) {
     const id = String(raw).trim()
-    if (id && isMlImageAttachment({ filename: id })) return id
+    if (id && isMlImageAttachment({ filename: id })) add(id)
   }
-  return null
+  return ids
 }
 
 export function mlChatAttachmentUrl(attachmentId: string): string {
@@ -324,19 +331,34 @@ export async function fetchAllMlMessages(
 }> {
   const resp = await getPackMessages(packId, sellerId)
   const raw = resp.messages ?? resp.results ?? []
-  const messages = raw.map((m) => {
-    const attachmentId = firstMlImageAttachmentId(m)
-    return {
-      id: m.id ?? '',
+  const messages = raw.flatMap((m) => {
+    const attachmentIds = mlImageAttachmentIds(m)
+    const createdAt = m.message_date?.created ? new Date(m.message_date.created).getTime() : null
+    const base = {
       fromId: m.from?.user_id ?? 0,
       toId: m.to?.user_id ?? 0,
-      type: attachmentId ? 'image' : 'text',
-      text: mlMessageText(m),
-      imageUrl: attachmentId ? mlChatAttachmentUrl(attachmentId) : null,
-      createdAt: m.message_date?.created ? new Date(m.message_date.created).getTime() : null,
+      createdAt,
       fromBuyer: (m.from?.user_id ?? 0) !== sellerId,
-      quotedMessage: null,
+      quotedMessage: null as null,
     }
+    if (attachmentIds.length === 0) {
+      return [
+        {
+          ...base,
+          id: m.id ?? '',
+          type: 'text',
+          text: mlMessageText(m),
+          imageUrl: null,
+        },
+      ]
+    }
+    return attachmentIds.map((attachmentId, i) => ({
+      ...base,
+      id: i === 0 ? (m.id ?? attachmentId) : `${m.id ?? 'att'}:${attachmentId}`,
+      type: 'image',
+      text: i === 0 ? mlMessageText(m) : '',
+      imageUrl: mlChatAttachmentUrl(attachmentId),
+    }))
   })
   messages.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
   return { messages, pages: 1, truncated: false }
