@@ -2,6 +2,9 @@
  * Mercado Livre Open Platform — OAuth, orders, messages.
  * BR: auth em mercadolivre.com.br, API em api.mercadolibre.com (espanhol no domínio).
  */
+import { readFileSync } from 'node:fs'
+import { basename } from 'node:path'
+
 import { env } from './env.js'
 import {
   loadMercadoLivreAuth,
@@ -374,15 +377,43 @@ async function resolveMlToUserId(packId: string | number, sellerId: number): Pro
   return MLB_MESSAGE_AGENT_ID
 }
 
+export async function uploadMlAttachment(filePath: string): Promise<string> {
+  const auth = await ensureToken()
+  const name = basename(filePath).replace(/[\\/]/g, '_') || 'preview.jpg'
+  const bytes = new Uint8Array(readFileSync(filePath))
+  const mime = name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
+  const form = new FormData()
+  form.append('file', new Blob([bytes], { type: mime }), name)
+  const url = new URL('/messages/attachments', API_BASE)
+  url.searchParams.set('tag', 'post_sale')
+  url.searchParams.set('site_id', env.mlSiteId || 'MLB')
+  const res = await fetch(url.toString(), {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${auth.accessToken}` },
+    body: form,
+  })
+  if (!res.ok) throw new Error(`ML attachment upload ${res.status}: ${await res.text()}`)
+  const json = (await res.json()) as { id?: string }
+  if (!json.id) throw new Error(`ML attachment upload: ${JSON.stringify(json)}`)
+  return json.id
+}
+
 export async function sendPackMessage(
   packId: string | number,
   sellerId: number,
-  body: { text?: string },
+  body: { text?: string; attachments?: string[] },
 ): Promise<unknown> {
   const toUserId = await resolveMlToUserId(packId, sellerId)
+  const payload: Record<string, unknown> = {
+    from: { user_id: sellerId },
+    to: { user_id: toUserId },
+  }
+  if (body.text?.trim()) payload.text = body.text.trim()
+  if (body.attachments?.length) payload.attachments = body.attachments
+  if (!payload.text && !payload.attachments) throw new Error('text ou attachments obrigatório')
   return apiCall('POST', `/messages/packs/${packId}/sellers/${sellerId}`, {
     query: { tag: 'post_sale' },
-    body: { from: { user_id: sellerId }, to: { user_id: toUserId }, text: body.text },
+    body: payload,
   })
 }
 

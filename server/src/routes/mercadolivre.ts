@@ -2,9 +2,12 @@
  * Rotas Mercado Livre — chat, OAuth, sync, status.
  * Mesma shape de resposta que Shopee/TikTok pra compatibilidade com o client.
  */
+import { existsSync } from 'node:fs'
+
 import { Router, type Request, type Response } from 'express'
 
 import { requireAuth } from '../auth.js'
+import { db } from '../db.js'
 import { env } from '../env.js'
 import {
   buildMlAuthUrl,
@@ -13,6 +16,7 @@ import {
   fetchMlAttachment,
   mlConfigured,
   sendPackMessage,
+  uploadMlAttachment,
 } from '../mercadolivre-api.js'
 import {
   getBuyerChatByUsername,
@@ -199,11 +203,57 @@ router.post('/mercadolivre/messages/send', requireAuth, async (req, res) => {
 })
 
 /** POST /api/mercadolivre/messages/send-preview */
-router.post('/mercadolivre/messages/send-preview', requireAuth, async (_req, res) => {
-  res.status(501).json({
-    ok: false,
-    error: 'Envio de imagem pelo chat do Mercado Livre não suportado pela API de mensagens. Use o painel do ML.',
-  })
+router.post('/mercadolivre/messages/send-preview', requireAuth, async (req, res) => {
+  if (!mlConfigured()) {
+    res.status(400).json({ error: 'Mercado Livre não configurado' })
+    return
+  }
+  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : ''
+  const workbookId = typeof req.body?.workbookId === 'string' ? req.body.workbookId.trim() : ''
+  const orderKey = typeof req.body?.orderKey === 'string' ? req.body.orderKey.trim() : ''
+  const col = Number(req.body?.col)
+  if (!username) {
+    res.status(400).json({ error: 'username obrigatório' })
+    return
+  }
+  if (!workbookId || !orderKey) {
+    res.status(400).json({ error: 'workbookId e orderKey obrigatórios' })
+    return
+  }
+  if (!Number.isFinite(col) || col < 0) {
+    res.status(400).json({ error: 'col inválida' })
+    return
+  }
+  const chat = getBuyerChatByUsername(username)
+  if (!chat) {
+    res.status(404).json({ error: 'Chat não vinculado' })
+    return
+  }
+  const img = db
+    .prepare('SELECT storage_path FROM images WHERE workbook_id = ? AND order_id = ? AND col = ?')
+    .get(workbookId, orderKey, col) as { storage_path: string } | undefined
+  if (!img?.storage_path || !existsSync(img.storage_path)) {
+    res.status(404).json({ error: 'Imagem não encontrada' })
+    return
+  }
+  const auth = loadMercadoLivreAuth()
+  if (!auth?.userId) {
+    res.status(400).json({ error: 'ML não autenticado' })
+    return
+  }
+  try {
+    const attachmentId = await uploadMlAttachment(img.storage_path)
+    const data = await sendPackMessage(chat.packId, auth.userId, {
+      text: 'Prévia',
+      attachments: [attachmentId],
+    })
+    res.json({ ok: true, data, attachmentId })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao enviar prévia',
+    })
+  }
 })
 
 /** POST /api/mercadolivre/messages/start-conversation */

@@ -443,9 +443,10 @@ export function openPreviewPickerDialog(opts: {
         } else {
           close()
         }
-      } catch {
+      } catch (error) {
         btn.disabled = false
         btn.textContent = 'Enviar prévia'
+        alert(`Falha ao enviar: ${(error as Error).message}`)
       }
     })
     card.appendChild(btn)
