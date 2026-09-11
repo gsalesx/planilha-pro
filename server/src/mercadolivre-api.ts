@@ -319,9 +319,10 @@ export async function sendPackMessage(
   sellerId: number,
   body: { text?: string },
 ): Promise<unknown> {
+  // BR desde 2026-02: to.user_id é o agente MLB, não o comprador.
   return apiCall('POST', `/messages/packs/${packId}/sellers/${sellerId}`, {
     query: { tag: 'post_sale' },
-    body: { from: { user_id: sellerId }, to: {}, text: body.text },
+    body: { from: { user_id: sellerId }, to: { user_id: 3037675074 }, text: body.text },
   })
 }
 
