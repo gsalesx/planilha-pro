@@ -16,6 +16,7 @@ import {
   updatePiece,
   type PiecePatch,
 } from '../pieces.js'
+import { fetchMlAttachment } from '../mercadolivre-api.js'
 import { normalizeGenero, normalizeTamanho, type PecaTipo } from '../sku-rules.js'
 
 const router = Router()
@@ -56,7 +57,28 @@ function sleep(ms: number): Promise<void> {
  */
 const CDN_TIMEOUT_MS = 5_000
 
+function mlAttachmentIdFromPendingUrl(url: string): string | null {
+  const pathOnly = /^https?:\/\//i.test(url)
+    ? (() => {
+        try {
+          return new URL(url).pathname
+        } catch {
+          return url
+        }
+      })()
+    : url
+  const m = pathOnly.match(/\/api\/mercadolivre\/attachments\/([^/?#]+)/i)
+  return m ? decodeURIComponent(m[1]) : null
+}
+
 export async function fetchShopeeCdn(url: string): Promise<Response> {
+  const mlId = mlAttachmentIdFromPendingUrl(url)
+  if (mlId) {
+    const file = await fetchMlAttachment(mlId)
+    return new Response(new Uint8Array(file.body), {
+      headers: { 'content-type': file.contentType },
+    })
+  }
   const delaysMs = [0, 800, 2000, 5000]
   let lastError: Error | null = null
   for (let i = 0; i < delaysMs.length; i++) {
