@@ -206,6 +206,12 @@ export async function getShipmentSla(shippingId: number): Promise<MlShipmentSla>
 
 // ─── messages (packs) ───────────────────────────────────────────────────────
 
+export interface MlAttachment {
+  filename?: string
+  original_filename?: string
+  type?: string
+}
+
 export interface MlMessage {
   id?: string
   from?: { user_id?: number; email?: string }
@@ -213,8 +219,53 @@ export interface MlMessage {
   /** API nova devolve string; formato antigo pode vir `{ plain }`. */
   text?: string | { plain?: string }
   message_date?: { created?: string }
-  message_attachments?: Array<{ filename?: string; original_filename?: string; type?: string }>
+  message_attachments?: MlAttachment[]
+  /** Formato antigo: lista de ids de anexo. */
+  attachments?: string[]
   status?: string
+}
+
+const IMAGE_ATT_RE = /image|picture|jpe?g|png|gif|webp|heic|bmp/i
+const DOC_ATT_RE = /pdf|text\/plain|\.txt(\b|$)|application\/pdf/i
+
+function isMlImageAttachment(att: { filename?: string; original_filename?: string; type?: string }): boolean {
+  const blob = `${att.type ?? ''} ${att.filename ?? ''} ${att.original_filename ?? ''}`
+  if (DOC_ATT_RE.test(blob)) return false
+  if (IMAGE_ATT_RE.test(blob)) return true
+  return Boolean(String(att.filename ?? '').trim())
+}
+
+function firstMlImageAttachmentId(m: MlMessage): string | null {
+  for (const att of m.message_attachments ?? []) {
+    const id = String(att.filename ?? '').trim()
+    if (id && isMlImageAttachment(att)) return id
+  }
+  for (const raw of m.attachments ?? []) {
+    const id = String(raw).trim()
+    if (id && isMlImageAttachment({ filename: id })) return id
+  }
+  return null
+}
+
+export function mlChatAttachmentUrl(attachmentId: string): string {
+  return `/api/mercadolivre/attachments/${encodeURIComponent(attachmentId)}`
+}
+
+export async function fetchMlAttachment(
+  attachmentId: string,
+): Promise<{ body: Buffer; contentType: string }> {
+  const auth = await ensureToken()
+  const url = new URL(`/messages/attachments/${attachmentId}`, API_BASE)
+  url.searchParams.set('tag', 'post_sale')
+  url.searchParams.set('site_id', env.mlSiteId || 'MLB')
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${auth.accessToken}`, Accept: '*/*' },
+  })
+  if (!res.ok) {
+    throw new Error(`ML attachment ${res.status}: ${await res.text()}`)
+  }
+  const contentType = res.headers.get('content-type') || 'image/jpeg'
+  return { body: Buffer.from(await res.arrayBuffer()), contentType }
 }
 
 export interface MlMessagesResponse {
@@ -273,17 +324,20 @@ export async function fetchAllMlMessages(
 }> {
   const resp = await getPackMessages(packId, sellerId)
   const raw = resp.messages ?? resp.results ?? []
-  const messages = raw.map((m) => ({
-    id: m.id ?? '',
-    fromId: m.from?.user_id ?? 0,
-    toId: m.to?.user_id ?? 0,
-    type: 'text' as const,
-    text: mlMessageText(m),
-    imageUrl: null,
-    createdAt: m.message_date?.created ? new Date(m.message_date.created).getTime() : null,
-    fromBuyer: (m.from?.user_id ?? 0) !== sellerId,
-    quotedMessage: null,
-  }))
+  const messages = raw.map((m) => {
+    const attachmentId = firstMlImageAttachmentId(m)
+    return {
+      id: m.id ?? '',
+      fromId: m.from?.user_id ?? 0,
+      toId: m.to?.user_id ?? 0,
+      type: attachmentId ? 'image' : 'text',
+      text: mlMessageText(m),
+      imageUrl: attachmentId ? mlChatAttachmentUrl(attachmentId) : null,
+      createdAt: m.message_date?.created ? new Date(m.message_date.created).getTime() : null,
+      fromBuyer: (m.from?.user_id ?? 0) !== sellerId,
+      quotedMessage: null,
+    }
+  })
   messages.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
   return { messages, pages: 1, truncated: false }
 }

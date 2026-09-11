@@ -10,6 +10,7 @@ import {
   buildMlAuthUrl,
   exchangeAuthCode,
   fetchAllMlMessages,
+  fetchMlAttachment,
   mlConfigured,
   sendPackMessage,
 } from '../mercadolivre-api.js'
@@ -97,6 +98,31 @@ router.post('/mercadolivre/sync', requireAuth, async (req, res) => {
 /** GET /api/mercadolivre/buyer-chats */
 router.get('/mercadolivre/buyer-chats', requireAuth, (_req, res) => {
   res.json({ ok: true, usernames: listLinkedBuyerUsernames() })
+})
+
+/** GET /api/mercadolivre/attachments/:attachmentId — proxy autenticado do anexo ML */
+router.get('/mercadolivre/attachments/:attachmentId', requireAuth, async (req, res) => {
+  if (!mlConfigured()) {
+    res.status(400).json({ error: 'Mercado Livre não configurado' })
+    return
+  }
+  const attachmentId =
+    typeof req.params.attachmentId === 'string' ? req.params.attachmentId.trim() : ''
+  if (!attachmentId) {
+    res.status(400).json({ error: 'attachmentId obrigatório' })
+    return
+  }
+  try {
+    const file = await fetchMlAttachment(attachmentId)
+    res.setHeader('Content-Type', file.contentType)
+    res.setHeader('Cache-Control', 'private, max-age=3600')
+    res.send(file.body)
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao baixar anexo',
+    })
+  }
 })
 
 /** GET /api/mercadolivre/chat-history?username= */
