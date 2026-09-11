@@ -315,27 +315,29 @@ export async function sendPackMessage(
 
 // ─── fetch all messages (shape compatível com Shopee/TikTok) ────────────────
 
+type MlChatMessage = {
+  id: string
+  fromId: number
+  toId: number
+  type: string
+  text: string
+  imageUrl: string | null
+  createdAt: number | null
+  fromBuyer: boolean
+  quotedMessage: null
+}
+
 export async function fetchAllMlMessages(
   packId: string | number,
   sellerId: number,
 ): Promise<{
-  messages: Array<{
-    id: string
-    fromId: number
-    toId: number
-    type: string
-    text: string
-    imageUrl: string | null
-    createdAt: number | null
-    fromBuyer: boolean
-    quotedMessage: null
-  }>
+  messages: MlChatMessage[]
   pages: number
   truncated: boolean
 }> {
   const resp = await getPackMessages(packId, sellerId)
-  const raw = resp.messages ?? resp.results ?? []
-  const messages = raw.flatMap((m) => {
+  const raw: MlMessage[] = resp.messages ?? resp.results ?? []
+  const messages = raw.flatMap((m): MlChatMessage[] => {
     const attachmentIds = mlImageAttachmentIds(m)
     const createdAt = m.message_date?.created ? new Date(m.message_date.created).getTime() : null
     const base = {
