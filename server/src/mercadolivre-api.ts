@@ -346,15 +346,43 @@ export async function getPackMessages(
   })
 }
 
+/** Agente MLB da arquitetura nova (desde 2026-02). Packs ainda não migrados recusam esse id. */
+const MLB_MESSAGE_AGENT_ID = 3037675074
+
+async function resolveMlToUserId(packId: string | number, sellerId: number): Promise<number> {
+  try {
+    const resp = await getPackMessages(packId, sellerId)
+    const raw = resp.messages ?? resp.results ?? []
+    const others = new Set<number>()
+    for (const m of raw) {
+      for (const id of [m.from?.user_id, m.to?.user_id]) {
+        if (id && id !== sellerId) others.add(id)
+      }
+    }
+    if (others.has(MLB_MESSAGE_AGENT_ID)) return MLB_MESSAGE_AGENT_ID
+    const first = others.values().next().value
+    if (typeof first === 'number') return first
+  } catch {
+    // segue fallback
+  }
+  try {
+    const order = await getOrder(Number(packId))
+    if (order.buyer?.id && order.buyer.id !== sellerId) return order.buyer.id
+  } catch {
+    // pack_id ≠ order.id
+  }
+  return MLB_MESSAGE_AGENT_ID
+}
+
 export async function sendPackMessage(
   packId: string | number,
   sellerId: number,
   body: { text?: string },
 ): Promise<unknown> {
-  // BR desde 2026-02: to.user_id é o agente MLB, não o comprador.
+  const toUserId = await resolveMlToUserId(packId, sellerId)
   return apiCall('POST', `/messages/packs/${packId}/sellers/${sellerId}`, {
     query: { tag: 'post_sale' },
-    body: { from: { user_id: sellerId }, to: { user_id: 3037675074 }, text: body.text },
+    body: { from: { user_id: sellerId }, to: { user_id: toUserId }, text: body.text },
   })
 }
 
