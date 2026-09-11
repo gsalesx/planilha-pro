@@ -19,6 +19,7 @@ import {
 } from './marketplace-columns.js'
 import { marketplaceDeleteOrdersById, marketplaceUpsertOrder } from './marketplace-order-upsert.js'
 import {
+  fetchMlItemImageUrl,
   getOrder,
   getPack,
   getShipment,
@@ -138,11 +139,30 @@ function mlShopeeModel(item: MlOrderItem): string {
   return size
 }
 
-export function mapMlOrderToUnitRows(
+async function mlItemImageUrl(
+  item: MlOrderItem,
+  cache: Map<string, string | undefined>,
+): Promise<string | undefined> {
+  const itemId = String(item.item?.id ?? '').trim()
+  if (!itemId) return undefined
+  const key = `${itemId}:${item.item?.variation_id ?? ''}`
+  if (cache.has(key)) return cache.get(key)
+  try {
+    const url = await fetchMlItemImageUrl(itemId, item.item?.variation_id)
+    cache.set(key, url)
+    return url
+  } catch {
+    cache.set(key, undefined)
+    return undefined
+  }
+}
+
+export async function mapMlOrderToUnitRows(
   order: MlOrder,
   shipment?: MlShipment | null,
   sheetOrderId?: string,
-): { unitRows: string[][]; productImageUrls: (string | undefined)[] } {
+  imageCache: Map<string, string | undefined> = new Map(),
+): Promise<{ unitRows: string[][]; productImageUrls: (string | undefined)[] }> {
   const items = order.order_items ?? []
   const recipientName =
     shipment?.receiver_address?.receiver_name ??
@@ -165,6 +185,7 @@ export function mapMlOrderToUnitRows(
   const productImageUrls: (string | undefined)[] = []
 
   for (const item of items) {
+    const imageUrl = await mlItemImageUrl(item, imageCache)
     const qty = Math.max(1, item.quantity ?? 1)
     for (let u = 0; u < qty; u++) {
       const row = emptyMarketplaceRow()
@@ -176,7 +197,7 @@ export function mapMlOrderToUnitRows(
       row[MP_COL_RECIPIENT] = recipientName
       row[MP_COL_MARKETPLACE_STATUS] = mktStatus
       unitRows.push(row)
-      productImageUrls.push(undefined)
+      productImageUrls.push(imageUrl)
     }
   }
   return { unitRows, productImageUrls }
@@ -271,6 +292,7 @@ async function upsertMlSale(
 
   const unitRows: string[][] = []
   const productImageUrls: (string | undefined)[] = []
+  const imageCache = new Map<string, string | undefined>()
   let sheetDate = ML_PENDING_DATE_LABEL
 
   for (const order of orders) {
@@ -279,7 +301,7 @@ async function upsertMlSale(
       fetchShipmentSafe(shippingId),
       fetchShipmentSlaExpectedDate(shippingId),
     ])
-    const mapped = mapMlOrderToUnitRows(order, shipment, sheetId)
+    const mapped = await mapMlOrderToUnitRows(order, shipment, sheetId, imageCache)
     unitRows.push(...mapped.unitRows)
     productImageUrls.push(...mapped.productImageUrls)
     const nextDate = resolveSheetDate(shipment, slaExpectedDate, order.manufacturing_ending_date)

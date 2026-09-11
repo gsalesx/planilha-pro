@@ -176,6 +176,38 @@ export async function getOrder(orderId: number): Promise<MlOrder> {
   return apiCall('GET', `/orders/${orderId}`)
 }
 
+function mlHttps(url?: string | null): string | undefined {
+  const u = String(url ?? '').trim()
+  if (!u) return undefined
+  return u.replace(/^http:\/\//i, 'https://')
+}
+
+/** Foto pública do anúncio (CDN). Pedido não traz imagem — precisa do GET /items. */
+export async function fetchMlItemImageUrl(
+  itemId: string,
+  variationId?: number | null,
+): Promise<string | undefined> {
+  const item = await apiCall<{
+    secure_thumbnail?: string
+    thumbnail?: string
+    pictures?: Array<{ id?: string; secure_url?: string; url?: string }>
+    variations?: Array<{ id?: number; picture_ids?: string[] }>
+  }>('GET', `/items/${encodeURIComponent(itemId)}`)
+
+  if (variationId) {
+    const variation = item.variations?.find((v) => v.id === variationId)
+    const picId = variation?.picture_ids?.[0]
+    if (picId) {
+      const pic = item.pictures?.find((p) => p.id === picId)
+      const fromVariation = mlHttps(pic?.secure_url || pic?.url)
+      if (fromVariation) return fromVariation
+    }
+  }
+
+  const first = item.pictures?.[0]
+  return mlHttps(first?.secure_url || first?.url || item.secure_thumbnail || item.thumbnail)
+}
+
 export interface MlPack {
   id?: number
   status?: string
