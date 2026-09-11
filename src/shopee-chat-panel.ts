@@ -1149,11 +1149,14 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
             const print = await cortarPrintCanvas(painelPreview ?? blob, Math.max(1, nFotos))
             const fd = new FormData()
             fd.append('image', print, 'print.jpg')
-            const r = await fetch(`/api/pieces/${p.id}/print-upload`, {
-              method: 'POST',
-              credentials: 'include',
-              body: fd,
-            })
+            const r = await fetch(
+              `/api/pieces/${p.id}/print-upload?workbookId=${encodeURIComponent(order.workbookId)}`,
+              {
+                method: 'POST',
+                credentials: 'include',
+                body: fd,
+              },
+            )
             const up = (await r.json().catch(() => ({}))) as { error?: string; col?: number }
             if (!r.ok) throw new Error(up.error ?? `HTTP ${r.status}`)
             previas.push({ orderKey: p.orderKey ?? order.orderKey, col: up.col ?? 8, label: labelDoMolde(p.molde) })
