@@ -20,6 +20,7 @@ import {
 import { marketplaceUpsertOrder } from './marketplace-order-upsert.js'
 import {
   getOrder,
+  getPack,
   getShipment,
   getShipmentSla,
   searchOrders,
@@ -150,11 +151,29 @@ async function fetchShipmentSlaExpectedDate(shippingId: number | undefined): Pro
   }
 }
 
-export async function importMercadoLivreOrderById(
+function isOrderNotFound(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error)
+  return msg.includes('404') || msg.includes('order_not_found')
+}
+
+/** Aceita order.id ou pack_id (número da venda no painel do ML). */
+async function resolveMlOrderIds(id: number): Promise<number[]> {
+  try {
+    const order = await getOrder(id)
+    if (order?.id) return [Number(order.id)]
+  } catch (error) {
+    if (!isOrderNotFound(error)) throw error
+  }
+  const pack = await getPack(id)
+  const ids = (pack.orders ?? []).map((o) => Number(o.id)).filter((n) => Number.isFinite(n) && n > 0)
+  if (ids.length === 0) throw new Error(`Pack ${id} sem pedidos`)
+  return ids
+}
+
+async function importSingleMlOrder(
   orderId: number,
   ctx: { source?: AuditSource; runId?: string | null; rotina?: string } = {},
 ): Promise<'created' | 'updated' | 'unchanged' | 'failed'> {
-  if (!orderId) return 'failed'
   const retries = [0, 3000, 10000]
   for (let attempt = 0; attempt < retries.length; attempt++) {
     if (retries[attempt] > 0) await sleep(retries[attempt])
@@ -185,6 +204,33 @@ export async function importMercadoLivreOrderById(
     }
   }
   return 'failed'
+}
+
+export async function importMercadoLivreOrderById(
+  orderId: number,
+  ctx: { source?: AuditSource; runId?: string | null; rotina?: string } = {},
+): Promise<'created' | 'updated' | 'unchanged' | 'failed'> {
+  if (!orderId) return 'failed'
+  try {
+    const ids = await resolveMlOrderIds(orderId)
+    let anyCreated = false
+    let anyUpdated = false
+    let anyUnchanged = false
+    for (const id of ids) {
+      const action = await importSingleMlOrder(id, ctx)
+      if (action === 'created') anyCreated = true
+      else if (action === 'updated') anyUpdated = true
+      else if (action === 'unchanged') anyUnchanged = true
+    }
+    if (anyCreated) return 'created'
+    if (anyUpdated) return 'updated'
+    if (anyUnchanged) return 'unchanged'
+    return 'failed'
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    console.warn('[ml-sync] resolve falhou', orderId, msg)
+    return 'failed'
+  }
 }
 
 export const ML_POLL_LOOKBACK_HOURS = 48

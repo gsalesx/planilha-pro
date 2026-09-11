@@ -163,6 +163,19 @@ export async function getOrder(orderId: number): Promise<MlOrder> {
   return apiCall('GET', `/orders/${orderId}`)
 }
 
+export interface MlPack {
+  id?: number
+  status?: string
+  orders?: Array<{ id?: number }>
+  shipment?: { id?: number }
+  buyer?: { id?: number }
+}
+
+/** Pack = número da venda no painel. Pode conter 1+ pedidos (order.id). */
+export async function getPack(packId: number | string): Promise<MlPack> {
+  return apiCall('GET', `/packs/${packId}`)
+}
+
 // ─── shipment ───────────────────────────────────────────────────────────────
 
 export interface MlShipment {
