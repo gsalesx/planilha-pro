@@ -23,6 +23,8 @@ export interface MarketplaceUpsertInput {
   unitRows: string[][]
   productImageUrls?: (string | undefined)[]
   applyInternalStatus?: (row: string[], marketplaceStatus: string) => void
+  /** Se true, col B/C vêm da API (SKU/tamanho) e não ficam congeladas no 1º import. */
+  overwriteProductFields?: boolean
   source?: AuditSource
   runId?: string | null
   rotina?: string
@@ -110,9 +112,11 @@ export function marketplaceUpsertOrder(input: MarketplaceUpsertInput): 'created'
       while (prev.length < MP_ROW_COLS) prev.push('')
       row[MP_COL_INTERNAL_STATUS] = prev[MP_COL_INTERNAL_STATUS]
       row[MP_COL_ORDER_ID] = prev[MP_COL_ORDER_ID] || row[MP_COL_ORDER_ID]
-      row[MP_COL_PRODUCT] = prev[MP_COL_PRODUCT]
-      row[MP_COL_MODEL] = prev[MP_COL_MODEL]
-      row[MP_COL_QTY] = prev[MP_COL_QTY]
+      if (!input.overwriteProductFields) {
+        row[MP_COL_PRODUCT] = prev[MP_COL_PRODUCT]
+        row[MP_COL_MODEL] = prev[MP_COL_MODEL]
+        row[MP_COL_QTY] = prev[MP_COL_QTY]
+      }
       row[MP_COL_USERNAME] = prev[MP_COL_USERNAME]
       if (applyInternalStatus) applyInternalStatus(row, marketplaceStatus)
       const rowJson = JSON.stringify(row)

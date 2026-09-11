@@ -83,6 +83,18 @@ function applyInternalStatus(row: string[], marketplaceStatus: string): void {
   }
 }
 
+type MlOrderItem = NonNullable<MlOrder['order_items']>[number]
+
+function mlItemSku(item: MlOrderItem): string {
+  return String(item.item?.seller_sku || item.item?.seller_custom_field || '').trim()
+}
+
+function mlItemSize(item: MlOrderItem): string {
+  const attrs = item.item?.variation_attributes ?? []
+  const size = attrs.find((a) => a.id === 'SIZE' || /^tamanho$/i.test(String(a.name ?? '')))
+  return String(size?.value_name ?? '').trim()
+}
+
 export function mapMlOrderToUnitRows(
   order: MlOrder,
   shipment?: MlShipment | null,
@@ -114,8 +126,8 @@ export function mapMlOrderToUnitRows(
     for (let u = 0; u < qty; u++) {
       const row = emptyMarketplaceRow()
       row[MP_COL_ORDER_ID] = orderId
-      row[MP_COL_PRODUCT] = item.item?.seller_sku || item.item?.id || ''
-      row[MP_COL_MODEL] = item.item?.title ?? ''
+      row[MP_COL_PRODUCT] = mlItemSku(item)
+      row[MP_COL_MODEL] = mlItemSize(item)
       row[MP_COL_QTY] = '1'
       row[MP_COL_USERNAME] = buyerNickname
       row[MP_COL_RECIPIENT] = recipientName
@@ -240,6 +252,7 @@ async function upsertMlSale(
     unitRows,
     productImageUrls,
     applyInternalStatus,
+    overwriteProductFields: true,
     ...ctx,
   })
 

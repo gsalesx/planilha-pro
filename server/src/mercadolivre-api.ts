@@ -135,7 +135,19 @@ export interface MlOrder {
   manufacturing_ending_date?: string | null
   buyer?: { id?: number; nickname?: string; first_name?: string; last_name?: string }
   order_items?: Array<{
-    item?: { id?: string; title?: string; seller_sku?: string; variation_id?: number }
+    item?: {
+      id?: string
+      title?: string
+      seller_sku?: string
+      seller_custom_field?: string | null
+      variation_id?: number
+      variation_attributes?: Array<{
+        id?: string
+        name?: string
+        value_id?: string | null
+        value_name?: string
+      }>
+    }
     quantity?: number
     unit_price?: number
   }>
