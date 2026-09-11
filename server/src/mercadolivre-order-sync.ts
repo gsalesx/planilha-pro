@@ -48,15 +48,20 @@ export const ML_PENDING_DATE_LABEL = 'Sem data de envio'
 
 /**
  * Data do `<select>` — prazo de despacho do vendedor, NUNCA data da venda.
- * Preferência: GET /shipments/{id}/sla → expected_date (API atual).
- * Fallback legado: estimated_handling_limit (deprecado 2025-05).
+ * Preferência: GET /shipments/{id}/sla → expected_date.
+ * Sem SLA (ex. personalizado em manufacturing): manufacturing_ending_date
+ * ou estimated_schedule_limit. Fallback legado: estimated_handling_limit.
  * Sem prazo → "Sem data de envio".
  */
 function resolveSheetDate(
   shipment?: MlShipment | null,
   slaExpectedDate?: string | null,
+  manufacturingEndingDate?: string | null,
 ): string {
   if (slaExpectedDate) return formatSheetDate(slaExpectedDate)
+  if (manufacturingEndingDate) return formatSheetDate(manufacturingEndingDate)
+  const schedule = shipment?.shipping_option?.estimated_schedule_limit?.date
+  if (schedule) return formatSheetDate(schedule)
   const legacy = shipment?.shipping_option?.estimated_handling_limit?.date
   if (legacy) return formatSheetDate(legacy)
   return ML_PENDING_DATE_LABEL
@@ -192,7 +197,7 @@ async function importSingleMlOrder(
       return marketplaceUpsertOrder({
         workbookId: MERCADOLIVRE_WORKBOOK_ID,
         orderId: String(order.id),
-        sheetDate: resolveSheetDate(shipment, slaExpectedDate),
+        sheetDate: resolveSheetDate(shipment, slaExpectedDate, order.manufacturing_ending_date),
         unitRows,
         productImageUrls,
         applyInternalStatus,
@@ -269,7 +274,7 @@ export async function syncRecentMercadoLivreOrders(options: {
           const action = marketplaceUpsertOrder({
             workbookId: MERCADOLIVRE_WORKBOOK_ID,
             orderId: String(order.id ?? ''),
-            sheetDate: resolveSheetDate(shipment, slaExpectedDate),
+            sheetDate: resolveSheetDate(shipment, slaExpectedDate, order.manufacturing_ending_date),
             unitRows,
             productImageUrls,
             applyInternalStatus,

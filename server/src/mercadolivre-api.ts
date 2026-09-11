@@ -132,6 +132,7 @@ export interface MlOrder {
   status?: string
   date_created?: string
   date_closed?: string
+  manufacturing_ending_date?: string | null
   buyer?: { id?: number; nickname?: string; first_name?: string; last_name?: string }
   order_items?: Array<{
     item?: { id?: string; title?: string; seller_sku?: string; variation_id?: number }
@@ -184,7 +185,10 @@ export interface MlShipment {
   substatus?: string
   date_first_printed?: string | null
   receiver_address?: { receiver_name?: string; city?: { name?: string }; state?: { name?: string } }
-  shipping_option?: { estimated_handling_limit?: { date?: string } }
+  shipping_option?: {
+    estimated_handling_limit?: { date?: string }
+    estimated_schedule_limit?: { date?: string }
+  }
   status_history?: { date_ready_to_ship?: string; date_shipped?: string; date_delivered?: string }
 }
 
