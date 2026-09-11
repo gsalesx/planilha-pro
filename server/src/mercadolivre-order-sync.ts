@@ -95,6 +95,49 @@ function mlItemSize(item: MlOrderItem): string {
   return String(size?.value_name ?? '').trim()
 }
 
+function mlNorm(s: string): string {
+  return s.normalize('NFD').replace(/\p{M}/gu, '').toUpperCase().trim()
+}
+
+/** Gênero só do SKU ML — não altera o parser da Shopee. */
+function mlGenderLabel(sku: string): 'Masculino' | 'Feminino' | null {
+  const s = mlNorm(sku)
+  if (s.includes('FEMININO') || /(^|[-_\s])FEM($|[-_\s])/.test(s)) return 'Feminino'
+  if (s.includes('MASCULINO') || /(^|[-_\s])MASC($|[-_\s])/.test(s)) return 'Masculino'
+  if (s.includes('CUECA')) return 'Masculino'
+  return null
+}
+
+function mlSizeFromSku(sku: string): string {
+  const stripped = mlNorm(sku).replace(/[-_\s]+(FEMININO|MASCULINO|FEM|MASC)$/, '').trim()
+  const parts = stripped.split(/[-_]/).map((t) => t.trim()).filter(Boolean)
+  const last = parts[parts.length - 1] ?? ''
+  if (/^(P|M|G|GG)$/.test(last)) return last
+  if (parts.length >= 2 && last === 'ANOS' && /^\d{1,2}$/.test(parts[parts.length - 2])) {
+    return `${Number(parts[parts.length - 2])} anos`
+  }
+  return ''
+}
+
+function mlIsCamisolaOnly(sku: string): boolean {
+  const s = mlNorm(sku)
+  return s.includes('CAMISOLA') && !s.includes('SHORT') && !s.includes('CONJ')
+}
+
+/**
+ * Col C no formato que o parser da Shopee já entende.
+ * Camisola: "P". Short/conjunto: "P,Feminino" / "GG,Masculino".
+ */
+function mlShopeeModel(item: MlOrderItem): string {
+  const sku = mlItemSku(item)
+  const size = mlItemSize(item) || mlSizeFromSku(sku)
+  if (!size) return ''
+  if (mlIsCamisolaOnly(sku)) return size
+  const gender = mlGenderLabel(sku)
+  if (gender) return `${size},${gender}`
+  return size
+}
+
 export function mapMlOrderToUnitRows(
   order: MlOrder,
   shipment?: MlShipment | null,
@@ -127,7 +170,7 @@ export function mapMlOrderToUnitRows(
       const row = emptyMarketplaceRow()
       row[MP_COL_ORDER_ID] = orderId
       row[MP_COL_PRODUCT] = mlItemSku(item)
-      row[MP_COL_MODEL] = mlItemSize(item)
+      row[MP_COL_MODEL] = mlShopeeModel(item)
       row[MP_COL_QTY] = '1'
       row[MP_COL_USERNAME] = buyerNickname
       row[MP_COL_RECIPIENT] = recipientName
