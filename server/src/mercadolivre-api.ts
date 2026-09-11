@@ -377,10 +377,15 @@ async function resolveMlToUserId(packId: string | number, sellerId: number): Pro
   return MLB_MESSAGE_AGENT_ID
 }
 
-export async function uploadMlAttachment(filePath: string): Promise<string> {
+export async function uploadMlAttachment(
+  source: string | Buffer,
+  filename?: string,
+): Promise<string> {
   const auth = await ensureToken()
-  const name = basename(filePath).replace(/[\\/]/g, '_') || 'preview.jpg'
-  const bytes = new Uint8Array(readFileSync(filePath))
+  const name = (
+    filename ?? (typeof source === 'string' ? basename(source) : 'preview.jpg')
+  ).replace(/[\\/]/g, '_')
+  const bytes = new Uint8Array(typeof source === 'string' ? readFileSync(source) : source)
   const mime = name.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg'
   const form = new FormData()
   form.append('file', new Blob([bytes], { type: mime }), name)

@@ -5,6 +5,7 @@
 import { existsSync } from 'node:fs'
 
 import { Router, type Request, type Response } from 'express'
+import sharp from 'sharp'
 
 import { requireAuth } from '../auth.js'
 import { db } from '../db.js'
@@ -242,7 +243,13 @@ router.post('/mercadolivre/messages/send-preview', requireAuth, async (req, res)
     return
   }
   try {
-    const attachmentId = await uploadMlAttachment(img.storage_path)
+    // O print da planilha é 2000×1400 q86. O ML recomprime o anexo no chat e
+    // a prévia ficava bem pior que a célula. Sobe 2× / q95 só neste envio.
+    const hiRes = await sharp(img.storage_path)
+      .resize(4000, 2800, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
+      .jpeg({ quality: 95, chromaSubsampling: '4:4:4' })
+      .toBuffer()
+    const attachmentId = await uploadMlAttachment(hiRes, 'previa.jpg')
     const data = await sendPackMessage(chat.packId, auth.userId, {
       text: 'Prévia',
       attachments: [attachmentId],
