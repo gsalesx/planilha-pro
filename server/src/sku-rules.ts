@@ -85,6 +85,44 @@ function genderFromSku(sku: string): Genero | null {
   return null
 }
 
+/**
+ * Tamanho no sufixo do SKU, no mesmo padrão da Shopee:
+ * SHORT-P-FEMININO, SHORT CUECA-M, CAMISOLA-P, CONJUNTO UNITARIO-G-MASCULINO, CAMISOLA-6-ANOS.
+ */
+function sizeFromSku(sku: string): Tamanho | null {
+  const stripped = norm(sku)
+    .replace(/[-_\s]+(FEMININO|MASCULINO|FEM|MASC)$/, '')
+    .trim()
+  const parts = stripped.split(/[-_]/).map((t) => t.trim()).filter(Boolean)
+  if (parts.length === 0) return null
+  const last = parts[parts.length - 1]
+  const direto = normalizeTamanho(last)
+  if (direto) return direto
+  if (parts.length >= 2) return normalizeTamanho(`${parts[parts.length - 2]} ${last}`)
+  return null
+}
+
+function inferTamanho(sku: string, modelName: string): Tamanho | null {
+  const tokens = splitTokens(modelName, 2)
+  if (tokens) {
+    const t = normalizeTamanho(tokens[0])
+    if (t) return t
+  }
+  return normalizeTamanho(modelName) || sizeFromSku(sku)
+}
+
+function inferGenero(sku: string, modelName: string): Genero | null {
+  const tokens = splitTokens(modelName, 2)
+  if (tokens) {
+    const g = normalizeGenero(tokens[1])
+    if (g) return g
+  }
+  const fromSku = genderFromSku(sku)
+  if (fromSku) return fromSku
+  if (norm(sku).includes('CUECA')) return 'MASCULINO'
+  return null
+}
+
 export function generoAbrev(g: Genero): 'MASC' | 'FEM' {
   return g === 'MASCULINO' ? 'MASC' : 'FEM'
 }
@@ -129,11 +167,10 @@ function splitTokens(modelName: string, expected: number): string[] | null {
   return tokens.length === expected ? tokens : null
 }
 
-function parseCamisola(modelName: string): ParseResult {
-  const tokens = splitTokens(modelName, 1)
-  const tamanho = tokens && normalizeTamanho(tokens[0])
-  if (!tokens || !tamanho) {
-    return { ok: false, reason: `CAMISOLA: esperado 1 tamanho (ex. "P"), veio "${modelName}"` }
+function parseCamisola(modelName: string, sku: string): ParseResult {
+  const tamanho = inferTamanho(sku, modelName)
+  if (!tamanho) {
+    return { ok: false, reason: `CAMISOLA: esperado 1 tamanho (ex. "P" ou SKU CAMISOLA-P), veio "${modelName}" / sku "${sku}"` }
   }
   return { ok: true, pieces: [{ tipo: 'CAMISOLA', tamanho, molde: `${tamanho} CAMISOLA` }] }
 }
@@ -177,55 +214,35 @@ function parseCamisolaConjunto(modelName: string): ParseResult {
 }
 
 function parseShort(modelName: string, sku: string): ParseResult {
-  const tokens = splitTokens(modelName, 2)
-  const tamanho = tokens && normalizeTamanho(tokens[0])
-  const genero = tokens && normalizeGenero(tokens[1])
-  if (tokens && tamanho && genero) {
+  const tamanho = inferTamanho(sku, modelName)
+  const genero = inferGenero(sku, modelName)
+  if (tamanho && genero) {
     return { ok: true, pieces: [{ tipo: 'SHORT', genero, tamanho, molde: `${tamanho} ${genero}` }] }
-  }
-  const tamSo = normalizeTamanho(modelName)
-  const genSku = genderFromSku(sku)
-  if (tamSo && genSku) {
-    return { ok: true, pieces: [{ tipo: 'SHORT', genero: genSku, tamanho: tamSo, molde: `${tamSo} ${genSku}` }] }
   }
   return {
     ok: false,
-    reason: `SHORT: esperado "tamanho,genero" (ex. "GG,Masculino") ou tamanho na col C + gênero no SKU, veio "${modelName}" / sku "${sku}"`,
+    reason: `SHORT: esperado "tamanho,genero" (ex. "GG,Masculino") ou SKU com tamanho/gênero (ex. SHORT-P-FEMININO, SHORT CUECA-M), veio "${modelName}" / sku "${sku}"`,
   }
 }
 
 function parseConjuntoUnitario(modelName: string, sku: string): ParseResult {
-  // Infantil vem SÓ com o tamanho (ex. "6 anos", sem gênero — o SKU da
-  // Shopee não distingue, e não faz diferença pra produção: mesmo molde/
-  // canvas independente de gênero, ver moldeCanvasPlaceholder em
-  // render-molde.ts). Formato adulto continua "tamanho,genero".
-  const tamUnico = normalizeTamanho(modelName)
-  if (tamUnico && TAMANHOS_INFANTIS.includes(tamUnico as TamanhoInfantil)) {
+  const tamanho = inferTamanho(sku, modelName)
+  if (tamanho && TAMANHOS_INFANTIS.includes(tamanho as TamanhoInfantil)) {
     return {
       ok: true,
-      pieces: [{ tipo: 'CONJ', genero: 'FEMININO', tamanho: tamUnico, molde: `${tamUnico} CONJ FEM` }],
+      pieces: [{ tipo: 'CONJ', genero: 'FEMININO', tamanho, molde: `${tamanho} CONJ FEM` }],
     }
   }
-
-  const tokens = splitTokens(modelName, 2)
-  const tamanho = tokens && normalizeTamanho(tokens[0])
-  const genero = tokens && normalizeGenero(tokens[1])
-  if (tokens && tamanho && genero) {
+  const genero = inferGenero(sku, modelName)
+  if (tamanho && genero) {
     return {
       ok: true,
       pieces: [{ tipo: 'CONJ', genero, tamanho, molde: `${tamanho} CONJ ${generoAbrev(genero)}` }],
     }
   }
-  const genSku = genderFromSku(sku)
-  if (tamUnico && genSku) {
-    return {
-      ok: true,
-      pieces: [{ tipo: 'CONJ', genero: genSku, tamanho: tamUnico, molde: `${tamUnico} CONJ ${generoAbrev(genSku)}` }],
-    }
-  }
   return {
     ok: false,
-    reason: `CONJUNTO UNITARIO: esperado "tamanho,genero" (ex. "GG,Masculino") ou só o tamanho pra infantil (ex. "6 anos"), veio "${modelName}" / sku "${sku}"`,
+    reason: `CONJUNTO UNITARIO: esperado "tamanho,genero" (ex. "GG,Masculino"), tamanho infantil, ou SKU CONJUNTO-UNITARIO-P-FEMININO, veio "${modelName}" / sku "${sku}"`,
   }
 }
 
@@ -286,7 +303,7 @@ export function parseOrderPieces(sku: string, modelName: string): ParseResult {
   }
   switch (family) {
     case 'CAMISOLA':
-      return parseCamisola(modelName)
+      return parseCamisola(modelName, sku)
     case 'CAMISOLA_SHORT':
       return parseCamisolaShort(modelName)
     case 'CAMISOLA_CONJUNTO':
