@@ -117,6 +117,7 @@ export const MARKETPLACE_WORKBOOKS: readonly MarketplaceWorkbookDef[] = [
         'ready_to_ship',
         'paid/ready_to_ship',
         'paid/ready_to_print',
+        'paid/pending',
       ],
       shipped: ['shipped', 'paid/shipped'],
       delivered: ['delivered', 'paid/delivered'],
