@@ -200,7 +200,7 @@ function parseAjuste(json: string): ParamsEnquadramento {
   }
 }
 
-function parseFonteRecorte(json: string, temSemFundo: boolean): FonteRecorte {
+function parseFonteRecorte(json: string, temSemFundo: boolean, modo?: Modo): FonteRecorte {
   if (json) {
     try {
       const obj = JSON.parse(json) as { fonteRecorte?: unknown }
@@ -209,8 +209,9 @@ function parseFonteRecorte(json: string, temSemFundo: boolean): FonteRecorte {
       // cai no default abaixo
     }
   }
-  // 1ª vez: sem-fundo se já existir (reusa o que já foi removido), original senão —
-  // mesma regra do picker local (`fonte = "sem_fundo" if sf.exists() else "original"`).
+  // Coração: default sempre original — só remove fundo se o operador pedir.
+  // Recorte/rosto: sem-fundo se já existir (reusa o que já foi removido).
+  if (modo === 'coracao') return 'original'
   return temSemFundo ? 'sem_fundo' : 'original'
 }
 
@@ -357,7 +358,7 @@ router.post('/pieces/:id/photo/:slot/preview', requireAuth, async (req, res) => 
   }
   const modo: Modo = body.modo ?? modoDa(l)
   const ajuste = body.ajuste ?? parseAjuste(l.ajuste_json)
-  const fonteRecorte = body.fonteRecorte ?? parseFonteRecorte(l.ajuste_json, Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path)))
+  const fonteRecorte = body.fonteRecorte ?? parseFonteRecorte(l.ajuste_json, Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path)), modo)
 
   try {
     const png = await comporFoto(l, modo, ajuste, body.uWidth ?? l.u_width ?? 600, body.semClip, fonteRecorte)
@@ -406,8 +407,15 @@ async function comporFoto(
     // já na composição — mesmo timing que renderCoracao já usa por padrão.
     return renderRecorte(readFileSync(origem), ajuste, uWidth, !semClip, semClip ? 0 : BORDER_PX)
   }
-  if (!existsSync(l.storage_path)) throw new Error('foto original não encontrada')
-  return renderCoracao(readFileSync(l.storage_path), ajuste, { clip: !semClip })
+  const origemCoracao = fonteRecorte === 'original' ? l.storage_path : l.sem_fundo_path
+  if (!origemCoracao || !existsSync(origemCoracao)) {
+    throw new Error(
+      fonteRecorte === 'original'
+        ? 'foto original não encontrada'
+        : 'rode remove-bg antes de compor o coração',
+    )
+  }
+  return renderCoracao(readFileSync(origemCoracao), ajuste, { clip: !semClip })
 }
 
 /* ------------------------------------------------------------------ *
@@ -441,7 +449,7 @@ router.put('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
   const modo: Modo = body.modo ?? modoDa(l)
   const ajuste = body.ajuste ?? {}
   const uWidth = body.uWidth ?? l.u_width ?? 600
-  const fonteRecorte = body.fonteRecorte ?? parseFonteRecorte(l.ajuste_json, Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path)))
+  const fonteRecorte = body.fonteRecorte ?? parseFonteRecorte(l.ajuste_json, Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path)), modo)
 
   try {
     const composta = await comporFoto(l, modo, ajuste, uWidth, false, fonteRecorte)
@@ -522,7 +530,7 @@ router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, (req, res) => {
       uWidth: l.u_width ?? 600,
       temSemFundo: cacheOk,
       temComposta: Boolean(l.composta_path && existsSync(l.composta_path)),
-      fonteRecorte: parseFonteRecorte(l.ajuste_json, cacheOk),
+      fonteRecorte: parseFonteRecorte(l.ajuste_json, cacheOk, modo),
       pendingUrl: null,
     })
     return

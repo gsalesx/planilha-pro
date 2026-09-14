@@ -78,6 +78,23 @@ const TAMANHO_OPTIONS: PecaTamanho[] = [
   '2 ANOS', '4 ANOS', '6 ANOS', '8 ANOS', '10 ANOS', '12 ANOS',
 ]
 
+/** Lê a imagem que está na área de transferência (copiada no Windows/WhatsApp/etc.)
+ *  pra subir no slot sem precisar salvar arquivo no disco. */
+async function fileFromClipboard(): Promise<File> {
+  if (!navigator.clipboard?.read) {
+    throw new Error('Este navegador não deixa colar imagem por botão. Suba o arquivo.')
+  }
+  const items = await navigator.clipboard.read()
+  for (const item of items) {
+    const type = item.types.find((t) => t.startsWith('image/'))
+    if (!type) continue
+    const blob = await item.getType(type)
+    const ext = type.includes('jpeg') || type.includes('jpg') ? 'jpg' : type.split('/')[1] || 'png'
+    return new File([blob], `clipboard-${Date.now()}.${ext}`, { type })
+  }
+  throw new Error('Não tem imagem copiada. Copie a foto e clique de novo.')
+}
+
 function fmtMessageTime(ms: number | null): string {
   if (!ms) return ''
   try {
@@ -584,6 +601,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
               📤
               <input type="file" accept="image/*" class="shopee-chat-piece-photo-upload-input" data-piece-id="${piece.id}" data-slot="${slot}" hidden />
             </label>
+            <button type="button" class="shopee-chat-piece-photo-paste" title="Colar imagem copiada" data-piece-id="${piece.id}" data-slot="${slot}">📋</button>
           </div>
           ${has ? cropToggleHtml(slot) : ''}
           ${
@@ -724,6 +742,24 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           } catch (error) {
             alert(`Falha ao subir foto: ${(error as Error).message}`)
             input.value = ''
+          }
+        })()
+      })
+    })
+    piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-photo-paste').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        void (async () => {
+          const pieceId = Number(btn.dataset.pieceId)
+          const slot = Number(btn.dataset.slot) as 1 | 2
+          try {
+            btn.disabled = true
+            const file = await fileFromClipboard()
+            await uploadPiecePhoto(pieceId, slot, file)
+            void loadPieces()
+          } catch (error) {
+            alert(`Falha ao colar foto: ${(error as Error).message}`)
+          } finally {
+            btn.disabled = false
           }
         })()
       })

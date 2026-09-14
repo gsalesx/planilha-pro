@@ -2322,7 +2322,8 @@ body.shopee-chat-open {
   color: #fff;
 }
 
-.shopee-chat-piece-photo-upload {
+.shopee-chat-piece-photo-upload,
+.shopee-chat-piece-photo-paste {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2335,8 +2336,13 @@ body.shopee-chat-open {
   font-size: 11px;
   flex-shrink: 0;
 }
-.shopee-chat-piece-photo-upload:hover {
+.shopee-chat-piece-photo-upload:hover,
+.shopee-chat-piece-photo-paste:hover {
   border-color: #94a3b8;
+}
+.shopee-chat-piece-photo-paste:disabled {
+  opacity: 0.5;
+  cursor: wait;
 }
 
 .shopee-chat-piece-crop {

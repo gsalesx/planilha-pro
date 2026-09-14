@@ -168,6 +168,10 @@ export async function abrirPickerEditor(
           <div class="picker-editor-grupo" data-so-recorte>
             <span class="picker-editor-label">Largura do recorte <b class="v-uwidth"></b></span>
             <input type="range" class="in-uwidth" min="200" max="1000" step="10" />
+          </div>
+
+          <div class="picker-editor-grupo" data-so-fonte>
+            <span class="picker-editor-label">Foto</span>
             <div class="picker-editor-fonte">
               <button type="button" class="btn in-fonte-original" title="Corta a foto ORIGINAL, com fundo">🖼 Foto original</button>
               <button type="button" class="btn in-removebg" title="Corta a silhueta sem fundo (PicWish)">✂ Remover fundo</button>
@@ -317,9 +321,7 @@ export async function abrirPickerEditor(
     // Sem-fundo / face-cutout NUNCA vêm da URL pendente (são derivados no servidor) —
     // só a foto ORIGINAL (coração, ou recorte/rosto antes do PicWish) pode vir do CDN.
     const original = pendingUrl ?? `${base}?t=${Date.now()}`
-    const usaSemFundo =
-      (modo === 'recorte' && fonteRecorte === 'sem_fundo') ||
-      (modo === 'face' && fonteRecorte === 'sem_fundo')
+    const usaSemFundo = fonteRecorte === 'sem_fundo'
     const url = usaSemFundo ? `${base}/sem-fundo` : original
     try {
       fonte = await carregarImagem(url)
@@ -332,8 +334,13 @@ export async function abrirPickerEditor(
       desenhar()
     } catch {
       fonte = null
-      if (modo === 'recorte' && fonteRecorte === 'sem_fundo') {
-        setStatus('O recorte precisa da foto sem fundo — clique em "✂ Remover fundo" (botão abaixo).', true)
+      if ((modo === 'recorte' || modo === 'coracao') && fonteRecorte === 'sem_fundo') {
+        setStatus(
+          modo === 'coracao'
+            ? 'O coração sem fundo precisa da silhueta — clique em "✂ Remover fundo".'
+            : 'O recorte precisa da foto sem fundo — clique em "✂ Remover fundo" (botão abaixo).',
+          true,
+        )
         q<HTMLButtonElement>('.in-removebg').classList.add('destaque')
       } else if (modo === 'face' && fonteRecorte === 'sem_fundo') {
         setStatus('O rosto precisa do face cutout — clique em "✂ Recortar rosto".', true)
@@ -596,6 +603,9 @@ export async function abrirPickerEditor(
     overlay.querySelectorAll<HTMLElement>('[data-so-recorte]').forEach((el) => {
       el.style.display = modo === 'recorte' ? '' : 'none'
     })
+    overlay.querySelectorAll<HTMLElement>('[data-so-fonte]').forEach((el) => {
+      el.style.display = modo === 'recorte' || modo === 'coracao' ? '' : 'none'
+    })
     overlay.querySelectorAll<HTMLElement>('[data-so-face]').forEach((el) => {
       el.style.display = modo === 'face' ? '' : 'none'
     })
@@ -626,7 +636,8 @@ export async function abrirPickerEditor(
       modo = novo
       setStatus('')
       // Cache PicWish é por tipo (semfundo_ vs facecut_) — ao cruzar recorte↔rosto,
-      // invalida e dispara a API certa. Coração não usa o cache.
+      // invalida e dispara a API certa. Coração reusa o semfundo_ se já existir,
+      // mas SEMPRE abre na foto original (só remove fundo se o operador clicar).
       const precisaPicWish =
         (novo === 'face' && anterior !== 'face') || (novo === 'recorte' && anterior === 'face')
       if (precisaPicWish) {
@@ -638,6 +649,10 @@ export async function abrirPickerEditor(
           else void removerFundo()
         })
         return
+      }
+      if (novo === 'coracao') {
+        if (anterior === 'face') temSemFundo = false
+        fonteRecorte = 'original'
       }
       sincronizarControles()
       void carregarFonte()
