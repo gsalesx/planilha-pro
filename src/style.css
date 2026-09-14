@@ -2040,48 +2040,6 @@ body.shopee-chat-open {
   gap: 8px;
 }
 
-.shopee-chat-piece-nota-toggle {
-  border: 1px solid #cbd5e1;
-  background: #fff;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  width: 26px;
-  height: 26px;
-  line-height: 1;
-  opacity: 0.5;
-}
-.shopee-chat-piece-nota-toggle.has-nota {
-  opacity: 1;
-  border-color: #f59e0b;
-  background: #fffbeb;
-}
-
-.shopee-chat-piece-nota {
-  display: none;
-  flex-direction: column;
-  gap: 3px;
-}
-.shopee-chat-piece-nota.is-open {
-  display: flex;
-}
-
-.shopee-chat-piece-nota label {
-  font-size: 11px;
-  color: #64748b;
-}
-
-.shopee-chat-piece-nota-input {
-  width: 100%;
-  resize: vertical;
-  font-size: 12px;
-  font-family: inherit;
-  padding: 6px 8px;
-  border: 1px solid #cbd5e1;
-  border-radius: 6px;
-  background: #fffbeb;
-}
-
 .shopee-chat-pieces-confirm-bar {
   position: sticky;
   bottom: 0;
@@ -4297,6 +4255,16 @@ table.sheet tbody th.row-num.is-active {
   background: #0f172a;
   border-color: #0f172a;
   color: #fff;
+}
+.picker-editor-fundo-cores {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.picker-editor-fundo-cores .color-swatch {
+  width: 22px;
+  height: 22px;
 }
 
 .picker-editor-status {

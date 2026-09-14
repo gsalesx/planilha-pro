@@ -10,3 +10,6 @@ dist
 # é feito pelo Vite. Um .js gerado ao lado do .ts faz o import resolver a versão
 # velha compilada em vez do fonte.
 src/*.js
+
+# Dados locais do servidor (tokens OAuth, sqlite dev)
+server/data/

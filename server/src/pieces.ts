@@ -251,7 +251,6 @@ export interface PiecePatch {
   emoji1?: string
   emoji2?: string
   cor?: string
-  nota?: string
 }
 
 export function updatePiece(pieceId: number, patch: PiecePatch): PieceWithPhotos | null {
@@ -266,7 +265,7 @@ export function updatePiece(pieceId: number, patch: PiecePatch): PieceWithPhotos
   const emoji1 = patch.emoji1 ?? existing.emoji1
   const emoji2 = patch.emoji2 ?? existing.emoji2
   const cor = patch.cor ?? existing.cor
-  const nota = patch.nota ?? existing.nota
+  const nota = existing.nota
   const molde = buildMolde(tipo, genero, tamanho)
   const now = nowMs()
 

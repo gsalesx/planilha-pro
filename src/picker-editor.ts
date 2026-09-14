@@ -25,6 +25,9 @@ export interface AjusteFoto {
  *  remoção); 'sem_fundo' = usa a silhueta recortada pelo PicWish. */
 export type FonteRecorte = 'original' | 'sem_fundo'
 
+const FUNDO_COR_PADRAO = '#ffffff'
+const FUNDO_CORES = ['#ffffff', '#000000', '#ffc0cb', '#add8e6', '#f5f5dc']
+
 interface EstadoServidor {
   modo: ModoFoto
   ajuste: AjusteFoto
@@ -32,6 +35,7 @@ interface EstadoServidor {
   temSemFundo: boolean
   temComposta: boolean
   fonteRecorte: FonteRecorte
+  fundoCor: string
   /** Foto ainda não baixada pro servidor — URL do CDN pro NAVEGADOR carregar
    *  direto (evita o servidor precisar baixar só pra mostrar o preview). */
   pendingUrl: string | null
@@ -118,6 +122,9 @@ export async function abrirPickerEditor(
     rotation: estado.ajuste.rotation ?? 0,
   }
   let fonteRecorte: FonteRecorte = estado.fonteRecorte
+  let fundoCor = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(estado.fundoCor ?? '')
+    ? estado.fundoCor.toLowerCase()
+    : FUNDO_COR_PADRAO
   let temSemFundo = estado.temSemFundo
   // Foto ainda não baixada pro servidor — o NAVEGADOR busca a URL do CDN direto
   // (mesmo caminho que qualquer navegador usa), sem esperar o servidor baixar só
@@ -175,6 +182,19 @@ export async function abrirPickerEditor(
             <div class="picker-editor-fonte">
               <button type="button" class="btn in-fonte-original" title="Corta a foto ORIGINAL, com fundo">🖼 Foto original</button>
               <button type="button" class="btn in-removebg" title="Corta a silhueta sem fundo (PicWish)">✂ Remover fundo</button>
+            </div>
+          </div>
+
+          <div class="picker-editor-grupo" data-so-fundo-cor>
+            <span class="picker-editor-label">Fundo da imagem</span>
+            <div class="picker-editor-fundo-cores">
+              ${FUNDO_CORES.map(
+                (c) =>
+                  `<button type="button" class="color-swatch in-fundo-swatch" style="background:${c}" data-fundo="${c}" title="${c}"></button>`,
+              ).join('')}
+              <label class="color-custom in-fundo-custom" title="Cor personalizada">
+                🎨<input type="color" class="in-fundo-cor color-custom-input" value="${FUNDO_COR_PADRAO}" />
+              </label>
             </div>
           </div>
 
@@ -434,15 +454,32 @@ export async function abrirPickerEditor(
     c.restore()
   }
 
+  function usaFundoCor(): boolean {
+    return modo === 'coracao' && fonteRecorte === 'sem_fundo'
+  }
+
+  /** Pinta o interior do coração com a cor escolhida — aparece atrás da silhueta. */
+  function desenharFundoCor(c: CanvasRenderingContext2D): void {
+    if (!usaFundoCor() || !heartMask) return
+    c.save()
+    c.drawImage(heartMask, 0, 0, CANVAS, CANVAS)
+    c.globalCompositeOperation = 'source-in'
+    c.fillStyle = fundoCor
+    c.fillRect(0, 0, CANVAS, CANVAS)
+    c.restore()
+  }
+
   function desenhar(): void {
     // ESQUERDA: foto inteira + guia do formato (é onde se arrasta).
     ctx.clearRect(0, 0, CANVAS, CANVAS)
+    desenharFundoCor(ctx)
     desenharFoto(ctx)
     desenharGuia(ctx)
     desenharCursorBorracha(ctx)
 
     // DIREITA: o resultado, já recortado no formato (rosto = sem moldura).
     ctxSaida.clearRect(0, 0, CANVAS, CANVAS)
+    desenharFundoCor(ctxSaida)
     desenharFoto(ctxSaida)
     if (modo === 'face') {
       // Sem clip — a silhueta transparente do face cutout JÁ é o resultado.
@@ -606,6 +643,17 @@ export async function abrirPickerEditor(
     overlay.querySelectorAll<HTMLElement>('[data-so-fonte]').forEach((el) => {
       el.style.display = modo === 'recorte' || modo === 'coracao' ? '' : 'none'
     })
+    overlay.querySelectorAll<HTMLElement>('[data-so-fundo-cor]').forEach((el) => {
+      el.style.display = usaFundoCor() ? '' : 'none'
+    })
+    const inFundo = q<HTMLInputElement>('.in-fundo-cor')
+    inFundo.value = fundoCor.length === 4
+      ? `#${fundoCor[1]}${fundoCor[1]}${fundoCor[2]}${fundoCor[2]}${fundoCor[3]}${fundoCor[3]}`
+      : fundoCor
+    overlay.querySelectorAll<HTMLButtonElement>('.in-fundo-swatch').forEach((b) => {
+      b.classList.toggle('is-selected', b.dataset.fundo === fundoCor)
+    })
+    q<HTMLLabelElement>('.in-fundo-custom').classList.toggle('is-selected', !FUNDO_CORES.includes(fundoCor))
     overlay.querySelectorAll<HTMLElement>('[data-so-face]').forEach((el) => {
       el.style.display = modo === 'face' ? '' : 'none'
     })
@@ -823,6 +871,21 @@ export async function abrirPickerEditor(
     void removerFundo(ev.currentTarget as HTMLButtonElement)
   })
 
+  overlay.querySelectorAll<HTMLButtonElement>('.in-fundo-swatch').forEach((b) => {
+    b.addEventListener('click', () => {
+      const cor = b.dataset.fundo
+      if (!cor) return
+      fundoCor = cor
+      sincronizarControles()
+      desenhar()
+    })
+  })
+  q<HTMLInputElement>('.in-fundo-cor').addEventListener('input', (ev) => {
+    fundoCor = (ev.currentTarget as HTMLInputElement).value.toLowerCase()
+    sincronizarControles()
+    desenhar()
+  })
+
   q<HTMLButtonElement>('.in-facecut').addEventListener('click', (ev) => {
     void recortarRosto(ev.currentTarget as HTMLButtonElement)
   })
@@ -864,7 +927,7 @@ export async function abrirPickerEditor(
       await api(`${base}/ajuste`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modo, ajuste, uWidth, fonteRecorte }),
+        body: JSON.stringify({ modo, ajuste, uWidth, fonteRecorte, fundoCor }),
       })
       setStatus('Salvo.')
       opts.onSalvo?.()

@@ -162,6 +162,32 @@ async function aplicarMascara(rgba: Buffer, mascara: Buffer): Promise<Buffer> {
     .toBuffer()
 }
 
+function parseHexRgb(hex: string): { r: number; g: number; b: number } {
+  let h = hex.replace('#', '')
+  if (h.length === 3) h = `${h[0]}${h[0]}${h[1]}${h[1]}${h[2]}${h[2]}`
+  return {
+    r: Number.parseInt(h.slice(0, 2), 16),
+    g: Number.parseInt(h.slice(2, 4), 16),
+    b: Number.parseInt(h.slice(4, 6), 16),
+  }
+}
+
+/** Coração sólido na cor pedida (preenche o fundo da silhueta sem fundo). */
+async function coracaoPreenchido(hex: string): Promise<Buffer> {
+  const { r, g, b } = parseHexRgb(hex)
+  const mask = await mascaraRaw(heartMask())
+  const data = Buffer.allocUnsafe(CANVAS * CANVAS * 4)
+  for (let i = 0, p = 0; i < mask.length; i++, p += 4) {
+    data[p] = r
+    data[p + 1] = g
+    data[p + 2] = b
+    data[p + 3] = mask[i]
+  }
+  return sharp(data, { raw: { width: CANVAS, height: CANVAS, channels: 4 } })
+    .png()
+    .toBuffer()
+}
+
 /**
  * Coração 900×900: foto enquadrada, recortada na máscara, com a borda branca
  * aparecendo onde a foto não cobre.
@@ -169,7 +195,7 @@ async function aplicarMascara(rgba: Buffer, mascara: Buffer): Promise<Buffer> {
 export async function renderCoracao(
   foto: Buffer,
   params: ParamsEnquadramento,
-  opts: { clip?: boolean; borderPx?: number } = {},
+  opts: { clip?: boolean; borderPx?: number; fundoCor?: string } = {},
 ): Promise<Buffer> {
   const clip = opts.clip ?? true
   const borderPx = opts.borderPx ?? BORDER_PX
@@ -177,7 +203,14 @@ export async function renderCoracao(
   const posicionada = await fotoPosicionada(foto, params)
   if (!clip) return posicionada // preview do editor: mostra o que sai da máscara
 
-  const recortada = await aplicarMascara(posicionada, await mascaraRaw(heartMask()))
+  const mask = await mascaraRaw(heartMask())
+  const empilhada = opts.fundoCor
+    ? await sharp(await coracaoPreenchido(opts.fundoCor))
+        .composite([{ input: posicionada }])
+        .png()
+        .toBuffer()
+    : posicionada
+  const recortada = await aplicarMascara(empilhada, mask)
   if (borderPx <= 0) return recortada
 
   // Base branca no formato do coração dilatado → vira a borda onde a foto

@@ -641,15 +641,6 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         </div>
         <div class="shopee-chat-piece-bottom-row">
           ${colorPickerHtml(piece.id, piece.cor || '#000000')}
-          <button type="button" class="shopee-chat-piece-nota-toggle${piece.nota?.trim() ? ' has-nota' : ''}"
-                  data-piece-id="${piece.id}"
-                  title="${piece.nota?.trim() ? 'Ver/editar observação' : 'Adicionar observação (raro)'}">📝</button>
-        </div>
-        <div class="shopee-chat-piece-nota${piece.nota?.trim() ? ' is-open' : ''}" data-piece-id="${piece.id}">
-          <label for="nota-${piece.id}">📝 Observação da peça</label>
-          <textarea id="nota-${piece.id}" class="shopee-chat-piece-nota-input" data-piece-id="${piece.id}"
-                    rows="2" placeholder="ex.: usar só a parte de cima dessa foto, cliente pediu…"
-          >${escapeHtml(piece.nota || '')}</textarea>
         </div>
       </article>
     `
@@ -706,22 +697,6 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
       inp.addEventListener('change', () => {
         const pieceId = Number(inp.dataset.pieceId)
         void updateOrderPiece(pieceId, { cor: inp.value }).then(() => loadPieces())
-      })
-    })
-    piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-nota-toggle').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const pieceId = btn.dataset.pieceId
-        const box = piecesEl.querySelector<HTMLElement>(`.shopee-chat-piece-nota[data-piece-id="${pieceId}"]`)
-        if (!box) return
-        box.classList.toggle('is-open')
-        if (box.classList.contains('is-open')) box.querySelector('textarea')?.focus()
-      })
-    })
-    piecesEl.querySelectorAll<HTMLTextAreaElement>('.shopee-chat-piece-nota-input').forEach((ta) => {
-      // 'change' (não 'input') = só salva ao perder o foco/valor mudar, sem request a cada tecla
-      ta.addEventListener('change', () => {
-        const pieceId = Number(ta.dataset.pieceId)
-        void updateOrderPiece(pieceId, { nota: ta.value })
       })
     })
     piecesEl.querySelectorAll<HTMLButtonElement>('.shopee-chat-piece-photo-pick').forEach((btn) => {

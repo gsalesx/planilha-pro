@@ -701,7 +701,6 @@ export async function updateOrderPiece(
     emoji1: string
     emoji2: string
     cor: string
-    nota: string
   }>,
 ): Promise<{ piece: OrderPiece }> {
   return request(`/pieces/${pieceId}`, {
