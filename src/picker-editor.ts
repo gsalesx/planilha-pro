@@ -25,8 +25,10 @@ export interface AjusteFoto {
  *  remoção); 'sem_fundo' = usa a silhueta recortada pelo PicWish. */
 export type FonteRecorte = 'original' | 'sem_fundo'
 
-const FUNDO_COR_PADRAO = '#ffffff'
-const FUNDO_CORES = ['#ffffff', '#000000', '#ffc0cb', '#add8e6', '#f5f5dc']
+const FUNDO_COR_PADRAO = '#ff0000'
+const FUNDO_CORES = ['#ff0000']
+const BORDA_COR_PADRAO = '#ffffff'
+const BORDA_PX = 13
 
 interface EstadoServidor {
   modo: ModoFoto
@@ -36,6 +38,8 @@ interface EstadoServidor {
   temComposta: boolean
   fonteRecorte: FonteRecorte
   fundoCor: string
+  bordaCor: string
+  semBorda: boolean
   /** Foto ainda não baixada pro servidor — URL do CDN pro NAVEGADOR carregar
    *  direto (evita o servidor precisar baixar só pra mostrar o preview). */
   pendingUrl: string | null
@@ -125,6 +129,10 @@ export async function abrirPickerEditor(
   let fundoCor = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(estado.fundoCor ?? '')
     ? estado.fundoCor.toLowerCase()
     : FUNDO_COR_PADRAO
+  let bordaCor = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(estado.bordaCor ?? '')
+    ? estado.bordaCor.toLowerCase()
+    : BORDA_COR_PADRAO
+  let semBorda = estado.semBorda === true
   let temSemFundo = estado.temSemFundo
   // Foto ainda não baixada pro servidor — o NAVEGADOR busca a URL do CDN direto
   // (mesmo caminho que qualquer navegador usa), sem esperar o servidor baixar só
@@ -188,12 +196,20 @@ export async function abrirPickerEditor(
           <div class="picker-editor-grupo" data-so-fundo-cor>
             <span class="picker-editor-label">Fundo da imagem</span>
             <div class="picker-editor-fundo-cores">
-              ${FUNDO_CORES.map(
-                (c) =>
-                  `<button type="button" class="color-swatch in-fundo-swatch" style="background:${c}" data-fundo="${c}" title="${c}"></button>`,
-              ).join('')}
+              <button type="button" class="color-swatch in-fundo-swatch" style="background:${FUNDO_COR_PADRAO}" data-fundo="${FUNDO_COR_PADRAO}" title="Vermelho"></button>
               <label class="color-custom in-fundo-custom" title="Cor personalizada">
                 🎨<input type="color" class="in-fundo-cor color-custom-input" value="${FUNDO_COR_PADRAO}" />
+              </label>
+            </div>
+          </div>
+
+          <div class="picker-editor-grupo">
+            <span class="picker-editor-label">Borda</span>
+            <div class="picker-editor-fundo-cores">
+              <button type="button" class="btn in-sem-borda" title="Sem borda">Sem borda</button>
+              <button type="button" class="color-swatch in-borda-swatch" style="background:${BORDA_COR_PADRAO}" data-borda="${BORDA_COR_PADRAO}" title="Branca"></button>
+              <label class="color-custom in-borda-custom" title="Cor da borda">
+                🎨<input type="color" class="in-borda-cor color-custom-input" value="${BORDA_COR_PADRAO}" />
               </label>
             </div>
           </div>
@@ -263,10 +279,16 @@ export async function abrirPickerEditor(
   // Falha aqui NÃO pode abortar a montagem do editor (era o que deixava os
   // botões sem efeito): sem a máscara, cai no contorno desenhado à mão.
   let heart: HTMLImageElement | null = null
+  let heartGrown: HTMLImageElement | null = null
   try {
     heart = await carregarImagem('/api/picker/mask/heart')
   } catch {
     heart = null
+  }
+  try {
+    heartGrown = await carregarImagem('/api/picker/mask/heart-grown')
+  } catch {
+    heartGrown = null
   }
 
   /**
@@ -323,12 +345,15 @@ export async function abrirPickerEditor(
   // montagem do editor inteiro (foi assim que os botões sumiram da outra vez).
   let heartMask: HTMLCanvasElement | null = null
   let heartAnel: HTMLCanvasElement | null = null
+  let heartGrownMask: HTMLCanvasElement | null = null
   try {
     heartMask = heart ? mascaraComAlpha(heart) : null
     heartAnel = heartMask ? anelDaMascara(heartMask, GUIA_COR, 5) : null
+    heartGrownMask = heartGrown ? mascaraComAlpha(heartGrown) : null
   } catch {
     heartMask = null
     heartAnel = null
+    heartGrownMask = null
   }
 
   /** Camada onde a borracha pinta (mesma resolução da foto sem fundo). */
@@ -469,6 +494,34 @@ export async function abrirPickerEditor(
     c.restore()
   }
 
+  function pintarMascara(c: CanvasRenderingContext2D, mask: HTMLCanvasElement, cor: string): void {
+    c.save()
+    c.drawImage(mask, 0, 0, CANVAS, CANVAS)
+    c.globalCompositeOperation = 'source-in'
+    c.fillStyle = cor
+    c.fillRect(0, 0, CANVAS, CANVAS)
+    c.restore()
+  }
+
+  /** Expande a silhueta do canvas (alpha) e pinta — preview da borda do recorte/rosto. */
+  function desenharBordaExpandida(c: CanvasRenderingContext2D, src: HTMLCanvasElement, cor: string): void {
+    const sil = document.createElement('canvas')
+    sil.width = CANVAS
+    sil.height = CANVAS
+    const sc = sil.getContext('2d')!
+    sc.drawImage(src, 0, 0)
+    sc.globalCompositeOperation = 'source-in'
+    sc.fillStyle = cor
+    sc.fillRect(0, 0, CANVAS, CANVAS)
+    const e = BORDA_PX
+    const desloc: Array<[number, number]> = [
+      [-e, 0], [e, 0], [0, -e], [0, e],
+      [-e, -e], [e, -e], [-e, e], [e, e],
+    ]
+    for (const [ox, oy] of desloc) c.drawImage(sil, ox, oy)
+    c.drawImage(sil, 0, 0)
+  }
+
   function desenhar(): void {
     // ESQUERDA: foto inteira + guia do formato (é onde se arrasta).
     ctx.clearRect(0, 0, CANVAS, CANVAS)
@@ -477,21 +530,32 @@ export async function abrirPickerEditor(
     desenharGuia(ctx)
     desenharCursorBorracha(ctx)
 
-    // DIREITA: o resultado, já recortado no formato (rosto = sem moldura).
-    ctxSaida.clearRect(0, 0, CANVAS, CANVAS)
-    desenharFundoCor(ctxSaida)
-    desenharFoto(ctxSaida)
-    if (modo === 'face') {
-      // Sem clip — a silhueta transparente do face cutout JÁ é o resultado.
-    } else {
-      ctxSaida.globalCompositeOperation = 'destination-in'
+    // DIREITA: recorte no formato, com a borda atrás (se houver).
+    const clip = document.createElement('canvas')
+    clip.width = CANVAS
+    clip.height = CANVAS
+    const cc = clip.getContext('2d')!
+    desenharFundoCor(cc)
+    desenharFoto(cc)
+    if (modo !== 'face') {
+      cc.globalCompositeOperation = 'destination-in'
       if (modo === 'coracao') {
-        if (heartMask) ctxSaida.drawImage(heartMask, 0, 0, CANVAS, CANVAS)
+        if (heartMask) cc.drawImage(heartMask, 0, 0, CANVAS, CANVAS)
       } else {
-        desenharCapsula(ctxSaida, uWidth)
+        desenharCapsula(cc, uWidth)
       }
-      ctxSaida.globalCompositeOperation = 'source-over'
+      cc.globalCompositeOperation = 'source-over'
     }
+
+    ctxSaida.clearRect(0, 0, CANVAS, CANVAS)
+    if (!semBorda) {
+      if (modo === 'coracao' && heartGrownMask) {
+        pintarMascara(ctxSaida, heartGrownMask, bordaCor)
+      } else {
+        desenharBordaExpandida(ctxSaida, clip, bordaCor)
+      }
+    }
+    ctxSaida.drawImage(clip, 0, 0)
   }
 
   /** Cápsula do recorte: extensão vertical fixa (36–864), largura variável. */
@@ -654,6 +718,18 @@ export async function abrirPickerEditor(
       b.classList.toggle('is-selected', b.dataset.fundo === fundoCor)
     })
     q<HTMLLabelElement>('.in-fundo-custom').classList.toggle('is-selected', !FUNDO_CORES.includes(fundoCor))
+    const inBorda = q<HTMLInputElement>('.in-borda-cor')
+    inBorda.value = bordaCor.length === 4
+      ? `#${bordaCor[1]}${bordaCor[1]}${bordaCor[2]}${bordaCor[2]}${bordaCor[3]}${bordaCor[3]}`
+      : bordaCor
+    q<HTMLButtonElement>('.in-sem-borda').classList.toggle('ativo', semBorda)
+    overlay.querySelectorAll<HTMLButtonElement>('.in-borda-swatch').forEach((b) => {
+      b.classList.toggle('is-selected', !semBorda && b.dataset.borda === bordaCor)
+    })
+    q<HTMLLabelElement>('.in-borda-custom').classList.toggle(
+      'is-selected',
+      !semBorda && bordaCor !== BORDA_COR_PADRAO,
+    )
     overlay.querySelectorAll<HTMLElement>('[data-so-face]').forEach((el) => {
       el.style.display = modo === 'face' ? '' : 'none'
     })
@@ -886,6 +962,28 @@ export async function abrirPickerEditor(
     desenhar()
   })
 
+  q<HTMLButtonElement>('.in-sem-borda').addEventListener('click', () => {
+    semBorda = !semBorda
+    sincronizarControles()
+    desenhar()
+  })
+  overlay.querySelectorAll<HTMLButtonElement>('.in-borda-swatch').forEach((b) => {
+    b.addEventListener('click', () => {
+      const cor = b.dataset.borda
+      if (!cor) return
+      bordaCor = cor
+      semBorda = false
+      sincronizarControles()
+      desenhar()
+    })
+  })
+  q<HTMLInputElement>('.in-borda-cor').addEventListener('input', (ev) => {
+    bordaCor = (ev.currentTarget as HTMLInputElement).value.toLowerCase()
+    semBorda = false
+    sincronizarControles()
+    desenhar()
+  })
+
   q<HTMLButtonElement>('.in-facecut').addEventListener('click', (ev) => {
     void recortarRosto(ev.currentTarget as HTMLButtonElement)
   })
@@ -927,7 +1025,7 @@ export async function abrirPickerEditor(
       await api(`${base}/ajuste`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modo, ajuste, uWidth, fonteRecorte, fundoCor }),
+        body: JSON.stringify({ modo, ajuste, uWidth, fonteRecorte, fundoCor, bordaCor, semBorda }),
       })
       setStatus('Salvo.')
       opts.onSalvo?.()

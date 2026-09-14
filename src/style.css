@@ -4266,6 +4266,16 @@ table.sheet tbody th.row-num.is-active {
   width: 22px;
   height: 22px;
 }
+.picker-editor-fundo-cores .in-sem-borda {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+.picker-editor-fundo-cores .in-sem-borda.ativo {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+}
 
 .picker-editor-status {
   font-size: 12px;

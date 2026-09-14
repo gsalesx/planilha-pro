@@ -72,6 +72,17 @@ router.get('/picker/mask/heart', requireAuth, (_req, res) => {
   res.send(readFileSync(p))
 })
 
+router.get('/picker/mask/heart-grown', requireAuth, (_req, res) => {
+  const p = path.join(process.cwd(), 'assets', 'molde', 'heart-grown.png')
+  if (!existsSync(p)) {
+    res.status(404).json({ error: 'máscara não encontrada' })
+    return
+  }
+  res.setHeader('content-type', 'image/png')
+  res.setHeader('cache-control', 'public, max-age=31536000, immutable')
+  res.send(readFileSync(p))
+})
+
 /** 'rosto' no banco = recorte/cápsula (legado); 'face' = face cutout PicWish. */
 type Modo = 'coracao' | 'recorte' | 'face'
 
@@ -215,20 +226,48 @@ function parseFonteRecorte(json: string, temSemFundo: boolean, modo?: Modo): Fon
   return temSemFundo ? 'sem_fundo' : 'original'
 }
 
-const FUNDO_COR_PADRAO = '#ffffff'
+const FUNDO_COR_PADRAO = '#ff0000'
+const BORDA_COR_PADRAO = '#ffffff'
+
+function parseHexCor(valor: unknown, fallback: string): string {
+  if (typeof valor === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(valor)) {
+    return valor.toLowerCase()
+  }
+  return fallback
+}
 
 function parseFundoCor(json: string): string {
   if (json) {
     try {
       const obj = JSON.parse(json) as { fundoCor?: unknown }
-      if (typeof obj.fundoCor === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(obj.fundoCor)) {
-        return obj.fundoCor.toLowerCase()
-      }
+      return parseHexCor(obj.fundoCor, FUNDO_COR_PADRAO)
     } catch {
       // cai no default
     }
   }
   return FUNDO_COR_PADRAO
+}
+
+function parseBordaCor(json: string): string {
+  if (json) {
+    try {
+      const obj = JSON.parse(json) as { bordaCor?: unknown }
+      return parseHexCor(obj.bordaCor, BORDA_COR_PADRAO)
+    } catch {
+      // cai no default
+    }
+  }
+  return BORDA_COR_PADRAO
+}
+
+function parseSemBorda(json: string): boolean {
+  if (!json) return false
+  try {
+    const obj = JSON.parse(json) as { semBorda?: unknown }
+    return obj.semBorda === true
+  } catch {
+    return false
+  }
 }
 
 function caminhoNovo(prefixo: string, pieceId: number, slot: number, ext = '.png'): string {
@@ -372,14 +411,18 @@ router.post('/pieces/:id/photo/:slot/preview', requireAuth, async (req, res) => 
     semClip?: boolean
     fonteRecorte?: FonteRecorte
     fundoCor?: string
+    bordaCor?: string
+    semBorda?: boolean
   }
   const modo: Modo = body.modo ?? modoDa(l)
   const ajuste = body.ajuste ?? parseAjuste(l.ajuste_json)
   const fonteRecorte = body.fonteRecorte ?? parseFonteRecorte(l.ajuste_json, Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path)), modo)
   const fundoCor = body.fundoCor ?? parseFundoCor(l.ajuste_json)
+  const bordaCor = body.bordaCor ?? parseBordaCor(l.ajuste_json)
+  const semBorda = body.semBorda ?? parseSemBorda(l.ajuste_json)
 
   try {
-    const png = await comporFoto(l, modo, ajuste, body.uWidth ?? l.u_width ?? 600, body.semClip, fonteRecorte, fundoCor)
+    const png = await comporFoto(l, modo, ajuste, body.uWidth ?? l.u_width ?? 600, body.semClip, fonteRecorte, fundoCor, bordaCor, semBorda)
     res.setHeader('content-type', 'image/png')
     res.setHeader('cache-control', 'no-store')
     res.send(png)
@@ -396,14 +439,17 @@ async function comporFoto(
   semClip = false,
   fonteRecorte: FonteRecorte = 'sem_fundo',
   fundoCor?: string,
+  bordaCor = '#ffffff',
+  semBorda = false,
 ): Promise<Buffer> {
+  const borderPx = semClip || semBorda ? 0 : BORDER_PX
   if (modo === 'face') {
     // Face cutout: precisa do PNG do PicWish (só o rosto). Sem moldura — só
-    // silhueta + borda branca. `semClip` pula reframe/borda pro preview do editor.
+    // silhueta + borda. `semClip` pula reframe/borda pro preview do editor.
     if (!l.sem_fundo_path || !existsSync(l.sem_fundo_path) || !cacheEhDoKind(l.sem_fundo_path, 'face')) {
       throw new Error('rode o face cutout antes de compor o rosto')
     }
-    return renderFace(readFileSync(l.sem_fundo_path), ajuste, !semClip, semClip ? 0 : BORDER_PX)
+    return renderFace(readFileSync(l.sem_fundo_path), ajuste, !semClip, borderPx, bordaCor)
   }
   if (modo === 'recorte') {
     // Duas fontes válidas pro recorte: a foto SEM FUNDO (silhueta recortada de
@@ -424,7 +470,7 @@ async function comporFoto(
     // A composta salva aqui vai direto pra arte final sem nenhum passo depois (esse
     // port não tem "estágio 3" separado como o pipeline Python), então a borda entra
     // já na composição — mesmo timing que renderCoracao já usa por padrão.
-    return renderRecorte(readFileSync(origem), ajuste, uWidth, !semClip, semClip ? 0 : BORDER_PX)
+    return renderRecorte(readFileSync(origem), ajuste, uWidth, !semClip, borderPx, bordaCor)
   }
   const origemCoracao = fonteRecorte === 'original' ? l.storage_path : l.sem_fundo_path
   if (!origemCoracao || !existsSync(origemCoracao)) {
@@ -436,7 +482,9 @@ async function comporFoto(
   }
   return renderCoracao(readFileSync(origemCoracao), ajuste, {
     clip: !semClip,
+    borderPx,
     fundoCor: fonteRecorte === 'sem_fundo' ? fundoCor : undefined,
+    bordaCor,
   })
 }
 
@@ -468,15 +516,19 @@ router.put('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
     uWidth?: number
     fonteRecorte?: FonteRecorte
     fundoCor?: string
+    bordaCor?: string
+    semBorda?: boolean
   }
   const modo: Modo = body.modo ?? modoDa(l)
   const ajuste = body.ajuste ?? {}
   const uWidth = body.uWidth ?? l.u_width ?? 600
   const fonteRecorte = body.fonteRecorte ?? parseFonteRecorte(l.ajuste_json, Boolean(l.sem_fundo_path && existsSync(l.sem_fundo_path)), modo)
   const fundoCor = body.fundoCor ?? parseFundoCor(l.ajuste_json)
+  const bordaCor = body.bordaCor ?? parseBordaCor(l.ajuste_json)
+  const semBorda = body.semBorda ?? parseSemBorda(l.ajuste_json)
 
   try {
-    const composta = await comporFoto(l, modo, ajuste, uWidth, false, fonteRecorte, fundoCor)
+    const composta = await comporFoto(l, modo, ajuste, uWidth, false, fonteRecorte, fundoCor, bordaCor, semBorda)
     const destino = caminhoNovo('composta', ids.pieceId, ids.slot)
     trocarArquivo(l.composta_path, destino, composta)
     db.prepare(
@@ -485,8 +537,7 @@ router.put('/pieces/:id/photo/:slot/ajuste', requireAuth, async (req, res) => {
         WHERE piece_id = ? AND slot = ?`,
     ).run(
       cropDoModo(modo),
-      // fonteRecorte/fundoCor no MESMO blob — sem migração de schema.
-      JSON.stringify({ ...ajuste, fonteRecorte, fundoCor }),
+      JSON.stringify({ ...ajuste, fonteRecorte, fundoCor, bordaCor, semBorda }),
       uWidth,
       destino,
       nowMs(),
@@ -534,6 +585,8 @@ router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, (req, res) => {
       temComposta: false,
       fonteRecorte: 'original',
       fundoCor: FUNDO_COR_PADRAO,
+      bordaCor: BORDA_COR_PADRAO,
+      semBorda: false,
       pendingUrl: pendente.url,
     })
     return
@@ -557,6 +610,8 @@ router.get('/pieces/:id/photo/:slot/ajuste', requireAuth, (req, res) => {
       temComposta: Boolean(l.composta_path && existsSync(l.composta_path)),
       fonteRecorte: parseFonteRecorte(l.ajuste_json, cacheOk, modo),
       fundoCor: parseFundoCor(l.ajuste_json),
+      bordaCor: parseBordaCor(l.ajuste_json),
+      semBorda: parseSemBorda(l.ajuste_json),
       pendingUrl: null,
     })
     return

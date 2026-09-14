@@ -195,7 +195,7 @@ async function coracaoPreenchido(hex: string): Promise<Buffer> {
 export async function renderCoracao(
   foto: Buffer,
   params: ParamsEnquadramento,
-  opts: { clip?: boolean; borderPx?: number; fundoCor?: string } = {},
+  opts: { clip?: boolean; borderPx?: number; fundoCor?: string; bordaCor?: string } = {},
 ): Promise<Buffer> {
   const clip = opts.clip ?? true
   const borderPx = opts.borderPx ?? BORDER_PX
@@ -217,11 +217,12 @@ export async function renderCoracao(
   // não chega; a foto recortada entra por cima. Montada nos bytes crus pelo
   // mesmo motivo do aplicarMascara.
   const grown = await mascaraRaw(heartGrown())
+  const { r, g, b } = parseHexRgb(opts.bordaCor ?? '#ffffff')
   const baseData = Buffer.allocUnsafe(CANVAS * CANVAS * 4)
   for (let i = 0, p = 0; i < grown.length; i++, p += 4) {
-    baseData[p] = 255
-    baseData[p + 1] = 255
-    baseData[p + 2] = 255
+    baseData[p] = r
+    baseData[p + 1] = g
+    baseData[p + 2] = b
     baseData[p + 3] = grown[i]
   }
   const base = await sharp(baseData, {
@@ -306,7 +307,7 @@ function distanceTransform(seedZero: Uint8Array, w: number, h: number): Float32A
  * Diferente do coração (máscara sempre igual → pré-calculada em PNG), a máscara do recorte
  * varia com a largura da cápsula — a expansão precisa ser calculada em runtime.
  */
-async function bordaExpandida(rgba: Buffer, strokePx: number): Promise<Buffer> {
+async function bordaExpandida(rgba: Buffer, strokePx: number, hex = '#ffffff'): Promise<Buffer> {
   const { data, info } = await sharp(rgba).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
   const { width: w, height: h } = info
   const n = w * h
@@ -324,11 +325,12 @@ async function bordaExpandida(rgba: Buffer, strokePx: number): Promise<Buffer> {
     grown[i] = Math.max(aa, alpha[i])
   }
 
+  const { r, g, b } = parseHexRgb(hex)
   const baseData = Buffer.allocUnsafe(n * 4)
   for (let i = 0, p = 0; i < n; i++, p += 4) {
-    baseData[p] = 255
-    baseData[p + 1] = 255
-    baseData[p + 2] = 255
+    baseData[p] = r
+    baseData[p + 1] = g
+    baseData[p + 2] = b
     baseData[p + 3] = grown[i]
   }
   const base = await sharp(baseData, { raw: { width: w, height: h, channels: 4 } }).png().toBuffer()
@@ -363,13 +365,14 @@ export async function renderRecorte(
   uWidth = 600,
   reenquadrar = true,
   borderPx = 0,
+  bordaCor = '#ffffff',
 ): Promise<Buffer> {
   const posicionada = await fotoPosicionada(fotoSemFundo, params, {
     r: 0, g: 0, b: 0, alpha: 0,
   })
   const recortada = await aplicarMascara(posicionada, await mascaraRaw(capsulaSvg(uWidth)))
   const final = reenquadrar ? await reframe(recortada) : recortada
-  return borderPx > 0 ? bordaExpandida(final, borderPx) : final
+  return borderPx > 0 ? bordaExpandida(final, borderPx, bordaCor) : final
 }
 
 /**
@@ -385,12 +388,13 @@ export async function renderFace(
   params: ParamsEnquadramento,
   reenquadrar = true,
   borderPx = 0,
+  bordaCor = '#ffffff',
 ): Promise<Buffer> {
   const posicionada = await fotoPosicionada(fotoFaceCutout, params, {
     r: 0, g: 0, b: 0, alpha: 0,
   })
   const final = reenquadrar ? await reframe(posicionada) : posicionada
-  return borderPx > 0 ? bordaExpandida(final, borderPx) : final
+  return borderPx > 0 ? bordaExpandida(final, borderPx, bordaCor) : final
 }
 
 /**
