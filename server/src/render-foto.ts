@@ -88,8 +88,8 @@ async function fotoPosicionada(
 
   // Rotaciona ANTES de escalar (mesma ordem do Python). `expand` do PIL =
   // manter a foto inteira: no sharp é o comportamento padrão do rotate.
-  // O coração preenche de branco (não abrir buraco); o recorte preenche de
-  // transparente (a foto já vem sem fundo).
+  // Fundo da rotação vem de quem chama: transparente no coração (o vão recebe
+  // fundoCor depois) e no recorte (a foto já vem sem fundo).
   let img = sharp(foto).ensureAlpha()
   if (rot) img = sharp(await img.rotate(rot, { background: fundoRotacao }).png().toBuffer())
 
@@ -172,25 +172,42 @@ function parseHexRgb(hex: string): { r: number; g: number; b: number } {
   }
 }
 
-/** Coração sólido na cor pedida (preenche o fundo da silhueta sem fundo). */
-async function coracaoPreenchido(hex: string): Promise<Buffer> {
+/**
+ * Onde a foto não cobre (vão do enquadramento ou furo do PicWish), pinta a cor
+ * de fundo. Sem isso a base branca da borda aparece como uma faixa no interior
+ * do coração — o recorte não sofre porque a borda segue a silhueta, não um
+ * coração sólido atrás.
+ */
+async function preencherTransparente(rgba: Buffer, hex: string): Promise<Buffer> {
   const { r, g, b } = parseHexRgb(hex)
-  const mask = await mascaraRaw(heartMask())
-  const data = Buffer.allocUnsafe(CANVAS * CANVAS * 4)
-  for (let i = 0, p = 0; i < mask.length; i++, p += 4) {
-    data[p] = r
-    data[p + 1] = g
-    data[p + 2] = b
-    data[p + 3] = mask[i]
+  const { data, info } = await sharp(rgba)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true })
+  for (let p = 0; p < data.length; p += 4) {
+    const a = data[p + 3]
+    if (a === 255) continue
+    if (a === 0) {
+      data[p] = r
+      data[p + 1] = g
+      data[p + 2] = b
+      data[p + 3] = 255
+      continue
+    }
+    const pa = a / 255
+    data[p] = Math.round(data[p] * pa + r * (1 - pa))
+    data[p + 1] = Math.round(data[p + 1] * pa + g * (1 - pa))
+    data[p + 2] = Math.round(data[p + 2] * pa + b * (1 - pa))
+    data[p + 3] = 255
   }
-  return sharp(data, { raw: { width: CANVAS, height: CANVAS, channels: 4 } })
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
     .png()
     .toBuffer()
 }
 
 /**
- * Coração 900×900: foto enquadrada, recortada na máscara, com a borda branca
- * aparecendo onde a foto não cobre.
+ * Coração 900×900: foto enquadrada, recortada na máscara. A borda branca é só
+ * o anel (coração dilatado); o interior que a foto não cobre leva `fundoCor`.
  */
 export async function renderCoracao(
   foto: Buffer,
@@ -200,22 +217,18 @@ export async function renderCoracao(
   const clip = opts.clip ?? true
   const borderPx = opts.borderPx ?? BORDER_PX
 
-  const posicionada = await fotoPosicionada(foto, params)
+  const posicionada = await fotoPosicionada(foto, params, { r: 0, g: 0, b: 0, alpha: 0 })
   if (!clip) return posicionada // preview do editor: mostra o que sai da máscara
 
   const mask = await mascaraRaw(heartMask())
   const empilhada = opts.fundoCor
-    ? await sharp(await coracaoPreenchido(opts.fundoCor))
-        .composite([{ input: posicionada }])
-        .png()
-        .toBuffer()
+    ? await preencherTransparente(posicionada, opts.fundoCor)
     : posicionada
   const recortada = await aplicarMascara(empilhada, mask)
   if (borderPx <= 0) return recortada
 
-  // Base branca no formato do coração dilatado → vira a borda onde a foto
-  // não chega; a foto recortada entra por cima. Montada nos bytes crus pelo
-  // mesmo motivo do aplicarMascara.
+  // Anel da borda (coração dilatado). O interior já está opaco (foto + fundoCor),
+  // então o branco só aparece na moldura, não no vão.
   const grown = await mascaraRaw(heartGrown())
   const { r, g, b } = parseHexRgb(opts.bordaCor ?? '#ffffff')
   const baseData = Buffer.allocUnsafe(CANVAS * CANVAS * 4)

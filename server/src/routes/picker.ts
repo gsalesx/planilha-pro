@@ -483,7 +483,9 @@ async function comporFoto(
   return renderCoracao(readFileSync(origemCoracao), ajuste, {
     clip: !semClip,
     borderPx,
-    fundoCor: fonteRecorte === 'sem_fundo' ? fundoCor : undefined,
+    // Sempre preenche o vão (foto não cobre o coração) — senão a borda branca
+    // aparece como faixa no interior. No recorte isso não existe: a borda segue a silhueta.
+    fundoCor,
     bordaCor,
   })
 }

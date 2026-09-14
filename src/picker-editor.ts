@@ -480,7 +480,7 @@ export async function abrirPickerEditor(
   }
 
   function usaFundoCor(): boolean {
-    return modo === 'coracao' && fonteRecorte === 'sem_fundo'
+    return modo === 'coracao'
   }
 
   /** Pinta o interior do coração com a cor escolhida — aparece atrás da silhueta. */
