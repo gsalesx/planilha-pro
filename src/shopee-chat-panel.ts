@@ -1077,15 +1077,21 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
             imageUrl: `/api/workbooks/${encodeURIComponent(order.workbookId)}/images/${encodeURIComponent(p.orderKey)}/${p.col}?t=${cacheBuster}`,
           })),
           onSend: async (item) => {
-            // Só manda a imagem — NÃO mexe em status. O operador pode mandar quantas
-            // peças quiser (o modal fica aberto, cada uma vira "✓ Enviada") antes de
-            // decidir fechar o ciclo em "Marcar como prévia".
             await sendMarketplacePreview(channel, {
               username: order.buyerUsername,
               workbookId: order.workbookId,
               orderKey: item.orderKey ?? order.orderKey,
               col: item.col,
             })
+            // Mesmo efeito do botão da grid: mandou a foto no chat → coluna F vira Prévia.
+            // O modal continua aberto pra mandar as outras peças.
+            const chavePai = pieces[0]?.orderKey ?? order.orderKey
+            await patchOrderDelta(order.workbookId, chavePai, {
+              cells: [{ col: STATUS_COLUMN_INDEX, value: PREVIEW_SENT_STATUS }],
+            })
+            if (chavePai === order.orderKey) {
+              order.status = PREVIEW_SENT_STATUS
+            }
           },
           onMarkAsPreview: async () => {
             // Sempre a linha-PAI (pieces[0].orderKey) — o painel pode ter aberto a
