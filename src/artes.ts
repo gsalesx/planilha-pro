@@ -28,14 +28,6 @@ import {
 } from './api'
 import { openConfirmDialog, openPromptDialog } from './dialog'
 import { abrirPickerEditor } from './picker-editor'
-import {
-  carregarImagem,
-  CONJUNTO_POR_MOLDE,
-  labelDoMolde,
-  moldeConjuntoPlaceholder,
-  montarArteCanvas,
-  montarConjuntoCanvas,
-} from './render-molde-client'
 
 /** Mesma paleta do picker de peças do chat Shopee (src/shopee-chat-panel.ts) — mantém as
  *  ferramentas de arte consistentes entre si. */
@@ -376,7 +368,7 @@ async function boot(): Promise<void> {
         const falhas: string[] = []
         for (const p of currentPieces) {
           try {
-            geradas.push(await montarArtePecaNoNavegador(p, project))
+            geradas.push(await baixarArtePecaServidor(p.id, `${project.nome || 'arte'} ${p.molde}.jpg`))
           } catch (e) {
             falhas.push((e as Error).message)
           }
@@ -648,7 +640,10 @@ async function boot(): Promise<void> {
           const piece = currentPieces.find((p) => p.id === Number(btn.dataset.pieceId))
           const project = currentProject()
           if (!piece || !project) return
-          const { nome, blob } = await montarArtePecaNoNavegador(piece, project)
+          const { nome, blob } = await baixarArtePecaServidor(
+            piece.id,
+            `${project.nome || 'arte'} ${piece.molde}.jpg`,
+          )
           baixarBlob(nome, blob)
         })
       })
@@ -793,58 +788,22 @@ async function boot(): Promise<void> {
     })
   }
 
-  /**
-   * Monta a arte de UMA peça inteiramente no NAVEGADOR — mesma lógica de
-   * src/shopee-chat-panel.ts (montarArtePecaNoNavegador), sem depender de pedido: o
-   * "cliente" no nome do arquivo vira o nome da arte (projeto).
-   */
-  async function montarArtePecaNoNavegador(
-    p: OrderPiece,
-    project: ArtProject,
+  function nomeDoAttachment(r: Response, fallback: string): string {
+    const raw = r.headers.get('content-disposition') ?? ''
+    const m = /filename="([^"]+)"/.exec(raw)
+    return m?.[1] || fallback
+  }
+
+  async function baixarArtePecaServidor(
+    pieceId: number,
+    fallbackNome: string,
   ): Promise<{ nome: string; blob: Blob }> {
-    const fotoUrl = (slot: 1 | 2) => `/api/pieces/${p.id}/photo/${slot}/composta`
-    const emojiUrl = (slot: 1 | 2) => `/api/pieces/${p.id}/emoji/${slot}?v=${p.updated_at}`
-
-    const fotos: HTMLImageElement[] = []
-    for (const slot of [1, 2] as const) {
-      if (p.photos[slot]) {
-        try {
-          fotos.push(await carregarImagem(fotoUrl(slot)))
-        } catch {
-          // slot sem composta — ignora, mesma regra do servidor (foto única repete)
-        }
-      }
+    const r = await fetch(`/api/pieces/${pieceId}/arte`, { credentials: 'include' })
+    if (!r.ok) {
+      const detalhe = (await r.json().catch(() => ({}))) as { error?: string }
+      throw new Error(detalhe.error ?? `HTTP ${r.status}`)
     }
-    if (fotos.length === 0) throw new Error(`${p.molde}: nenhuma foto composta — ajuste as fotos antes`)
-    if (fotos.length === 1) fotos.push(fotos[0])
-
-    const emojis: HTMLImageElement[] = []
-    const emojiFalhas: string[] = []
-    for (const slot of [1, 2] as const) {
-      const resp = await fetch(emojiUrl(slot), { credentials: 'include' })
-      if (resp.ok) {
-        emojis.push(await carregarImagem(URL.createObjectURL(await resp.blob())))
-        continue
-      }
-      const corpo = (await resp.json().catch(() => ({}))) as { error?: string; semEmoji?: boolean }
-      if (!corpo.semEmoji) emojiFalhas.push(`slot ${slot}: ${corpo.error ?? `HTTP ${resp.status}`}`)
-    }
-    if (emojiFalhas.length > 0) throw new Error(`${p.molde}: ${emojiFalhas.join('; ')}`)
-
-    const molde = p.molde.trim().toUpperCase()
-    const nomeBase = project.nome.trim() || labelDoMolde(molde)
-
-    if (CONJUNTO_POR_MOLDE[moldeConjuntoPlaceholder(molde)]) {
-      const paineis = await montarConjuntoCanvas({ molde, cor: p.cor || '#000000', fotos, emojis })
-      const { default: JSZip } = await import('jszip')
-      const zip = new JSZip()
-      for (const { painel, blob } of paineis) zip.file(`${nomeBase} ${labelDoMolde(molde)} ${painel}.jpg`, blob)
-      const buf = await zip.generateAsync({ type: 'blob' })
-      return { nome: `${nomeBase} ${labelDoMolde(molde)}.zip`, blob: buf }
-    }
-
-    const blob = await montarArteCanvas({ molde, cor: p.cor || '#000000', fotos, emojis })
-    return { nome: `${nomeBase} ${labelDoMolde(molde)}.jpg`, blob }
+    return { nome: nomeDoAttachment(r, fallbackNome), blob: await r.blob() }
   }
 
   function baixarBlob(nome: string, blob: Blob): void {

@@ -25,6 +25,7 @@ import { db, nowMs } from '../db.js'
 import { env } from '../env.js'
 import { resolverArquivoEmojiPorNome } from '../emoji-catalog.js'
 import { recortarRosto, removerFundo } from '../picwish.js'
+import { ARTES_WORKBOOK_ID } from './artes.js'
 import { fetchShopeeCdn } from './pieces.js'
 import {
   CANVAS_POR_MOLDE,
@@ -53,6 +54,22 @@ import {
 
 const router = Router()
 const imagesDir = path.join(env.dataDir, 'images')
+/** Quantas artes/prévias gerar ao mesmo tempo. O servidor novo aguenta 4; o antigo
+ *  serializava 1 peça por vez. `ARTE_CONCURRENCY` no Dokploy sobrescreve. */
+const ARTE_PARALELO = Math.max(2, Math.min(6, Number(process.env.ARTE_CONCURRENCY) || 4))
+
+async function mapLimite<T>(itens: T[], limite: number, fn: (item: T) => Promise<void>): Promise<void> {
+  if (itens.length === 0) return
+  let next = 0
+  async function worker(): Promise<void> {
+    for (;;) {
+      const i = next++
+      if (i >= itens.length) return
+      await fn(itens[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limite, itens.length) }, () => worker()))
+}
 mkdirSync(imagesDir, { recursive: true })
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } })
 
@@ -651,6 +668,12 @@ interface LinhaPeca {
 
 /** Nome do cliente da linha (col 4 do row_json) — "" se não achar. */
 function nomeClienteDoPedido(orderKey: string, workbookId: string): string {
+  if (workbookId === ARTES_WORKBOOK_ID) {
+    const proj = db.prepare('SELECT nome FROM art_projects WHERE id = ?').get(orderKey) as
+      | { nome: string }
+      | undefined
+    return (proj?.nome ?? '').trim()
+  }
   const row = db
     .prepare('SELECT row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
     .get(workbookId, orderKey) as { row_json: string } | undefined
@@ -936,14 +959,20 @@ router.post('/pieces/:id/print-upload', requireAuth, upload.single('image'), (re
 /** Sufixa " (2)", " (3)"... se `nome` já existe no zip — nomeArteFinal não
  *  distingue peças do MESMO cliente+molde (2 unidades do mesmo tamanho no
  *  mesmo pedido), então sem isso zip.file() sobrescreve a anterior. */
-function nomeZipSemColisao(zip: JSZip, nome: string): string {
-  if (!zip.file(nome)) return nome
+function nomeZipSemColisao(zip: JSZip, nome: string, usados?: Set<string>): string {
+  const ocupado = (n: string) => Boolean(zip.file(n)) || (usados?.has(n) ?? false)
+  if (!ocupado(nome)) {
+    usados?.add(nome)
+    return nome
+  }
   const pontoExt = nome.lastIndexOf('.')
   const base = pontoExt > 0 ? nome.slice(0, pontoExt) : nome
   const ext = pontoExt > 0 ? nome.slice(pontoExt) : ''
   let i = 2
-  while (zip.file(`${base} (${i})${ext}`)) i++
-  return `${base} (${i})${ext}`
+  while (ocupado(`${base} (${i})${ext}`)) i++
+  const unico = `${base} (${i})${ext}`
+  usados?.add(unico)
+  return unico
 }
 
 /**
@@ -996,6 +1025,7 @@ router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
   // cada linha aprovada) como unidade de dedup — se pai e alguma filha aparecerem
   // separadamente no resultado do filtro, processa o pedido inteiro uma única vez.
   const pedidosProcessados = new Set<string>()
+  const jobs: Array<{ pecaId: number; cliente: string }> = []
   for (const pedido of pedidos) {
     const chavePai = pedido.parent_key ?? pedido.order_key
     if (pedidosProcessados.has(chavePai)) continue
@@ -1012,21 +1042,19 @@ router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
     const pecas = chaves.flatMap(
       (k) => db.prepare('SELECT id FROM order_pieces WHERE workbook_id = ? AND order_key = ? ORDER BY seq').all(workbookId, k) as Array<{ id: number }>,
     )
-    for (const peca of pecas) {
-      try {
-        const { nome, jpg } = await gerarArteDaPecaCache(peca.id, workbookId)
-        // 2+ peças do MESMO cliente+molde (ex.: 2 unidades do mesmo tamanho no
-        // mesmo pedido) geram o MESMO nome (nomeArteFinal não distingue peça) —
-        // sem desambiguar, zip.file() sobrescreve e só sobra 1 arquivo no zip
-        // (bug irmão do de cima: mesmo pedido, peças "sumindo" silenciosamente).
-        const nomeUnico = nomeZipSemColisao(zip, nome)
-        zip.file(nomeUnico, jpg)
-        geradas++
-      } catch (e) {
-        falhas.push(`${cliente}/peça ${peca.id}: ${(e as Error).message}`)
-      }
-    }
+    for (const peca of pecas) jobs.push({ pecaId: peca.id, cliente })
   }
+
+  const nomesUsados = new Set<string>()
+  await mapLimite(jobs, ARTE_PARALELO, async (job) => {
+    try {
+      const { nome, jpg } = await gerarArteDaPecaCache(job.pecaId, workbookId)
+      zip.file(nomeZipSemColisao(zip, nome, nomesUsados), jpg)
+      geradas++
+    } catch (e) {
+      falhas.push(`${job.cliente}/peça ${job.pecaId}: ${(e as Error).message}`)
+    }
+  })
 
   if (geradas === 0) {
     res.status(422).json({
@@ -1072,8 +1100,15 @@ router.get('/pieces/:id/arte', requireAuth, async (req, res) => {
     res.status(400).json({ error: 'peça inválida' })
     return
   }
+  const peca = db.prepare('SELECT workbook_id FROM order_pieces WHERE id = ?').get(pieceId) as
+    | { workbook_id: string }
+    | undefined
+  if (!peca) {
+    res.status(404).json({ error: 'peça não encontrada' })
+    return
+  }
   try {
-    const { nome, jpg } = await gerarArteDaPecaCache(pieceId)
+    const { nome, jpg } = await gerarArteDaPecaCache(pieceId, peca.workbook_id)
     res.setHeader('content-type', nome.endsWith('.zip') ? 'application/zip' : 'image/jpeg')
     res.setHeader('content-disposition', `attachment; filename="${nome}"`)
     res.send(jpg)
@@ -1118,13 +1153,13 @@ router.get('/workbooks/:wb/orders/:orderKey/artes', requireAuth, async (req, res
 
   const geradas: Array<{ nome: string; jpg: Buffer }> = []
   const falhas: string[] = []
-  for (const p of pecas) {
+  await mapLimite(pecas, ARTE_PARALELO, async (p) => {
     try {
       geradas.push(await gerarArteDaPecaCache(p.id, wb))
     } catch (e) {
       falhas.push(`peça ${p.id}: ${(e as Error).message}`)
     }
-  }
+  })
   if (geradas.length === 0) {
     res.status(422).json({ error: 'Nenhuma arte pôde ser gerada', detalhes: falhas })
     return
@@ -1303,19 +1338,22 @@ router.post('/workbooks/:wb/orders/:orderKey/gerar-previas', requireAuth, async 
 
   const feitas: Array<{ pieceId: number; col: number; orderKey: string; molde: string }> = []
   const falhas: Array<{ pieceId: number; erro: string }> = []
+  const pecas: Array<{ id: number; molde: string }> = []
   for (const chave of chaves) {
-    const pecas = db
-      .prepare('SELECT id, molde FROM order_pieces WHERE workbook_id = ? AND order_key = ? ORDER BY seq')
-      .all(wb, chave) as Array<{ id: number; molde: string }>
-    for (const p of pecas) {
-      try {
-        const r = await gerarEGuardarPrint(p.id, wb)
-        feitas.push({ pieceId: p.id, col: r.col, orderKey: r.orderKey, molde: p.molde })
-      } catch (e) {
-        falhas.push({ pieceId: p.id, erro: (e as Error).message })
-      }
-    }
+    pecas.push(
+      ...(db
+        .prepare('SELECT id, molde FROM order_pieces WHERE workbook_id = ? AND order_key = ? ORDER BY seq')
+        .all(wb, chave) as Array<{ id: number; molde: string }>),
+    )
   }
+  await mapLimite(pecas, ARTE_PARALELO, async (p) => {
+    try {
+      const r = await gerarEGuardarPrint(p.id, wb)
+      feitas.push({ pieceId: p.id, col: r.col, orderKey: r.orderKey, molde: p.molde })
+    } catch (e) {
+      falhas.push({ pieceId: p.id, erro: (e as Error).message })
+    }
+  })
   if (feitas.length === 0) {
     res.status(422).json({ error: 'Nenhuma prévia pôde ser gerada', detalhes: falhas })
     return
@@ -1356,6 +1394,7 @@ router.post('/picker/prints', requireAuth, async (req, res) => {
   const puladas: Array<{ orderSn: string; pieceId: number; motivo: string }> = []
   const falhas: Array<{ orderSn: string; pieceId: number; erro: string }> = []
   const pedidosTocados = new Set<string>()
+  const jobs: Array<{ pieceId: number; orderSn: string }> = []
 
   for (const l of linhas) {
     const pecas = db
@@ -1372,17 +1411,21 @@ router.post('/picker/prints', requireAuth, async (req, res) => {
           continue
         }
       }
-      try {
-        const r = await gerarEGuardarPrint(p.id, workbookId)
-        feitas.push({ orderSn: l.id, pieceId: p.id, col: r.col })
-        pedidosTocados.add(l.id)
-      } catch (e) {
-        // Peça sem foto ajustada ainda é o caso NORMAL no meio do dia — não é erro do
-        // sistema, e não pode derrubar o lote inteiro.
-        falhas.push({ orderSn: l.id, pieceId: p.id, erro: (e as Error).message })
-      }
+      jobs.push({ pieceId: p.id, orderSn: l.id })
     }
   }
+
+  await mapLimite(jobs, ARTE_PARALELO, async (job) => {
+    try {
+      const r = await gerarEGuardarPrint(job.pieceId, workbookId)
+      feitas.push({ orderSn: job.orderSn, pieceId: job.pieceId, col: r.col })
+      pedidosTocados.add(job.orderSn)
+    } catch (e) {
+      // Peça sem foto ajustada ainda é o caso NORMAL no meio do dia — não é erro do
+      // sistema, e não pode derrubar o lote inteiro.
+      falhas.push({ orderSn: job.orderSn, pieceId: job.pieceId, erro: (e as Error).message })
+    }
+  })
 
   const prontos: string[] = []
   for (const sn of pedidosTocados) {
@@ -1452,14 +1495,14 @@ router.post('/picker/gerar-todas-artes', requireAuth, (req, res) => {
 
   // Roda DEPOIS de responder — o operador não fica esperando o lote inteiro.
   void (async () => {
-    for (const p of pecas) {
+    await mapLimite(pecas, ARTE_PARALELO, async (p) => {
       try {
-        await gerarArteDaPecaCache(p.piece_id)
+        await gerarArteDaPecaCache(p.piece_id, workbookId)
       } catch (e) {
         jobGerarArtes!.falhas.push({ pieceId: p.piece_id, erro: (e as Error).message })
       }
       jobGerarArtes!.feitas++
-    }
+    })
     jobGerarArtes!.rodando = false
     jobGerarArtes!.concluidoEm = nowMs()
   })()

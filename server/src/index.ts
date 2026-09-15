@@ -59,13 +59,14 @@ const __dirname = path.dirname(__filename)
 
 /**
  * Node/libvips detectam a CPU do HOST, não a fração real alocada ao container (cgroup
- * não é lido por padrão) — num VPS pequeno, isso faz o sharp abrir mais threads do que
- * núcleo de verdade disponível, e as threads competem entre si em vez de acelerar (é
- * por isso que renderizar a arte fica bem mais lento no servidor do que no PC local,
- * mesmo fazendo o mesmo trabalho). `SHARP_CONCURRENCY` no ambiente do Dokploy deixa
- * fixar o número real de vCPUs alocadas; sem ela, usa um teto conservador de 2.
+ * não é lido por padrão). `SHARP_CONCURRENCY` no ambiente do Dokploy deixa fixar o
+ * número real de vCPUs; sem ela, usa até 8 threads (servidor novo aguenta — o teto
+ * antigo de 2 serializava o render e deixava a CPU ociosa).
  */
-sharp.concurrency(Number(process.env.SHARP_CONCURRENCY) || Math.min(2, os.cpus().length))
+{
+  const n = Number(process.env.SHARP_CONCURRENCY)
+  sharp.concurrency(Number.isFinite(n) && n > 0 ? n : Math.min(8, Math.max(2, os.cpus().length)))
+}
 
 const app = express()
 

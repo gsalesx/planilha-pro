@@ -30,15 +30,7 @@ import { openConfirmDialog, openPreviewPickerDialog } from './dialog'
 import { PREVIEW_SENT_STATUS, STATUS_COLUMN_INDEX } from './status'
 import { openImageLightbox } from './lightbox'
 import { abrirPickerEditor, abrirPickerFila, type ItemFila } from './picker-editor'
-import {
-  carregarImagem,
-  CONJUNTO_POR_MOLDE,
-  cortarPrintCanvas,
-  labelDoMolde,
-  moldeConjuntoPlaceholder,
-  montarArteCanvas,
-  montarConjuntoCanvas,
-} from './render-molde-client'
+import { labelDoMolde } from './render-molde-client'
 
 export interface ShopeeChatOrderInfo {
   workbookId: string
@@ -1008,89 +1000,6 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     }
   }
 
-  /**
-   * Monta a arte de UMA peça inteiramente no NAVEGADOR — busca as 2 fotos já
-   * compostas (900×900, prontas há tempos, sem processamento nenhum aqui) e
-   * os 2 emojis (350×350) e desenha no canvas (render-molde-client.ts). O
-   * servidor só serve arquivos estáticos nessa parte; quem monta é a aba de
-   * quem clicou. Peça sem foto composta ainda lança erro (mesma regra do
-   * servidor: "ajuste as fotos no picker antes").
-   */
-  /** Molde CONJ (conjunto multi-painel Frente/Manga/Short) devolve um .zip com
-   *  os 3 JPGs — mesmo padrão do servidor (gerarArteDaPeca) e do pipeline
-   *  Python (`_export_conjunto`). `painelPreview`, quando pedido, é o Blob do
-   *  painel "Frente" isolado (usado pra recortar o print — não faz sentido
-   *  recortar print de um zip). */
-  async function montarArtePecaNoNavegador(
-    p: OrderPiece,
-    opts?: { painelPreview?: boolean },
-  ): Promise<{ nome: string; blob: Blob; painelPreview?: Blob }> {
-    const fotoUrl = (slot: 1 | 2) => `/api/pieces/${p.id}/photo/${slot}/composta`
-    // ?v=updated_at: a rota é cacheada 1h (URL fixa por peça/slot) — sem esse
-    // cache-buster, trocar o emoji na peça (emoji1/emoji2) continua servindo o
-    // PNG antigo do navegador até o cache expirar, mesmo o servidor já
-    // resolvendo o novo nome corretamente (bug: carol0595fm — cor mudava na
-    // hora, emoji continuava saindo o de antes até trocar de novo bem depois).
-    const emojiUrl = (slot: 1 | 2) => `/api/pieces/${p.id}/emoji/${slot}?v=${p.updated_at}`
-
-    const fotos: HTMLImageElement[] = []
-    for (const slot of [1, 2] as const) {
-      if (p.photos[slot]) {
-        try {
-          fotos.push(await carregarImagem(fotoUrl(slot)))
-        } catch {
-          // slot sem composta — ignora, mesma regra do servidor (foto única repete)
-        }
-      }
-    }
-    if (fotos.length === 0) throw new Error(`${p.molde}: nenhuma foto composta — ajuste as fotos no picker antes`)
-    if (fotos.length === 1) fotos.push(fotos[0])
-
-    // 404 da rota tem 2 causas bem diferentes, distinguidas pelo campo
-    // `semEmoji` no corpo JSON (ver GET /pieces/:id/emoji/:slot no servidor):
-    //   semEmoji=true  → peça sem emoji nesse slot DE PROPÓSITO (vazio/"SEM
-    //                    EMOJI") — não é erro, só não desenha a camada.
-    //   semEmoji=false → tem um NOME cadastrado que não bate com nenhum
-    //                    arquivo do catálogo (typo, emoji custom faltando) —
-    //                    ANTES isso era engolido como "sem emoji" e a
-    //                    prévia saía faltando um emoji que devia aparecer,
-    //                    sem nenhum aviso (bug: william.sfe, brbaraaguenavalle).
-    const emojis: HTMLImageElement[] = []
-    const emojiFalhas: string[] = []
-    for (const slot of [1, 2] as const) {
-      const resp = await fetch(emojiUrl(slot), { credentials: 'include' })
-      if (resp.ok) {
-        emojis.push(await carregarImagem(URL.createObjectURL(await resp.blob())))
-        continue
-      }
-      const corpo = (await resp.json().catch(() => ({}))) as { error?: string; semEmoji?: boolean }
-      if (!corpo.semEmoji) emojiFalhas.push(`slot ${slot}: ${corpo.error ?? `HTTP ${resp.status}`}`)
-    }
-    if (emojiFalhas.length > 0) {
-      throw new Error(`${p.molde}: ${emojiFalhas.join('; ')}`)
-    }
-
-    const molde = p.molde.trim().toUpperCase()
-    const cliente = order.buyerUsername || order.orderId
-
-    // CONJ infantil (ex "6 ANOS CONJ FEM") também é conjunto — usa a
-    // geometria placeholder (M CONJ FEM), ver moldeConjuntoPlaceholder.
-    if (CONJUNTO_POR_MOLDE[moldeConjuntoPlaceholder(molde)]) {
-      const paineis = await montarConjuntoCanvas({ molde, cor: p.cor || '#000000', fotos, emojis })
-      const { default: JSZip } = await import('jszip')
-      const zip = new JSZip()
-      // Nome de cada arquivo DENTRO do zip também leva o cliente — sem isso
-      // o arquivo extraído vira só "G CONJ MASC Frente.jpg".
-      for (const { painel, blob } of paineis) zip.file(`${cliente} ${labelDoMolde(molde)} ${painel}.jpg`, blob)
-      const buf = await zip.generateAsync({ type: 'blob' })
-      const frente = paineis.find((x) => x.painel === 'Frente')?.blob
-      return { nome: `${cliente} ${labelDoMolde(molde)}.zip`, blob: buf, painelPreview: opts?.painelPreview ? frente : undefined }
-    }
-
-    const blob = await montarArteCanvas({ molde, cor: p.cor || '#000000', fotos, emojis })
-    return { nome: `${cliente} ${labelDoMolde(molde)}.jpg`, blob, painelPreview: opts?.painelPreview ? blob : undefined }
-  }
-
   function baixarBlob(nome: string, blob: Blob): void {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -1100,50 +1009,36 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     URL.revokeObjectURL(url)
   }
 
-  /** Baixa a(s) arte(s) do pedido inteiro — montadas na hora NO NAVEGADOR, sem
-   *  esperar "Aprovado" e sem processar nada no servidor compartilhado. */
+  function nomeDoAttachment(r: Response, fallback: string): string {
+    const raw = r.headers.get('content-disposition') ?? ''
+    const m = /filename="([^"]+)"/.exec(raw)
+    return m?.[1] || fallback
+  }
+
+  /** Baixa a(s) arte(s) do pedido — montadas no servidor (já tem cache). */
   function bindBaixarArtes(pieces: OrderPiece[]): void {
     const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-baixar-artes')
     if (!btn) return
     btn.addEventListener('click', () =>
-      acionarBotaoAssincrono(btn, '⏳ Montando…', async () => {
+      acionarBotaoAssincrono(btn, '⏳ Gerando…', async () => {
         if (pieces.length === 0) throw new Error('Nenhuma peça montada ainda pra este pedido')
-        const geradas: Array<{ nome: string; blob: Blob }> = []
-        const falhas: string[] = []
-        for (const p of pieces) {
-          try {
-            geradas.push(await montarArtePecaNoNavegador(p))
-          } catch (e) {
-            falhas.push((e as Error).message)
-          }
+        const r = await fetch(
+          `/api/workbooks/${encodeURIComponent(order.workbookId)}/orders/${encodeURIComponent(order.orderKey)}/artes`,
+          { credentials: 'include' },
+        )
+        if (!r.ok) {
+          const detalhe = (await r.json().catch(() => ({}))) as { error?: string }
+          throw new Error(detalhe.error ?? `HTTP ${r.status}`)
         }
-        if (geradas.length === 0) throw new Error(falhas[0] ?? 'nenhuma arte pôde ser montada')
-
-        if (geradas.length === 1) {
-          baixarBlob(geradas[0].nome, geradas[0].blob)
-          return
-        }
-        const { default: JSZip } = await import('jszip')
-        const zip = new JSZip()
-        geradas.forEach((g, i) => zip.file(`${i + 1} - ${g.nome}`, g.blob))
-        if (falhas.length) zip.file('_FALHAS.txt', falhas.join('\n'))
-        const buf = await zip.generateAsync({ type: 'blob' })
-        baixarBlob(`${order.buyerUsername || order.orderId}.zip`, buf)
+        const blob = await r.blob()
+        baixarBlob(nomeDoAttachment(r, `${order.buyerUsername || order.orderId}.jpg`), blob)
       }),
     )
   }
 
   /**
-   * Gera a prévia (print) de cada peça do pedido — a arte inteira é montada NO
-   * NAVEGADOR (mesma função de "Baixar arte", ver montarArtePecaNoNavegador) e
-   * recortada também no navegador (cortarPrintCanvas); só o print final (pequeno,
-   * ~200KB) sobe pro servidor via /pieces/:id/print-upload, que apenas GRAVA — não
-   * processa nada. Substitui a antiga rota /gerar-previas (que montava a folha
-   * inteira NO SERVIDOR, ~14s medidos numa peça real — o gargalo que competia por
-   * CPU com outras operações no mesmo container).
-   *
-   * Depois de subir, abre o MESMO popup de "Enviar prévia" que já existe no grid,
-   * pro operador escolher ali mesmo qual(is) mandar no chat sem sair do painel.
+   * Gera a prévia (print) de cada peça no servidor — mesma rota do lote do dia.
+   * Depois abre o popup de "Enviar prévia" pra escolher qual mandar no chat.
    */
   function bindGerarPrevia(pieces: OrderPiece[]): void {
     const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-gerar-previa')
@@ -1151,35 +1046,22 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
     btn.addEventListener('click', () =>
       acionarBotaoAssincrono(btn, '⏳ Gerando…', async () => {
         if (pieces.length === 0) throw new Error('Nenhuma peça montada ainda pra este pedido')
-        const previas: Array<{ orderKey: string; col: number; label: string }> = []
-        const falhas: string[] = []
-        for (const p of pieces) {
-          try {
-            const { blob, painelPreview } = await montarArtePecaNoNavegador(p, { painelPreview: true })
-            const nFotos = (p.photos[1] ? 1 : 0) + (p.photos[2] ? 1 : 0)
-            const print = await cortarPrintCanvas(painelPreview ?? blob, Math.max(1, nFotos))
-            const fd = new FormData()
-            fd.append('image', print, 'print.jpg')
-            const r = await fetch(
-              `/api/pieces/${p.id}/print-upload?workbookId=${encodeURIComponent(order.workbookId)}`,
-              {
-                method: 'POST',
-                credentials: 'include',
-                body: fd,
-              },
-            )
-            const up = (await r.json().catch(() => ({}))) as { error?: string; col?: number }
-            if (!r.ok) throw new Error(up.error ?? `HTTP ${r.status}`)
-            previas.push({ orderKey: p.orderKey ?? order.orderKey, col: up.col ?? 8, label: labelDoMolde(p.molde) })
-          } catch (e) {
-            falhas.push(`${p.molde}: ${(e as Error).message}`)
-          }
+        const r = await fetch(
+          `/api/workbooks/${encodeURIComponent(order.workbookId)}/orders/${encodeURIComponent(order.orderKey)}/gerar-previas`,
+          { method: 'POST', credentials: 'include' },
+        )
+        const body = (await r.json().catch(() => ({}))) as {
+          error?: string
+          previas?: Array<{ orderKey: string; col: number; label: string }>
+          falhas?: Array<{ pieceId: number; erro: string }>
         }
-        if (previas.length === 0) throw new Error(falhas[0] ?? 'nenhuma prévia pôde ser gerada')
-        // Falha PARCIAL (algumas peças geraram, outras não) ficava silenciosa — só
-        // dava erro visível se TODAS falhassem, então "sumia" 1 peça sem explicação
-        // nenhuma (esse foi exatamente o sintoma reportado: "só aparece a última").
-        if (falhas.length > 0) alert(`Atenção: ${falhas.length} peça(s) não geraram prévia:\n${falhas.join('\n')}`)
+        if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+        const previas = body.previas ?? []
+        if (previas.length === 0) throw new Error(body.error ?? 'nenhuma prévia pôde ser gerada')
+        const falhas = (body.falhas ?? []).map((f) => f.erro)
+        if (falhas.length > 0) {
+          alert(`Atenção: ${falhas.length} peça(s) não geraram prévia:\n${falhas.join('\n')}`)
+        }
 
         const cacheBuster = Date.now() // a imagem acabou de ser trocada — evita servir a antiga do cache do navegador
         openPreviewPickerDialog({
@@ -1187,7 +1069,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           items: previas.map((p) => ({
             col: p.col,
             orderKey: p.orderKey,
-            label: p.label,
+            label: labelDoMolde(p.label),
             imageUrl: `/api/workbooks/${encodeURIComponent(order.workbookId)}/images/${encodeURIComponent(p.orderKey)}/${p.col}?t=${cacheBuster}`,
           })),
           onSend: async (item) => {
