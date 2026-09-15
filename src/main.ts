@@ -1958,7 +1958,8 @@ function bindBaixarAprovados() {
     btn.textContent = '⏳ Gerando artes…'
     setStatusText(`Gerando artes dos aprovados de ${sheetDate}…`)
     try {
-      const qs = `?sheetDate=${encodeURIComponent(sheetDate)}`
+      if (!currentWorkbookId) throw new Error('Nenhuma planilha aberta')
+      const qs = `?sheetDate=${encodeURIComponent(sheetDate)}&workbookId=${encodeURIComponent(currentWorkbookId)}`
       const r = await fetch(`/api/picker/artes-aprovadas.zip${qs}`, { credentials: 'include' })
       if (!r.ok) {
         const detalhe = (await r.json().catch(() => ({}))) as { error?: string }

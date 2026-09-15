@@ -964,8 +964,8 @@ router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
   const STATUS_COL = 5
   const APROVADO = 'Aprovado'
 
-  const where = ["json_extract(row_json, '$[" + STATUS_COL + "]') = ?"]
-  const params: unknown[] = [APROVADO]
+  const where = ['workbook_id = ?', "json_extract(row_json, '$[" + STATUS_COL + "]') = ?"]
+  const params: unknown[] = [workbookId, APROVADO]
   if (sheetDate) {
     where.push('sheet_date = ?')
     params.push(sheetDate)
@@ -1029,7 +1029,12 @@ router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
   }
 
   if (geradas === 0) {
-    res.status(422).json({ error: 'nenhuma arte pôde ser gerada', detalhes: falhas.slice(0, 20) })
+    res.status(422).json({
+      error: falhas.length
+        ? 'nenhuma arte pôde ser gerada'
+        : 'nenhuma peça montada nos pedidos aprovados desta planilha',
+      detalhes: falhas.slice(0, 20),
+    })
     return
   }
   if (falhas.length) zip.file('_FALHAS.txt', falhas.join('\n'))
@@ -1045,10 +1050,11 @@ router.get('/picker/artes-aprovadas.zip', requireAuth, async (req, res) => {
  *  Conta PEDIDOS únicos (linha-pai), não linhas — uma filha também marcada
  *  "Aprovado" não pode contar como um 2º pedido (mesmo dedup do zip acima). */
 router.get('/picker/artes-aprovadas/contagem', requireAuth, (req, res) => {
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : SHOPEE_WORKBOOK_ID
   const sheetDate = typeof req.query.sheetDate === 'string' ? req.query.sheetDate : null
   const STATUS_COL = 5
-  const where = ["json_extract(row_json, '$[" + STATUS_COL + "]') = 'Aprovado'"]
-  const params: unknown[] = []
+  const where = ['workbook_id = ?', "json_extract(row_json, '$[" + STATUS_COL + "]') = 'Aprovado'"]
+  const params: unknown[] = [workbookId]
   if (sheetDate) {
     where.push('sheet_date = ?')
     params.push(sheetDate)
