@@ -1130,7 +1130,8 @@ function bindEtiquetas() {
 }
 
 function closeSearchResults() {
-  const panel = el<HTMLDivElement>('#search-results')
+  const panel = document.querySelector<HTMLDivElement>('#search-results')
+  if (!panel) return
   panel.hidden = true
   panel.innerHTML = ''
   searchHighlightIndex = -1
