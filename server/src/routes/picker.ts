@@ -1264,6 +1264,18 @@ function marcarProntoSeCompleto(workbookId: string, orderSn: string): boolean {
   return true
 }
 
+/** CONJ devolve zip (Frente/Manga/Short). A prévia usa só o painel Frente —
+ *  igual o canvas fazia no navegador (`painelPreview`). */
+async function jpgPraPrint(nome: string, buf: Buffer): Promise<Buffer> {
+  const ehZip = nome.endsWith('.zip') || buf.subarray(0, 2).toString() === 'PK'
+  if (!ehZip) return buf
+  const zip = await JSZip.loadAsync(buf)
+  const arquivos = Object.keys(zip.files).filter((n) => !zip.files[n]?.dir)
+  const frente = arquivos.find((n) => /frente\.jpe?g$/i.test(n)) ?? arquivos.find((n) => /\.jpe?g$/i.test(n))
+  if (!frente) throw new Error('conjunto sem painel Frente pra prévia')
+  return Buffer.from(await zip.file(frente)!.async('uint8array'))
+}
+
 /** Monta a arte da peça, recorta o print e grava na coluna. Devolve a coluna usada. */
 async function gerarEGuardarPrint(pieceId: number, workbookId: string): Promise<{ col: number; orderKey: string; orderSn: string }> {
   const peca = db
@@ -1276,7 +1288,8 @@ async function gerarEGuardarPrint(pieceId: number, workbookId: string): Promise<
     .get(workbookId, peca.order_key) as { id: string } | undefined
   if (!linha) throw new Error('linha do pedido não encontrada')
 
-  const { jpg } = await gerarArteDaPecaCache(pieceId, workbookId)
+  const arte = await gerarArteDaPecaCache(pieceId, workbookId)
+  const jpg = await jpgPraPrint(arte.nome, arte.jpg)
   // nFotos = quantas fotos a arte usa; define a largura da unidade do padrão.
   const nFotos = [1, 2].filter((slot) => {
     const l = foto(pieceId, slot)
@@ -1354,8 +1367,12 @@ router.post('/workbooks/:wb/orders/:orderKey/gerar-previas', requireAuth, async 
       falhas.push({ pieceId: p.id, erro: (e as Error).message })
     }
   })
+  if (pecas.length === 0) {
+    res.status(422).json({ error: 'Nenhuma peça montada ainda pra este pedido', falhas: [] })
+    return
+  }
   if (feitas.length === 0) {
-    res.status(422).json({ error: 'Nenhuma prévia pôde ser gerada', detalhes: falhas })
+    res.status(422).json({ error: 'Nenhuma prévia pôde ser gerada', detalhes: falhas, falhas })
     return
   }
   const pronto = marcarProntoSeCompleto(wb, linha.id)

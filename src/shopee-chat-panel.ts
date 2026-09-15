@@ -1054,11 +1054,15 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
           error?: string
           previas?: Array<{ orderKey: string; col: number; label: string }>
           falhas?: Array<{ pieceId: number; erro: string }>
+          detalhes?: Array<{ pieceId: number; erro: string }>
         }
-        if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`)
+        const falhas = (body.falhas ?? body.detalhes ?? []).map((f) => f.erro)
+        if (!r.ok) {
+          const extra = falhas.length ? `\n${falhas.join('\n')}` : ''
+          throw new Error((body.error ?? `HTTP ${r.status}`) + extra)
+        }
         const previas = body.previas ?? []
         if (previas.length === 0) throw new Error(body.error ?? 'nenhuma prévia pôde ser gerada')
-        const falhas = (body.falhas ?? []).map((f) => f.erro)
         if (falhas.length > 0) {
           alert(`Atenção: ${falhas.length} peça(s) não geraram prévia:\n${falhas.join('\n')}`)
         }
