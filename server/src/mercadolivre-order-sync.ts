@@ -48,10 +48,26 @@ function formatSheetDate(isoOrMs: string | number): string {
 export const ML_PENDING_DATE_LABEL = 'Sem data de envio'
 
 /**
+ * Dia de calendário escrito pelo ML (o YYYY-MM-DD da string), sem converter fuso.
+ * buffering vem como meia-noite UTC (`2026-09-22T00:00:00.000Z`). Converter pra
+ * America/Sao_Paulo joga esse dia pra trás. O painel usa o dia que está escrito.
+ */
+function calendarDay(iso: string | null | undefined): string | null {
+  const match = String(iso ?? '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!match) return null
+  return `${match[3]}-${match[2]}-${match[1]}`
+}
+
+/**
  * Data do `<select>` — prazo de despacho do vendedor, NUNCA data da venda.
- * Preferência: GET /shipments/{id}/sla → expected_date.
- * Sem SLA (ex. personalizado em manufacturing): manufacturing_ending_date
- * ou estimated_schedule_limit. Fallback legado: estimated_handling_limit.
+ *
+ * Pedido já liberado (`ready_to_ship`): o painel mostra "Enviar hoje" no dia de
+ * `pay_before` (ou do buffering, se a etiqueta acabou de liberar). O SLA
+ * `expected_date` nesse momento é o dia seguinte às 23:59 — tolerância
+ * `same_day_or_<dia seguinte>` do horário de despacho — e não o dia que o ML cobra.
+ * Gravar o SLA atrasa a planilha 1 dia e o pedido estoura no painel.
+ *
+ * Ainda em preparação (`buffered`): SLA e buffering caem no mesmo dia. Segue o SLA.
  * Sem prazo → "Sem data de envio".
  */
 function resolveSheetDate(
@@ -59,6 +75,12 @@ function resolveSheetDate(
   slaExpectedDate?: string | null,
   manufacturingEndingDate?: string | null,
 ): string {
+  if (shipment?.status === 'ready_to_ship') {
+    const dispatchDay =
+      calendarDay(shipment.shipping_option?.estimated_delivery_time?.pay_before) ??
+      calendarDay(shipment.shipping_option?.buffering?.date)
+    if (dispatchDay) return dispatchDay
+  }
   if (slaExpectedDate) return formatSheetDate(slaExpectedDate)
   if (manufacturingEndingDate) return formatSheetDate(manufacturingEndingDate)
   const schedule = shipment?.shipping_option?.estimated_schedule_limit?.date

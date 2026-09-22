@@ -235,6 +235,13 @@ export interface MlShipment {
   shipping_option?: {
     estimated_handling_limit?: { date?: string }
     estimated_schedule_limit?: { date?: string }
+    buffering?: { date?: string | null }
+    estimated_delivery_time?: {
+      date?: string
+      /** Corte do dia em que o painel manda despachar. Não é a data de entrega. */
+      pay_before?: string | null
+      handling?: number
+    }
   }
   status_history?: { date_ready_to_ship?: string; date_shipped?: string; date_delivered?: string }
 }
