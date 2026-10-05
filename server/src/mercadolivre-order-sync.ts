@@ -61,11 +61,11 @@ function calendarDay(iso: string | null | undefined): string | null {
 /**
  * Data do `<select>` — prazo de despacho do vendedor, NUNCA data da venda.
  *
- * Pedido já liberado (`ready_to_ship`): o painel mostra "Enviar hoje" no dia de
- * `pay_before` (ou do buffering, se a etiqueta acabou de liberar). O SLA
- * `expected_date` nesse momento é o dia seguinte às 23:59 — tolerância
- * `same_day_or_<dia seguinte>` do horário de despacho — e não o dia que o ML cobra.
- * Gravar o SLA atrasa a planilha 1 dia e o pedido estoura no painel.
+ * Pedido já liberado (`ready_to_ship`): o painel mostra "Enviar hoje" no dia em
+ * que a etiqueta liberou (`buffering`). Sem buffering (venda do mesmo dia), usa
+ * `pay_before`. `pay_before` às vezes é um corte de pagamento posterior — gravar
+ * ele na frente empurra o pedido para uma data futura. O SLA `expected_date`
+ * nesse momento é o dia seguinte às 23:59 (tolerância) e também não é o dia do painel.
  *
  * Ainda em preparação (`buffered`): SLA e buffering caem no mesmo dia. Segue o SLA.
  * Sem prazo → "Sem data de envio".
@@ -77,8 +77,8 @@ function resolveSheetDate(
 ): string {
   if (shipment?.status === 'ready_to_ship') {
     const dispatchDay =
-      calendarDay(shipment.shipping_option?.estimated_delivery_time?.pay_before) ??
-      calendarDay(shipment.shipping_option?.buffering?.date)
+      calendarDay(shipment.shipping_option?.buffering?.date) ??
+      calendarDay(shipment.shipping_option?.estimated_delivery_time?.pay_before)
     if (dispatchDay) return dispatchDay
   }
   if (slaExpectedDate) return formatSheetDate(slaExpectedDate)
