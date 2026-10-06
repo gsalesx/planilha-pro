@@ -243,7 +243,8 @@ export async function abrirPickerEditor(
           <div class="picker-editor-grupo" data-so-mascara>
             <span class="picker-editor-label">Borracha</span>
             <div class="picker-editor-borracha">
-              <button type="button" class="in-borracha">Ativar</button>
+              <button type="button" class="in-borracha">Apagar</button>
+              <button type="button" class="in-borracha-restaurar">Restaurar</button>
               <input type="range" class="in-brush" min="10" max="200" step="5" value="60" />
             </div>
           </div>
@@ -358,7 +359,8 @@ export async function abrirPickerEditor(
 
   /** Camada onde a borracha pinta (mesma resolução da foto sem fundo). */
   let apagador: HTMLCanvasElement | null = null
-  let borrachaAtiva = false
+  /** off = arrasta a foto; apagar = fura; restaurar = devolve o que a borracha tirou nesta sessão. */
+  let borrachaModo: 'off' | 'apagar' | 'restaurar' = 'off'
   /** Posição do mouse no canvas — só usada pra desenhar a bolinha da borracha. */
   let cursor: { x: number; y: number } | null = null
 
@@ -410,7 +412,10 @@ export async function abrirPickerEditor(
     c.rotate((ajuste.rotation * Math.PI) / 180)
     c.imageSmoothingQuality = 'high'
     c.drawImage(fonte, -dw / 2, -dh / 2, dw, dh)
-    if (apagador) c.drawImage(apagador, -dw / 2, -dh / 2, dw, dh)
+    if (apagador) {
+      c.globalCompositeOperation = 'destination-out'
+      c.drawImage(apagador, -dw / 2, -dh / 2, dw, dh)
+    }
     c.restore()
   }
 
@@ -466,11 +471,11 @@ export async function abrirPickerEditor(
 
   /** Bolinha da borracha: mostra exatamente a área que o clique vai apagar. */
   function desenharCursorBorracha(c: CanvasRenderingContext2D): void {
-    if (!borrachaAtiva || !cursor) return
+    if (borrachaModo === 'off' || !cursor) return
     c.save()
     c.beginPath()
     c.arc(cursor.x, cursor.y, Number(inBrush.value) / 2, 0, Math.PI * 2)
-    c.strokeStyle = 'rgba(255,255,255,.95)'
+    c.strokeStyle = borrachaModo === 'restaurar' ? 'rgba(22,163,74,.95)' : 'rgba(255,255,255,.95)'
     c.lineWidth = 4
     c.stroke()
     c.strokeStyle = 'rgba(15,23,42,.9)'
@@ -610,10 +615,10 @@ export async function abrirPickerEditor(
     const alvo = paraFoto(p)
     if (!alvo) return
     const c = apagador.getContext('2d')!
-    // Pinta opaco no apagador e usa 'destination-out' na hora de aplicar —
-    // aqui basta marcar; a subtração real acontece no `aplicarBorracha`.
-    c.globalCompositeOperation = 'source-over'
-    c.fillStyle = 'rgba(255,0,0,1)'
+    // Apagar marca o buraco; restaurar tira a marca (destination-out na máscara).
+    // O preview e o Salvar furam a foto com essa mesma máscara.
+    c.globalCompositeOperation = borrachaModo === 'restaurar' ? 'destination-out' : 'source-over'
+    c.fillStyle = '#fff'
     c.beginPath()
     const rot = tamanhoRotacionado(fonte.naturalWidth, fonte.naturalHeight, ajuste.rotation)
     const escala = (ajuste.width || rot.w) / rot.w
@@ -627,7 +632,8 @@ export async function abrirPickerEditor(
 
   canvas.addEventListener('mousedown', (ev) => {
     const p = paraCanvas(ev)
-    if (borrachaAtiva) {
+    if (borrachaModo !== 'off') {
+      if (borrachaModo === 'restaurar' && !apagador) return
       apagarEm(p)
       arrastando = true
       ultimo = p
@@ -639,12 +645,12 @@ export async function abrirPickerEditor(
   })
   // A bolinha da borracha precisa acompanhar o mouse mesmo sem botão pressionado.
   canvas.addEventListener('mousemove', (ev) => {
-    if (!borrachaAtiva || arrastando) return
+    if (borrachaModo === 'off' || arrastando) return
     cursor = paraCanvas(ev)
     desenhar()
   })
   canvas.addEventListener('mouseleave', () => {
-    if (!borrachaAtiva) return
+    if (borrachaModo === 'off') return
     cursor = null
     desenhar()
   })
@@ -652,9 +658,9 @@ export async function abrirPickerEditor(
   window.addEventListener('mousemove', (ev) => {
     if (!arrastando) return
     const p = paraCanvas(ev)
-    if (borrachaAtiva) {
+    if (borrachaModo !== 'off') {
       cursor = p
-      apagarEm(p)
+      if (!(borrachaModo === 'restaurar' && !apagador)) apagarEm(p)
     } else {
       ajuste.dx += p.x - ultimo.x
       ajuste.dy += p.y - ultimo.y
@@ -664,7 +670,7 @@ export async function abrirPickerEditor(
   })
   window.addEventListener('mouseup', () => {
     arrastando = false
-    canvas.style.cursor = borrachaAtiva ? 'none' : 'grab'
+    canvas.style.cursor = borrachaModo === 'off' ? 'grab' : 'none'
   })
 
   canvas.addEventListener(
@@ -850,24 +856,42 @@ export async function abrirPickerEditor(
     desenhar()
   })
 
-  q<HTMLButtonElement>('.in-borracha').addEventListener('click', (ev) => {
+  function borrachaDisponivel(): boolean {
     // Borracha apaga sobra do PicWish (remove-fundo / face cutout) — não faz
     // sentido em cima da foto original (ainda com fundo), e salvar erraria:
     // aplicarBorracha sempre grava em sem_fundo_path.
-    if (fonteRecorte === 'original') {
-      setStatus(
-        modo === 'face'
-          ? 'A borracha só funciona no face cutout — clique em "✂ Recortar rosto".'
-          : 'A borracha só funciona na foto sem fundo — clique em "✂ Remover fundo".',
-        true,
-      )
-      return
+    if (fonteRecorte !== 'original') return true
+    setStatus(
+      modo === 'face'
+        ? 'A borracha só funciona no face cutout — clique em "✂ Recortar rosto".'
+        : 'A borracha só funciona na foto sem fundo — clique em "✂ Remover fundo".',
+      true,
+    )
+    return false
+  }
+
+  function sincronizarBorracha(): void {
+    q<HTMLButtonElement>('.in-borracha').classList.toggle('ativo', borrachaModo === 'apagar')
+    q<HTMLButtonElement>('.in-borracha-restaurar').classList.toggle('ativo', borrachaModo === 'restaurar')
+    canvas.style.cursor = borrachaModo === 'off' ? 'grab' : 'none'
+  }
+
+  function definirBorracha(modoAlvo: 'apagar' | 'restaurar'): void {
+    if (!borrachaDisponivel()) return
+    borrachaModo = borrachaModo === modoAlvo ? 'off' : modoAlvo
+    if (borrachaModo === 'off') cursor = null
+    sincronizarBorracha()
+    if (borrachaModo === 'restaurar' && !apagador) {
+      setStatus('Ainda não tem nada apagado pra restaurar.')
     }
-    borrachaAtiva = !borrachaAtiva
-    ;(ev.currentTarget as HTMLButtonElement).classList.toggle('ativo', borrachaAtiva)
-    canvas.style.cursor = borrachaAtiva ? 'none' : 'grab'
-    if (!borrachaAtiva) cursor = null
     desenhar()
+  }
+
+  q<HTMLButtonElement>('.in-borracha').addEventListener('click', () => {
+    definirBorracha('apagar')
+  })
+  q<HTMLButtonElement>('.in-borracha-restaurar').addEventListener('click', () => {
+    definirBorracha('restaurar')
   })
 
   // Mudar o tamanho do pincel precisa redesenhar a bolinha na hora.
@@ -994,6 +1018,9 @@ export async function abrirPickerEditor(
     ajuste.rotation = 0
     ajuste.width = 0
     apagador = null
+    borrachaModo = 'off'
+    cursor = null
+    sincronizarBorracha()
     void carregarFonte()
     sincronizarControles()
   })

@@ -4213,7 +4213,12 @@ table.sheet tbody th.row-num.is-active {
   border-color: #0f172a;
   color: #fff;
 }
-.picker-editor-borracha input[type='range'] { flex: 1; }
+.picker-editor-borracha button.in-borracha-restaurar.ativo {
+  background: #166534;
+  border-color: #166534;
+}
+.picker-editor-borracha { flex-wrap: wrap; }
+.picker-editor-borracha input[type='range'] { flex: 1 0 100%; }
 .picker-editor-controles input[type='range'] { width: 100%; }
 
 .picker-editor-acoes { display: flex; gap: 8px; margin-top: auto; }
