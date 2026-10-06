@@ -244,7 +244,8 @@ export async function abrirPickerEditor(
             <span class="picker-editor-label">Borracha</span>
             <div class="picker-editor-borracha">
               <button type="button" class="in-borracha">Apagar</button>
-              <button type="button" class="in-borracha-restaurar">Restaurar</button>
+              <button type="button" class="in-borracha-desfazer" title="Desfazer o último traço (Ctrl+Z)" disabled>←</button>
+              <button type="button" class="in-borracha-refazer" title="Refazer (Ctrl+Y)" disabled>→</button>
               <input type="range" class="in-brush" min="10" max="200" step="5" value="60" />
             </div>
           </div>
@@ -359,10 +360,69 @@ export async function abrirPickerEditor(
 
   /** Camada onde a borracha pinta (mesma resolução da foto sem fundo). */
   let apagador: HTMLCanvasElement | null = null
-  /** off = arrasta a foto; apagar = fura; restaurar = devolve o que a borracha tirou nesta sessão. */
-  let borrachaModo: 'off' | 'apagar' | 'restaurar' = 'off'
+  let borrachaAtiva = false
   /** Posição do mouse no canvas — só usada pra desenhar a bolinha da borracha. */
   let cursor: { x: number; y: number } | null = null
+  /** Cada item é a máscara ANTES de um traço. A seta pra trás volta um traço; a da frente refaz. */
+  const HISTORICO_MAX = 30
+  let historico: Array<HTMLCanvasElement | null> = []
+  let futuro: Array<HTMLCanvasElement | null> = []
+  let tracoAtivo = false
+  let mascaraAntes: HTMLCanvasElement | null = null
+
+  function clonarMascara(src: HTMLCanvasElement | null): HTMLCanvasElement | null {
+    if (!src) return null
+    const copia = document.createElement('canvas')
+    copia.width = src.width
+    copia.height = src.height
+    copia.getContext('2d')!.drawImage(src, 0, 0)
+    return copia
+  }
+
+  function atualizarSetas(): void {
+    q<HTMLButtonElement>('.in-borracha-desfazer').disabled = historico.length === 0
+    q<HTMLButtonElement>('.in-borracha-refazer').disabled = futuro.length === 0
+  }
+
+  function limparHistoricoBorracha(): void {
+    historico = []
+    futuro = []
+    tracoAtivo = false
+    mascaraAntes = null
+    atualizarSetas()
+  }
+
+  function guardarAntesDoTraco(): void {
+    if (tracoAtivo) return
+    tracoAtivo = true
+    mascaraAntes = clonarMascara(apagador)
+  }
+
+  function confirmarTraco(): void {
+    if (!tracoAtivo) return
+    tracoAtivo = false
+    historico.push(mascaraAntes)
+    if (historico.length > HISTORICO_MAX) historico.shift()
+    futuro = []
+    mascaraAntes = null
+    atualizarSetas()
+  }
+
+  function desfazerBorracha(): void {
+    if (tracoAtivo || historico.length === 0) return
+    futuro.push(clonarMascara(apagador))
+    apagador = historico.pop() ?? null
+    desenhar()
+    atualizarSetas()
+  }
+
+  function refazerBorracha(): void {
+    if (tracoAtivo || futuro.length === 0) return
+    historico.push(clonarMascara(apagador))
+    apagador = futuro.pop() ?? null
+    desenhar()
+    atualizarSetas()
+  }
 
   async function carregarFonte(): Promise<void> {
     // Sem-fundo / face-cutout NUNCA vêm da URL pendente (são derivados no servidor) —
@@ -378,6 +438,7 @@ export async function abrirPickerEditor(
         ajuste.width = Math.round((CANVAS / Math.min(r.w, r.h)) * r.w)
       }
       apagador = null
+      limparHistoricoBorracha()
       desenhar()
     } catch {
       fonte = null
@@ -471,11 +532,11 @@ export async function abrirPickerEditor(
 
   /** Bolinha da borracha: mostra exatamente a área que o clique vai apagar. */
   function desenharCursorBorracha(c: CanvasRenderingContext2D): void {
-    if (borrachaModo === 'off' || !cursor) return
+    if (!borrachaAtiva || !cursor) return
     c.save()
     c.beginPath()
     c.arc(cursor.x, cursor.y, Number(inBrush.value) / 2, 0, Math.PI * 2)
-    c.strokeStyle = borrachaModo === 'restaurar' ? 'rgba(22,163,74,.95)' : 'rgba(255,255,255,.95)'
+    c.strokeStyle = 'rgba(255,255,255,.95)'
     c.lineWidth = 4
     c.stroke()
     c.strokeStyle = 'rgba(15,23,42,.9)'
@@ -615,9 +676,9 @@ export async function abrirPickerEditor(
     const alvo = paraFoto(p)
     if (!alvo) return
     const c = apagador.getContext('2d')!
-    // Apagar marca o buraco; restaurar tira a marca (destination-out na máscara).
-    // O preview e o Salvar furam a foto com essa mesma máscara.
-    c.globalCompositeOperation = borrachaModo === 'restaurar' ? 'destination-out' : 'source-over'
+    // Marca o buraco. O preview e o Salvar furam a foto com essa máscara.
+    // A seta pra trás devolve a máscara de antes do traço.
+    c.globalCompositeOperation = 'source-over'
     c.fillStyle = '#fff'
     c.beginPath()
     const rot = tamanhoRotacionado(fonte.naturalWidth, fonte.naturalHeight, ajuste.rotation)
@@ -632,8 +693,8 @@ export async function abrirPickerEditor(
 
   canvas.addEventListener('mousedown', (ev) => {
     const p = paraCanvas(ev)
-    if (borrachaModo !== 'off') {
-      if (borrachaModo === 'restaurar' && !apagador) return
+    if (borrachaAtiva) {
+      guardarAntesDoTraco()
       apagarEm(p)
       arrastando = true
       ultimo = p
@@ -645,12 +706,12 @@ export async function abrirPickerEditor(
   })
   // A bolinha da borracha precisa acompanhar o mouse mesmo sem botão pressionado.
   canvas.addEventListener('mousemove', (ev) => {
-    if (borrachaModo === 'off' || arrastando) return
+    if (!borrachaAtiva || arrastando) return
     cursor = paraCanvas(ev)
     desenhar()
   })
   canvas.addEventListener('mouseleave', () => {
-    if (borrachaModo === 'off') return
+    if (!borrachaAtiva) return
     cursor = null
     desenhar()
   })
@@ -658,9 +719,9 @@ export async function abrirPickerEditor(
   window.addEventListener('mousemove', (ev) => {
     if (!arrastando) return
     const p = paraCanvas(ev)
-    if (borrachaModo !== 'off') {
+    if (borrachaAtiva) {
       cursor = p
-      if (!(borrachaModo === 'restaurar' && !apagador)) apagarEm(p)
+      apagarEm(p)
     } else {
       ajuste.dx += p.x - ultimo.x
       ajuste.dy += p.y - ultimo.y
@@ -669,8 +730,9 @@ export async function abrirPickerEditor(
     ultimo = p
   })
   window.addEventListener('mouseup', () => {
+    if (tracoAtivo) confirmarTraco()
     arrastando = false
-    canvas.style.cursor = borrachaModo === 'off' ? 'grab' : 'none'
+    canvas.style.cursor = borrachaAtiva ? 'none' : 'grab'
   })
 
   canvas.addEventListener(
@@ -871,27 +933,23 @@ export async function abrirPickerEditor(
   }
 
   function sincronizarBorracha(): void {
-    q<HTMLButtonElement>('.in-borracha').classList.toggle('ativo', borrachaModo === 'apagar')
-    q<HTMLButtonElement>('.in-borracha-restaurar').classList.toggle('ativo', borrachaModo === 'restaurar')
-    canvas.style.cursor = borrachaModo === 'off' ? 'grab' : 'none'
-  }
-
-  function definirBorracha(modoAlvo: 'apagar' | 'restaurar'): void {
-    if (!borrachaDisponivel()) return
-    borrachaModo = borrachaModo === modoAlvo ? 'off' : modoAlvo
-    if (borrachaModo === 'off') cursor = null
-    sincronizarBorracha()
-    if (borrachaModo === 'restaurar' && !apagador) {
-      setStatus('Ainda não tem nada apagado pra restaurar.')
-    }
-    desenhar()
+    q<HTMLButtonElement>('.in-borracha').classList.toggle('ativo', borrachaAtiva)
+    canvas.style.cursor = borrachaAtiva ? 'none' : 'grab'
+    atualizarSetas()
   }
 
   q<HTMLButtonElement>('.in-borracha').addEventListener('click', () => {
-    definirBorracha('apagar')
+    if (!borrachaDisponivel()) return
+    borrachaAtiva = !borrachaAtiva
+    if (!borrachaAtiva) cursor = null
+    sincronizarBorracha()
+    desenhar()
   })
-  q<HTMLButtonElement>('.in-borracha-restaurar').addEventListener('click', () => {
-    definirBorracha('restaurar')
+  q<HTMLButtonElement>('.in-borracha-desfazer').addEventListener('click', () => {
+    desfazerBorracha()
+  })
+  q<HTMLButtonElement>('.in-borracha-refazer').addEventListener('click', () => {
+    refazerBorracha()
   })
 
   // Mudar o tamanho do pincel precisa redesenhar a bolinha na hora.
@@ -1018,8 +1076,9 @@ export async function abrirPickerEditor(
     ajuste.rotation = 0
     ajuste.width = 0
     apagador = null
-    borrachaModo = 'off'
+    borrachaAtiva = false
     cursor = null
+    limparHistoricoBorracha()
     sincronizarBorracha()
     void carregarFonte()
     sincronizarControles()
@@ -1077,7 +1136,28 @@ export async function abrirPickerEditor(
     resolver = null
   }
   function onKey(ev: KeyboardEvent): void {
-    if (ev.key === 'Escape') fechar()
+    if (ev.key === 'Escape') {
+      fechar()
+      return
+    }
+    const alvo = ev.target
+    if (alvo instanceof HTMLTextAreaElement) return
+    if (
+      alvo instanceof HTMLInputElement &&
+      alvo.type !== 'range' &&
+      alvo.type !== 'button'
+    ) {
+      return
+    }
+    if (!(ev.ctrlKey || ev.metaKey)) return
+    const key = ev.key.toLowerCase()
+    if (key === 'z' && !ev.shiftKey) {
+      ev.preventDefault()
+      desfazerBorracha()
+    } else if (key === 'y' || (key === 'z' && ev.shiftKey)) {
+      ev.preventDefault()
+      refazerBorracha()
+    }
   }
   document.addEventListener('keydown', onKey)
   q<HTMLButtonElement>('.picker-editor-close').addEventListener('click', () => fechar())

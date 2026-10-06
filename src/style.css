@@ -4213,9 +4213,13 @@ table.sheet tbody th.row-num.is-active {
   border-color: #0f172a;
   color: #fff;
 }
-.picker-editor-borracha button.in-borracha-restaurar.ativo {
-  background: #166534;
-  border-color: #166534;
+.picker-editor-borracha button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.picker-editor-borracha button.in-borracha-desfazer,
+.picker-editor-borracha button.in-borracha-refazer {
+  flex: 0 0 38px;
 }
 .picker-editor-borracha { flex-wrap: wrap; }
 .picker-editor-borracha input[type='range'] { flex: 1 0 100%; }
