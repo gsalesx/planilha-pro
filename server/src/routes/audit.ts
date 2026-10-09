@@ -976,10 +976,15 @@ const XLSX_STATUS_MAP: Record<string, string> = {
   processando: 'PROCESSED',
   enviado: 'SHIPPED',
   concluido: 'COMPLETED',
+  'pedido recebido': 'COMPLETED',
   cancelado: 'CANCELLED',
   'devolucao / reembolso': 'TO_RETURN',
   'devolucao/reembolso': 'TO_RETURN',
   'em disputa': 'IN_CANCEL',
+  'solicitacao de cancelamento': 'IN_CANCEL',
+  'pedido com solicitacao de cancelamento': 'IN_CANCEL',
+  'em cancelamento': 'IN_CANCEL',
+  'cancelamento solicitado': 'IN_CANCEL',
   entregue: 'TO_CONFIRM_RECEIVE',
 }
 
@@ -993,6 +998,12 @@ const XLSX_STATUS_PREFIX_RETURN_WINDOW = normalizeHeader('o comprador pode pedir
 function mapXlsxStatus(statusNorm: string): string | undefined {
   if (XLSX_STATUS_MAP[statusNorm]) return XLSX_STATUS_MAP[statusNorm]
   if (statusNorm.startsWith(XLSX_STATUS_PREFIX_RETURN_WINDOW)) return 'TO_CONFIRM_RECEIVE'
+  // "Pedido recebido pelo comprador" e variações do Seller Center = COMPLETED
+  // (o push da API usa completed_scenario NORMAL nesse momento).
+  if (statusNorm.startsWith('pedido recebido')) return 'COMPLETED'
+  // "Cancelado" já está no mapa. Qualquer outro rótulo com "cancelamento"
+  // (solicitação, em cancelamento, etc.) é IN_CANCEL — o pedido ainda entra na planilha.
+  if (statusNorm.includes('cancelamento')) return 'IN_CANCEL'
   return undefined
 }
 
@@ -1098,6 +1109,7 @@ router.post('/audit/importar-pedidos-xlsx', requireAuth, uploadXlsx.single('file
   }
 
   const novos = pedidos.filter((p) => !shopeeOrderExists(p.order_sn!, workbookId))
+  const pedidosComSolicitacaoCancelamento = pedidos.filter((p) => p.order_status === 'IN_CANCEL').length
   const multiplasLinhas = pedidos.filter((p) => (p.item_list?.length ?? 0) > 1)
   const unidadesExplodidas = pedidos.filter((p) => (p.item_list ?? []).some((i) => (i.model_quantity_purchased ?? 1) > 1))
 
@@ -1113,6 +1125,7 @@ router.post('/audit/importar-pedidos-xlsx', requireAuth, uploadXlsx.single('file
       pedidosComMultiplosItens: multiplasLinhas.length,
       pedidosComAlgumaUnidadeMultipla: unidadesExplodidas.length,
       statusNaoMapeados: Object.fromEntries(statusNaoMapeados),
+      pedidosComSolicitacaoCancelamento,
       amostraExplosao: [...multiplasLinhas, ...unidadesExplodidas]
         .filter((p, i, arr) => arr.indexOf(p) === i)
         .slice(0, 5)
@@ -1159,6 +1172,7 @@ router.post('/audit/importar-pedidos-xlsx', requireAuth, uploadXlsx.single('file
     created,
     updated,
     unchanged,
+    pedidosComSolicitacaoCancelamento,
     errors,
   })
 })

@@ -291,6 +291,7 @@ export interface ImportShopeeOrdersXlsxResult {
   pedidosComMultiplosItens?: number
   pedidosComAlgumaUnidadeMultipla?: number
   statusNaoMapeados?: Record<string, number>
+  pedidosComSolicitacaoCancelamento?: number
   created?: number
   updated?: number
   unchanged?: number

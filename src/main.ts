@@ -1463,6 +1463,11 @@ function formatStatusNaoMapeados(map: Record<string, number> | undefined): strin
   return entries.map(([status, qtd]) => `• ${status} (${qtd})`).join('\n')
 }
 
+function formatAvisoCancelamento(qtd: number): string {
+  const palavra = qtd === 1 ? 'pedido' : 'pedidos'
+  return `Importante: ${qtd} ${palavra} com solicitação de cancelamento.`
+}
+
 function bindShopeeXlsxImport() {
   const input = document.querySelector<HTMLInputElement>('#shopee-xlsx-input')
   if (!input) return
@@ -1504,6 +1509,10 @@ async function importShopeeXlsxFromFile(file: File) {
     if (amostraNovos) {
       corpo.push('', `Exemplos de novos: ${amostraNovos}${novos > 8 ? '…' : ''}`)
     }
+    const cancelamentosPreview = preview.pedidosComSolicitacaoCancelamento ?? 0
+    if (cancelamentosPreview > 0) {
+      corpo.push('', formatAvisoCancelamento(cancelamentosPreview))
+    }
 
     openConfirmDialog({
       title: 'Importar XLSX da Shopee?',
@@ -1518,13 +1527,21 @@ async function importShopeeXlsxFromFile(file: File) {
           )
           await refreshFromServer({ force: true })
           const erros = result.errors?.length ?? 0
-          const msg = `${result.created ?? 0} criados · ${result.updated ?? 0} atualizados · ${result.unchanged ?? 0} sem mudança${erros ? ` · ${erros} erro(s)` : ''}`
-          setStatusText(`Importação concluída — ${msg}`)
-          setShopeeActionBanner(`Importação concluída: ${msg}`, erros ? 'error' : 'success')
-          if (erros) {
+          const importados = (result.created ?? 0) + (result.updated ?? 0)
+          const cancelamentos = result.pedidosComSolicitacaoCancelamento ?? 0
+          const sucesso = `${importados} ${importados === 1 ? 'pedido importado' : 'pedidos importados'} com sucesso.`
+          const avisoCancelamento = cancelamentos > 0 ? formatAvisoCancelamento(cancelamentos) : ''
+          const detalhe = `${result.created ?? 0} criados · ${result.updated ?? 0} atualizados · ${result.unchanged ?? 0} sem mudança${erros ? ` · ${erros} erro(s)` : ''}`
+          const resumo = [sucesso, avisoCancelamento].filter(Boolean).join(' ')
+          setStatusText(resumo)
+          setShopeeActionBanner(resumo, erros ? 'error' : 'success')
+          if (avisoCancelamento || erros) {
+            const corpo = [sucesso, detalhe]
+            if (avisoCancelamento) corpo.push('', avisoCancelamento)
+            if (erros) corpo.push('', ...(result.errors ?? []).slice(0, 20))
             openAlertDialog({
-              title: 'Importação com erros',
-              body: (result.errors ?? []).slice(0, 20).join('\n'),
+              title: erros ? 'Importação com erros' : 'Importação concluída',
+              body: corpo.join('\n'),
             })
           }
         } catch (error) {
