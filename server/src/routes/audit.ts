@@ -14,6 +14,7 @@ import {
   type ShopeeItemRow,
   type ShopeeOrderDetail,
 } from '../shopee-order-sync.js'
+import { noteUnknownSpreadsheetStatuses } from '../marketplace-status.js'
 import { SHOPEE_WORKBOOK_ID } from '../shopee-workbook.js'
 
 const router = Router()
@@ -1082,6 +1083,7 @@ router.post('/audit/importar-pedidos-xlsx', requireAuth, uploadXlsx.single('file
   }
 
   const statusNaoMapeados = new Map<string, number>()
+  const exemplosNaoMapeados = new Map<string, string[]>()
   const pedidos: ShopeeOrderDetail[] = []
   for (const id of ordemPedidos) {
     const linhas = linhasPorPedido.get(id)!
@@ -1089,7 +1091,14 @@ router.post('/audit/importar-pedidos-xlsx', requireAuth, uploadXlsx.single('file
     const statusBruto = String(primeira[idxStatus] ?? '').trim()
     const statusNorm = normalizeHeader(statusBruto)
     const status = mapXlsxStatus(statusNorm)
-    if (!status) statusNaoMapeados.set(statusBruto, (statusNaoMapeados.get(statusBruto) ?? 0) + 1)
+    if (!status) {
+      statusNaoMapeados.set(statusBruto, (statusNaoMapeados.get(statusBruto) ?? 0) + 1)
+      const exemplos = exemplosNaoMapeados.get(statusBruto) ?? []
+      if (exemplos.length < 8) {
+        exemplos.push(id)
+        exemplosNaoMapeados.set(statusBruto, exemplos)
+      }
+    }
 
     const item_list: ShopeeItemRow[] = linhas.map((row) => ({
       item_sku: String(row[idxSku] ?? '').trim(),
@@ -1112,6 +1121,27 @@ router.post('/audit/importar-pedidos-xlsx', requireAuth, uploadXlsx.single('file
   const pedidosComSolicitacaoCancelamento = pedidos.filter((p) => p.order_status === 'IN_CANCEL').length
   const multiplasLinhas = pedidos.filter((p) => (p.item_list?.length ?? 0) > 1)
   const unidadesExplodidas = pedidos.filter((p) => (p.item_list ?? []).some((i) => (i.model_quantity_purchased ?? 1) > 1))
+
+  if (statusNaoMapeados.size > 0) {
+    noteUnknownSpreadsheetStatuses({
+      channel: 'shopee',
+      workbookId,
+      arquivo: req.file!.originalname,
+      status: Object.fromEntries(statusNaoMapeados),
+      exemplos: Object.fromEntries(exemplosNaoMapeados),
+    })
+    if (aplicar) {
+      res.json({
+        ok: true,
+        aplicado: false,
+        workbookId,
+        totalPedidosNoXlsx: pedidos.length,
+        statusNaoMapeados: Object.fromEntries(statusNaoMapeados),
+        pedidosComSolicitacaoCancelamento,
+      })
+      return
+    }
+  }
 
   if (!aplicar) {
     res.json({

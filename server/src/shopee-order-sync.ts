@@ -20,6 +20,7 @@ import {
   SHOPEE_INTERNAL_STATUS_CANCELLED,
   SHOPEE_INTERNAL_STATUS_SHIPPED,
 } from './shopee-columns.js'
+import { noteUnknownMarketplaceStatus } from './marketplace-status.js'
 import { ensureShopeeWorkbook, SHOPEE_WORKBOOK_ID } from './shopee-workbook.js'
 
 export interface ShopeeItemRow {
@@ -462,6 +463,21 @@ export function upsertShopeeOrder(
     runId: ctx.runId ?? null,
     workbookId,
     orderSn,
+  }
+
+  const statusAnterior = linhasExistentes[0]
+    ? String((JSON.parse(linhasExistentes[0].row_json) as string[])[SHOPEE_COL_SHOPEE_STATUS] ?? '')
+    : ''
+  if (shopeeStatus && shopeeStatus !== statusAnterior) {
+    noteUnknownMarketplaceStatus({
+      channel: 'shopee',
+      origem: 'api',
+      status: shopeeStatus,
+      workbookId,
+      orderId: orderSn,
+      runId: ctx.runId,
+      source: ctx.source,
+    })
   }
 
   const updateStmt = db.prepare(

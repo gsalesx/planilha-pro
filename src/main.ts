@@ -1468,6 +1468,18 @@ function formatAvisoCancelamento(qtd: number): string {
   return `Importante: ${qtd} ${palavra} com solicitação de cancelamento.`
 }
 
+function avisarStatusNaoReconhecidos(map: Record<string, number> | undefined): boolean {
+  const texto = formatStatusNaoMapeados(map)
+  if (!texto) return false
+  setShopeeActionBanner('Importação cancelada — status não reconhecidos no XLSX', 'error')
+  openAlertDialog({
+    title: 'Status não reconhecidos',
+    body: `O export tem status que ainda não estão mapeados. Avise quem mantém o sistema antes de importar.\n\n${texto}`,
+  })
+  setStatusText('Importação cancelada — status não mapeados')
+  return true
+}
+
 function bindShopeeXlsxImport() {
   const input = document.querySelector<HTMLInputElement>('#shopee-xlsx-input')
   if (!input) return
@@ -1485,16 +1497,7 @@ async function importShopeeXlsxFromFile(file: File) {
   setShopeeActionBanner('Conferindo export da Shopee…', 'loading')
   try {
     const preview = await importShopeeOrdersXlsx(file, { workbookId })
-    const naoMapeados = formatStatusNaoMapeados(preview.statusNaoMapeados)
-    if (naoMapeados) {
-      setShopeeActionBanner('Importação cancelada — status não reconhecidos no XLSX', 'error')
-      openAlertDialog({
-        title: 'Status não reconhecidos',
-        body: `O export tem status que ainda não estão mapeados. Avise quem mantém o sistema antes de importar.\n\n${naoMapeados}`,
-      })
-      setStatusText('Importação cancelada — status não mapeados')
-      return
-    }
+    if (avisarStatusNaoReconhecidos(preview.statusNaoMapeados)) return
 
     const novos = preview.pedidosNovos ?? 0
     const existentes = preview.pedidosJaExistentes ?? 0
@@ -1525,6 +1528,7 @@ async function importShopeeXlsxFromFile(file: File) {
           const result = await withPollingPaused(async () =>
             importShopeeOrdersXlsx(file, { workbookId, aplicar: true }),
           )
+          if (avisarStatusNaoReconhecidos(result.statusNaoMapeados)) return
           await refreshFromServer({ force: true })
           const erros = result.errors?.length ?? 0
           const importados = (result.created ?? 0) + (result.updated ?? 0)

@@ -4,6 +4,8 @@
  */
 import { type AuditSource, recordAudit } from './audit.js'
 import { db, nowMs } from './db.js'
+import { channelOfWorkbook } from './marketplace.js'
+import { noteUnknownMarketplaceStatus } from './marketplace-status.js'
 import {
   MP_COL_INTERNAL_STATUS,
   MP_COL_ORDER_ID,
@@ -84,6 +86,25 @@ export function marketplaceUpsertOrder(input: MarketplaceUpsertInput): 'created'
     runId: input.runId ?? null,
     workbookId,
     orderSn: orderId,
+  }
+  const channel = channelOfWorkbook(workbookId)
+  const statusChegando = String(unitRows[0]?.[MP_COL_MARKETPLACE_STATUS] ?? '').trim()
+  if (channel && statusChegando) {
+    const primeira = findByKey(workbookId, orderId) ?? findBySn(workbookId, orderId)[0]
+    const statusAnterior = primeira
+      ? String((JSON.parse(primeira.row_json) as string[])[MP_COL_MARKETPLACE_STATUS] ?? '').trim()
+      : ''
+    if (statusChegando !== statusAnterior) {
+      noteUnknownMarketplaceStatus({
+        channel,
+        origem: 'api',
+        status: statusChegando,
+        workbookId,
+        orderId,
+        runId: input.runId,
+        source: input.source,
+      })
+    }
   }
   const updateStmt = db.prepare(
     'UPDATE orders SET row_json = ?, sheet_date = ?, product_image_url = ?, updated_at = ? WHERE workbook_id = ? AND order_key = ?',
