@@ -58,14 +58,35 @@ function calendarDay(iso: string | null | undefined): string | null {
   return `${match[3]}-${match[2]}-${match[1]}`
 }
 
+function sheetDayNumber(ddmmyyyy: string): number {
+  const [d, m, y] = ddmmyyyy.split('-').map(Number)
+  return y * 10000 + m * 100 + d
+}
+
+/** Dia de calendário anterior, sem fuso. `13-10-2026` → `12-10-2026`. */
+function dayBefore(ddmmyyyy: string): string {
+  const [d, m, y] = ddmmyyyy.split('-').map(Number)
+  const utc = new Date(Date.UTC(y, m - 1, d))
+  utc.setUTCDate(utc.getUTCDate() - 1)
+  const dd = String(utc.getUTCDate()).padStart(2, '0')
+  const mm = String(utc.getUTCMonth() + 1).padStart(2, '0')
+  return `${dd}-${mm}-${utc.getUTCFullYear()}`
+}
+
 /**
  * Data do `<select>` — prazo de despacho do vendedor, NUNCA data da venda.
  *
  * Pedido já liberado (`ready_to_ship`): o painel mostra "Enviar hoje" no dia em
  * que a etiqueta liberou (`buffering`). Sem buffering (venda do mesmo dia), usa
  * `pay_before`. `pay_before` às vezes é um corte de pagamento posterior — gravar
- * ele na frente empurra o pedido para uma data futura. O SLA `expected_date`
- * nesse momento é o dia seguinte às 23:59 (tolerância) e também não é o dia do painel.
+ * ele na frente empurra o pedido para uma data futura.
+ *
+ * O SLA `expected_date` é a tolerância, 23:59 do dia seguinte ao que o painel
+ * mostra. No dia em que a etiqueta libera, isso coincide com o buffering. Se o
+ * Mercado Livre empurra o prazo (fim de semana, atraso de manuseio), o buffering
+ * fica congelado no dia original e o painel acompanha o SLA. Nesse caso o dia da
+ * planilha é a véspera do `expected_date`, e só quando essa véspera é posterior
+ * ao buffering.
  *
  * Ainda em preparação (`buffered`): SLA e buffering caem no mesmo dia. Segue o SLA.
  * Sem prazo → "Sem data de envio".
@@ -79,6 +100,14 @@ function resolveSheetDate(
     const dispatchDay =
       calendarDay(shipment.shipping_option?.buffering?.date) ??
       calendarDay(shipment.shipping_option?.estimated_delivery_time?.pay_before)
+    const slaDay = calendarDay(slaExpectedDate)
+    const panelFromSla = slaDay ? dayBefore(slaDay) : null
+    if (
+      panelFromSla &&
+      (!dispatchDay || sheetDayNumber(panelFromSla) > sheetDayNumber(dispatchDay))
+    ) {
+      return panelFromSla
+    }
     if (dispatchDay) return dispatchDay
   }
   if (slaExpectedDate) return formatSheetDate(slaExpectedDate)
