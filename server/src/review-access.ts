@@ -1,5 +1,8 @@
 import type { SessionRole } from './auth.js'
 
+/** Planilha que o login de avaliação vê no lugar da principal. Mesmo app, outro workbook. */
+export const REVIEW_WORKBOOK_ID = 'wb_avaliacao'
+
 /** Coluna G — nome do destinatário. */
 const RECIPIENT_COL = 6
 
@@ -45,6 +48,28 @@ function isChatPath(path: string): boolean {
 
 function isLabelPath(path: string): boolean {
   return /\/(?:shipping-label|shipping-parameter)(?:\/|$)/.test(path)
+}
+
+/**
+ * O login de avaliação só alcança a planilha de outubro.
+ * O login da loja não vê essa planilha.
+ */
+export function workbookAccessBlock(
+  path: string,
+  role: SessionRole | null,
+  workbookIdQuery?: string,
+): string | null {
+  if (!role) return null
+  const ids = new Set<string>()
+  const match = /\/workbooks\/([^/?]+)/.exec(path)
+  if (match?.[1]) ids.add(decodeURIComponent(match[1]))
+  if (workbookIdQuery) ids.add(workbookIdQuery)
+  for (const id of ids) {
+    const reviewSheet = id === REVIEW_WORKBOOK_ID
+    if (role === 'review' && !reviewSheet) return 'Planilha não encontrada'
+    if (role !== 'review' && reviewSheet) return 'Planilha não encontrada'
+  }
+  return null
 }
 
 /** Mensagem de bloqueio do login de avaliação, ou null se a rota pode seguir. */

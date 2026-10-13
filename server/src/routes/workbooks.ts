@@ -4,10 +4,11 @@ import path from 'node:path'
 
 import { Router } from 'express'
 
-import { requireAuth } from '../auth.js'
+import { requireAuth, type AuthenticatedRequest } from '../auth.js'
 import { db, nowMs } from '../db.js'
 import { env } from '../env.js'
 import { isMarketplaceWorkbookId, MARKETPLACE_WORKBOOKS } from '../marketplace.js'
+import { REVIEW_WORKBOOK_ID } from '../review-access.js'
 
 const router = Router()
 const imagesDir = path.join(env.dataDir, 'images')
@@ -46,18 +47,22 @@ function serializeWorkbook(row: WorkbookRow & { count?: number }) {
   }
 }
 
-router.get('/workbooks', requireAuth, (_req, res) => {
+router.get('/workbooks', requireAuth, (req: AuthenticatedRequest, res) => {
   // Pin: Shopee, TikTok, ML no topo (nessa ordem), depois as demais por updated_at.
+  // A planilha de avaliação não entra na lista da loja, e o login de avaliação só vê essa.
   const pinOrder = MARKETPLACE_WORKBOOKS.map((w) => w.id)
   const caseSql = pinOrder.map((id, i) => `WHEN w.id = '${id}' THEN ${i}`).join(' ')
+  const review = req.sessionRole === 'review'
+  const where = review ? 'WHERE w.id = ?' : 'WHERE w.id <> ?'
   const rows = db
     .prepare(
       `SELECT w.id, w.name, w.created_at, w.updated_at, w.column_widths,
               (SELECT COUNT(*) FROM orders o WHERE o.workbook_id = w.id) AS count
          FROM workbooks w
+         ${where}
          ORDER BY CASE ${caseSql} ELSE ${pinOrder.length} END, w.updated_at DESC`,
     )
-    .all() as Array<WorkbookRow & { count: number }>
+    .all(REVIEW_WORKBOOK_ID) as Array<WorkbookRow & { count: number }>
   res.json(rows.map(serializeWorkbook))
 })
 

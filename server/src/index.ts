@@ -10,7 +10,7 @@ import sharp from 'sharp'
 
 import { newRunId, pruneAudit, recordAudit } from './audit.js'
 import { cleanupExpiredSessions, requestSessionRole, requireAuth } from './auth.js'
-import { reviewAccessBlock } from './review-access.js'
+import { reviewAccessBlock, workbookAccessBlock } from './review-access.js'
 import { env, isProd } from './env.js'
 import { ASSETS_DIR, ensureEmojiCatalogSeeded } from './emoji-catalog.js'
 import {
@@ -91,9 +91,16 @@ app.post(
 app.use(express.json({ limit: '10mb' }))
 
 app.use('/api', (req, res, next) => {
-  const message = reviewAccessBlock(req.method, req.path, requestSessionRole(req))
+  const role = requestSessionRole(req)
+  const message = reviewAccessBlock(req.method, req.path, role)
   if (message) {
     res.status(403).json({ error: message })
+    return
+  }
+  const workbookId = typeof req.query.workbookId === 'string' ? req.query.workbookId : undefined
+  const hidden = workbookAccessBlock(req.path, role, workbookId)
+  if (hidden) {
+    res.status(404).json({ error: hidden })
     return
   }
   next()

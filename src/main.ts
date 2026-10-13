@@ -47,6 +47,7 @@ import {
   isMarketplaceWorkbookId,
   isShopeeWorkbookId,
   marketplaceDef,
+  REVIEW_WORKBOOK_ID,
   marketplaceStatusMatchValues,
 } from './shopee-workbook'
 import { openShopeeChatPanel } from './shopee-chat-panel'
@@ -2048,7 +2049,9 @@ function bindBaixarAprovados() {
 function applyReviewChrome() {
   const review = isReviewSession()
   const badge = document.querySelector<HTMLElement>('#review-badge')
-  if (badge) badge.hidden = !review
+  if (badge) badge.hidden = true
+  const back = document.querySelector<HTMLElement>('#back-btn')
+  if (back) back.hidden = review
   const etiquetas = document.querySelector<HTMLElement>('#etiqueta-controls')
   if (etiquetas) etiquetas.hidden = review
   const deleteDate = document.querySelector<HTMLButtonElement>('#date-delete-btn')
@@ -2169,6 +2172,10 @@ async function init() {
     showLoginScreen(() => {
       void init()
     })
+    return
+  }
+  if (isReviewSession()) {
+    await enterWorkbook(REVIEW_WORKBOOK_ID)
     return
   }
   const workbookId = getUrlWorkbookId()

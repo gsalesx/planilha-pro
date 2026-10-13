@@ -26,6 +26,8 @@ export interface MarketplaceWorkbookDef {
 }
 
 export const SHOPEE_WORKBOOK_ID = 'wb_shopee'
+/** Cópia de outubro vista só pelo login de avaliação, no mesmo endereço. */
+export const REVIEW_WORKBOOK_ID = 'wb_avaliacao'
 export const TIKTOK_WORKBOOK_ID = 'wb_tiktok'
 export const MERCADOLIVRE_WORKBOOK_ID = 'wb_mercadolivre'
 
@@ -141,6 +143,7 @@ export function channelOfWorkbook(id: string): MarketplaceChannel | null {
 }
 
 export function marketplaceDef(id: string): MarketplaceWorkbookDef | undefined {
+  if (id === REVIEW_WORKBOOK_ID) return BY_ID.get(SHOPEE_WORKBOOK_ID)
   return BY_ID.get(id)
 }
 
