@@ -164,9 +164,12 @@ export class GridView {
   private centeredColumns = new Set(DEFAULT_CENTERED_COLUMNS)
   private linkedChatUsernames = new Set<string>()
 
-  constructor(root: HTMLElement, callbacks: GridCallbacks) {
+  private readOnly = false
+
+  constructor(root: HTMLElement, callbacks: GridCallbacks, options?: { readOnly?: boolean }) {
     this.root = root
     this.callbacks = callbacks
+    this.readOnly = options?.readOnly ?? false
   }
 
   setWorkbook(workbook: WorkbookData | null) {
@@ -843,22 +846,24 @@ export class GridView {
       const text = document.createElement('span')
       text.className = 'user-cell-text'
       text.textContent = value == null ? '' : String(value)
-      const menuBtn = document.createElement('button')
-      menuBtn.type = 'button'
-      menuBtn.className = 'user-cell-copy recipient-menu-btn' + (comment ? ' has-comment' : '')
-      menuBtn.title = 'Ações do destinatário'
-      menuBtn.innerHTML = `
+      wrap.appendChild(text)
+      if (!this.readOnly) {
+        const menuBtn = document.createElement('button')
+        menuBtn.type = 'button'
+        menuBtn.className = 'user-cell-copy recipient-menu-btn' + (comment ? ' has-comment' : '')
+        menuBtn.title = 'Ações do destinatário'
+        menuBtn.innerHTML = `
         <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
           <path d="M4 5.5h12M4 10h12M4 14.5h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none" />
         </svg>
       `
-      menuBtn.addEventListener('click', (event) => {
-        event.stopPropagation()
-        this.select(row, col)
-        this.openRecipientActionMenu(row, col, menuBtn, sheet, comment)
-      })
-      wrap.appendChild(text)
-      wrap.appendChild(menuBtn)
+        menuBtn.addEventListener('click', (event) => {
+          event.stopPropagation()
+          this.select(row, col)
+          this.openRecipientActionMenu(row, col, menuBtn, sheet, comment)
+        })
+        wrap.appendChild(menuBtn)
+      }
       td.appendChild(wrap)
     } else if (this.imageColumnIndices.has(col)) {
       td.classList.add('cell-image')
@@ -919,7 +924,7 @@ export class GridView {
         })
         wrap.appendChild(img)
         wrap.appendChild(copyBtn)
-        wrap.appendChild(delBtn)
+        if (!this.readOnly) wrap.appendChild(delBtn)
         td.appendChild(wrap)
       } else {
         const empty = document.createElement('button')
@@ -947,6 +952,7 @@ export class GridView {
             this.select(row, col)
             return
           }
+          if (this.readOnly) return
           this.callbacks.onImageRequest?.(row, col)
         })
         td.appendChild(empty)
@@ -1004,7 +1010,7 @@ export class GridView {
     })
 
     td.addEventListener('dblclick', (event) => {
-      if (col === STATUS_COLUMN_INDEX || this.imageColumnIndices.has(col)) return
+      if (this.readOnly || col === STATUS_COLUMN_INDEX || this.imageColumnIndices.has(col)) return
       event.stopPropagation()
       this.startEdit(row, col)
     })
@@ -1109,11 +1115,13 @@ export class GridView {
       popover.appendChild(btn)
     }
 
-    if (buyerUsername) {
+    if (buyerUsername && this.callbacks.onChatRequest) {
       addItem('Abrir chat', () => this.callbacks.onChatRequest?.(row, col))
     }
-    addItem('Imprimir etiqueta', () => this.callbacks.onPrintLabelRequest?.(row, col))
-    if (linked && hasPreview) {
+    if (this.callbacks.onPrintLabelRequest) {
+      addItem('Imprimir etiqueta', () => this.callbacks.onPrintLabelRequest?.(row, col))
+    }
+    if (linked && hasPreview && this.callbacks.onPreviewRequest) {
       addItem('Enviar prévia', () => this.callbacks.onPreviewRequest?.(row, col))
     }
     addItem(comment ? 'Editar comentário' : 'Comentário', () =>
@@ -1141,6 +1149,7 @@ export class GridView {
   }
 
   private openStatusPopover(row: number, col: number) {
+    if (this.readOnly) return
     const existing = document.querySelector('.status-popover')
     if (existing) existing.remove()
 
@@ -1412,6 +1421,7 @@ export class GridView {
   }
 
   private startEdit(row: number, col: number) {
+    if (this.readOnly) return
     this.selection = { col, anchorRow: row, activeRow: row }
     this.editing = { row, col }
     this.render()

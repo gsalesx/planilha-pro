@@ -1,6 +1,6 @@
 import './style.css'
 
-import { checkAuth, login, syncShopeeWorkbookInitial } from './api'
+import { checkAuth, isReviewSession, login, syncShopeeWorkbookInitial } from './api'
 
 interface ShopeeStatus {
   configured: boolean
@@ -717,6 +717,10 @@ async function main(): Promise<void> {
     const ok = await checkAuth()
     if (!ok) {
       showLogin(() => void boot())
+      return
+    }
+    if (isReviewSession()) {
+      document.body.innerHTML = '<p style="font:14px/1.4 system-ui;padding:24px">Este acesso não inclui o console de testes nem o chat.</p>'
       return
     }
     await boot()

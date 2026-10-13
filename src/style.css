@@ -154,6 +154,17 @@ button {
   opacity: 0.85;
 }
 
+.app-header .review-badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
 .app-header .toolbar-actions {
   display: flex;
   gap: 8px;
@@ -787,6 +798,12 @@ button {
   background: #fafafa;
   border-bottom: 1px solid var(--grid-border);
   flex-shrink: 0;
+}
+.etiqueta-controls {
+  display: contents;
+}
+.etiqueta-controls[hidden] {
+  display: none !important;
 }
 .etiqueta-bar-label {
   font-size: 11px;

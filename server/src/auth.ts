@@ -14,20 +14,26 @@ function constantTimeEquals(a: string, b: string): boolean {
   return crypto.timingSafeEqual(ab, bb)
 }
 
-export function verifyCredentials(username: string, password: string): boolean {
-  return (
-    constantTimeEquals(username, env.authUsername) &&
-    constantTimeEquals(password, env.authPassword)
-  )
+export type SessionRole = 'owner' | 'review'
+
+function credentialsMatch(username: string, password: string, expectedUser: string, expectedPass: string): boolean {
+  if (!expectedUser || !expectedPass) return false
+  return constantTimeEquals(username, expectedUser) && constantTimeEquals(password, expectedPass)
 }
 
-export function createSession(userAgent?: string): { token: string; expiresAt: number } {
+export function verifyCredentials(username: string, password: string): SessionRole | null {
+  if (credentialsMatch(username, password, env.authUsername, env.authPassword)) return 'owner'
+  if (credentialsMatch(username, password, env.authReviewUsername, env.authReviewPassword)) return 'review'
+  return null
+}
+
+export function createSession(userAgent: string | undefined, role: SessionRole): { token: string; expiresAt: number } {
   const token = crypto.randomBytes(32).toString('hex')
   const now = nowMs()
   const expiresAt = now + TTL_MS
   db.prepare(
-    'INSERT INTO sessions (token, created_at, expires_at, user_agent) VALUES (?, ?, ?, ?)',
-  ).run(token, now, expiresAt, userAgent ?? null)
+    'INSERT INTO sessions (token, created_at, expires_at, user_agent, role) VALUES (?, ?, ?, ?, ?)',
+  ).run(token, now, expiresAt, userAgent ?? null, role)
   return { token, expiresAt }
 }
 
@@ -35,12 +41,13 @@ export function destroySession(token: string): void {
   db.prepare('DELETE FROM sessions WHERE token = ?').run(token)
 }
 
-export function readSession(token: string | undefined): { token: string; expiresAt: number } | null {
+export function readSession(token: string | undefined): { token: string; expiresAt: number; role: SessionRole } | null {
   if (!token) return null
   const row = db
-    .prepare('SELECT token, expires_at AS expiresAt FROM sessions WHERE token = ? AND expires_at > ?')
-    .get(token, nowMs()) as { token: string; expiresAt: number } | undefined
-  return row ?? null
+    .prepare('SELECT token, expires_at AS expiresAt, role FROM sessions WHERE token = ? AND expires_at > ?')
+    .get(token, nowMs()) as { token: string; expiresAt: number; role: string | null } | undefined
+  if (!row) return null
+  return { token: row.token, expiresAt: row.expiresAt, role: row.role === 'review' ? 'review' : 'owner' }
 }
 
 export function refreshSession(token: string): number {
@@ -68,7 +75,15 @@ export function clearSessionCookie(res: Response): void {
 }
 
 export interface AuthenticatedRequest extends Request {
-  session?: { token: string; expiresAt: number }
+  session?: { token: string; expiresAt: number; role: SessionRole }
+  sessionRole?: SessionRole
+}
+
+export function requestSessionRole(req: Request): SessionRole | null {
+  const presented = extractApiKey(req)
+  if (presented && isValidApiKey(presented)) return 'owner'
+  const token = req.cookies?.[COOKIE_NAME] as string | undefined
+  return readSession(token)?.role ?? null
 }
 
 function extractApiKey(req: Request): string | null {
@@ -93,6 +108,7 @@ export function requireAuth(req: AuthenticatedRequest, res: Response, next: Next
   // 1) API key (automacoes): Authorization: Bearer X  ou  X-API-Key: X
   const presented = extractApiKey(req)
   if (presented && isValidApiKey(presented)) {
+    req.sessionRole = 'owner'
     next()
     return
   }
@@ -110,6 +126,7 @@ export function requireAuth(req: AuthenticatedRequest, res: Response, next: Next
     session.expiresAt = newExpiry
   }
   req.session = session
+  req.sessionRole = session.role
   next()
 }
 

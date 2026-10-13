@@ -2,6 +2,7 @@ import {
   AuthRequiredError,
   deleteWorkbook,
   duplicateWorkbook,
+  isReviewSession,
   listWorkbooks,
   renameWorkbook,
   type WorkbookSummary,
@@ -52,20 +53,22 @@ export function showWorkbooksList(opts: {
   onLogout: () => void
 }): void {
   const { root, onOpen, onCreateFromXlsx, onAuthLost, onLogout } = opts
+  const review = isReviewSession()
 
   root.innerHTML = `
     <div class="workbooks-page">
       <header class="app-header">
         <h1>Planilha Pro</h1>
+        <span class="review-badge" ${review ? '' : 'hidden'}>Avaliação</span>
         <div class="workbooks-header-spacer"></div>
         <div class="toolbar-actions">
-          <a class="btn" href="/artes.html" title="Criar artes soltas, sem vínculo com pedido — monta e baixa na hora">🎨 Criador de artes</a>
+          ${review ? '' : `<a class="btn" href="/artes.html" title="Criar artes soltas, sem vínculo com pedido — monta e baixa na hora">🎨 Criador de artes</a>
           <a class="btn" href="/shopee-products.html" title="Gerenciar produtos da loja Shopee">Produtos Shopee</a>
           <a class="btn" href="/emoji-catalog.html" title="Ver e editar o catálogo de emojis (mapeamentos)">Emojis</a>
           <label class="btn btn-primary" id="wb-new-btn" title="Crie uma planilha nova a partir de um XLSX">
             <input type="file" id="wb-new-file" accept=".xlsx,.xls" hidden />
             + Nova planilha (XLSX)
-          </label>
+          </label>`}
           <button class="btn" id="wb-logout-btn" title="Sair">Sair</button>
         </div>
       </header>
@@ -79,7 +82,7 @@ export function showWorkbooksList(opts: {
   `
 
   const grid = root.querySelector<HTMLDivElement>('#wb-grid')!
-  const newFileInput = root.querySelector<HTMLInputElement>('#wb-new-file')!
+  const newFileInput = root.querySelector<HTMLInputElement>('#wb-new-file')
   const logoutBtn = root.querySelector<HTMLButtonElement>('#wb-logout-btn')!
 
   logoutBtn.addEventListener('click', () => {
@@ -135,9 +138,9 @@ export function showWorkbooksList(opts: {
           <p class="workbook-card-meta">${wb.system ? channelSyncLabel(wb.id) : ''}Atualizada em ${formatTimestamp(wb.updatedAt)}</p>
           <div class="workbook-card-actions">
             <button class="btn btn-primary wb-open">Abrir</button>
-            ${wb.system ? '' : '<button class="btn wb-rename" title="Renomear">Renomear</button>'}
-            <button class="btn wb-duplicate" title="Duplicar (backup)">Duplicar</button>
-            ${wb.system ? '' : '<button class="btn btn-danger wb-delete" title="Deletar planilha">Deletar</button>'}
+            ${review || wb.system ? '' : '<button class="btn wb-rename" title="Renomear">Renomear</button>'}
+            ${review ? '' : '<button class="btn wb-duplicate" title="Duplicar (backup)">Duplicar</button>'}
+            ${review || wb.system ? '' : '<button class="btn btn-danger wb-delete" title="Deletar planilha">Deletar</button>'}
           </div>
         </article>
       `,
@@ -165,7 +168,7 @@ export function showWorkbooksList(opts: {
           },
         }),
       )
-      card.querySelector<HTMLButtonElement>('.wb-duplicate')!.addEventListener('click', () =>
+      card.querySelector<HTMLButtonElement>('.wb-duplicate')?.addEventListener('click', () =>
         openPromptDialog({
           title: 'Duplicar planilha',
           label: 'Nome da cópia',
@@ -209,7 +212,7 @@ export function showWorkbooksList(opts: {
     }
   }
 
-  newFileInput.addEventListener('change', () => {
+  newFileInput?.addEventListener('change', () => {
     const file = newFileInput.files?.[0]
     newFileInput.value = ''
     if (file) void handleNewFile(file)

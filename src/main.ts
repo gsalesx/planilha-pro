@@ -4,6 +4,7 @@ import {
   AuthRequiredError,
   checkAuth,
   createWorkbook,
+  isReviewSession,
   deleteImage,
   deleteOrdersBySheetDate,
   fetchWorkbook,
@@ -92,6 +93,7 @@ function buildShell() {
       <header class="app-header">
         <button class="btn btn-back" id="back-btn" title="Voltar para Minhas planilhas">← Voltar</button>
         <h1>Planilha Pro</h1>
+        <span class="review-badge" id="review-badge" hidden>Avaliação</span>
         <span class="filename" id="filename">Relatórios</span>
         <div class="search-box">
           <span class="search-icon">⌕</span>
@@ -141,26 +143,28 @@ function buildShell() {
           <select class="date-select" id="date-select"></select>
           <button type="button" class="date-delete-btn" id="date-delete-btn" title="Apagar todos os pedidos desta data" aria-label="Apagar data">🗑</button>
         </div>
-        <span class="etiqueta-bar-divider" aria-hidden="true"></span>
-        <span class="etiqueta-bar-label">Etiqueta:</span>
-        <button class="etiqueta-btn" data-bg="#93c5fd" title="Marcar como Etiqueta">
-          <span class="etiqueta-dot" style="background:#93c5fd"></span>Etiqueta
-        </button>
-        <button class="etiqueta-btn" data-bg="#fde047" title="Marcar como Faltando">
-          <span class="etiqueta-dot" style="background:#fde047"></span>Faltando
-        </button>
-        <button class="etiqueta-btn" data-bg="#86efac" title="Marcar como Correto">
-          <span class="etiqueta-dot" style="background:#86efac"></span>Correto
-        </button>
-        <button class="etiqueta-btn" data-bg="#fca5a5" title="Marcar como Erro">
-          <span class="etiqueta-dot" style="background:#fca5a5"></span>Erro
-        </button>
-        <button class="etiqueta-btn" data-bg="#c084fc" title="Marcar como Conjuntos">
-          <span class="etiqueta-dot" style="background:#c084fc"></span>Conjuntos
-        </button>
-        <button class="etiqueta-btn etiqueta-clear" data-bg="" title="Remover etiqueta">
-          <span class="etiqueta-dot etiqueta-dot-empty"></span>Limpar
-        </button>
+        <span class="etiqueta-controls" id="etiqueta-controls">
+          <span class="etiqueta-bar-divider" aria-hidden="true"></span>
+          <span class="etiqueta-bar-label">Etiqueta:</span>
+          <button class="etiqueta-btn" data-bg="#93c5fd" title="Marcar como Etiqueta">
+            <span class="etiqueta-dot" style="background:#93c5fd"></span>Etiqueta
+          </button>
+          <button class="etiqueta-btn" data-bg="#fde047" title="Marcar como Faltando">
+            <span class="etiqueta-dot" style="background:#fde047"></span>Faltando
+          </button>
+          <button class="etiqueta-btn" data-bg="#86efac" title="Marcar como Correto">
+            <span class="etiqueta-dot" style="background:#86efac"></span>Correto
+          </button>
+          <button class="etiqueta-btn" data-bg="#fca5a5" title="Marcar como Erro">
+            <span class="etiqueta-dot" style="background:#fca5a5"></span>Erro
+          </button>
+          <button class="etiqueta-btn" data-bg="#c084fc" title="Marcar como Conjuntos">
+            <span class="etiqueta-dot" style="background:#c084fc"></span>Conjuntos
+          </button>
+          <button class="etiqueta-btn etiqueta-clear" data-bg="" title="Remover etiqueta">
+            <span class="etiqueta-dot etiqueta-dot-empty"></span>Limpar
+          </button>
+        </span>
       </div>
       <div class="sheet-wrap" id="sheet-root"></div>
       <div class="status-bar">
@@ -2041,6 +2045,21 @@ function bindBaixarAprovados() {
   })
 }
 
+function applyReviewChrome() {
+  const review = isReviewSession()
+  const badge = document.querySelector<HTMLElement>('#review-badge')
+  if (badge) badge.hidden = !review
+  const etiquetas = document.querySelector<HTMLElement>('#etiqueta-controls')
+  if (etiquetas) etiquetas.hidden = review
+  const deleteDate = document.querySelector<HTMLButtonElement>('#date-delete-btn')
+  if (deleteDate) deleteDate.hidden = review
+  if (!review) return
+  setToolbarBtnVisible(document.querySelector('#xlsx-update-label'), false)
+  setToolbarBtnVisible(document.querySelector('#xlsx-photos-label'), false)
+  setToolbarBtnVisible(document.querySelector('#shopee-xlsx-import-label'), false)
+  setToolbarBtnVisible(document.querySelector('#baixar-aprovados-data-btn'), false)
+}
+
 function applyMarketplaceWorkbookToolbar(workbookId: string) {
   const isMp = isMarketplaceWorkbookId(workbookId)
   const isShopee = isShopeeWorkbookId(workbookId)
@@ -2064,29 +2083,30 @@ async function enterWorkbook(workbookId: string) {
   currentMarketplaceStatusFilter = mpDef?.defaultStatusFilter ?? ''
   marketplaceDateDefaultApplied = false
   buildShell()
+  const review = isReviewSession()
   grid = new GridView(el<HTMLDivElement>('#sheet-root'), {
     onSelectCell: handleSelect,
     onCellChange: handleCellChange,
-    onImageRequest: (row, col) => pickImageFile(row, col),
+    onImageRequest: review ? undefined : (row, col) => pickImageFile(row, col),
     onCellImageChange: () => {
       // not used here; image ops go through uploadAndSetImage/deleteImageAt
     },
-    onImageDelete: (row, col) => openConfirmDialog({
+    onImageDelete: review ? undefined : (row, col) => openConfirmDialog({
       title: 'Excluir imagem?',
       body: 'Esta imagem será removida do pedido. Esta ação não pode ser desfeita.',
       confirmLabel: 'Excluir',
       danger: true,
       onConfirm: () => deleteImageAt(row, col),
     }),
-    onCommentRequest: handleCommentRequest,
-    onChatRequest: handleChatRequest,
-    onPreviewRequest: handlePreviewRequest,
-    onPrintLabelRequest: handlePrintLabelRequest,
+    onCommentRequest: review ? undefined : handleCommentRequest,
+    onChatRequest: review ? undefined : handleChatRequest,
+    onPreviewRequest: review ? undefined : handlePreviewRequest,
+    onPrintLabelRequest: review ? undefined : handlePrintLabelRequest,
     onViewStateChange: () => {
       setUrlGridViewState(grid.getViewState())
       updateStatusCounts()
     },
-  })
+  }, { readOnly: review })
   renderSheetLoading()
   bindFileInput()
   bindPhotosInput()
@@ -2094,12 +2114,13 @@ async function enterWorkbook(workbookId: string) {
   bindDropZone()
   bindSearch()
   bindEtiquetas()
-  bindClipboardPaste()
+  if (!review) bindClipboardPaste()
   bindLogout()
   bindBackButton()
   bindZoomControls()
   bindPendingMutationsButton()
   applyMarketplaceWorkbookToolbar(workbookId)
+  applyReviewChrome()
   bindBaixarAprovados()
   bindShopeeLinkConversations()
   try {
@@ -2107,7 +2128,7 @@ async function enterWorkbook(workbookId: string) {
   } finally {
     stopSheetLoading()
   }
-  await refreshLinkedBuyerChats()
+  if (!review) await refreshLinkedBuyerChats()
   startPolling()
 }
 

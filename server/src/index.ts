@@ -9,7 +9,8 @@ import express from 'express'
 import sharp from 'sharp'
 
 import { newRunId, pruneAudit, recordAudit } from './audit.js'
-import { cleanupExpiredSessions, requireAuth } from './auth.js'
+import { cleanupExpiredSessions, requestSessionRole, requireAuth } from './auth.js'
+import { reviewAccessBlock } from './review-access.js'
 import { env, isProd } from './env.js'
 import { ASSETS_DIR, ensureEmojiCatalogSeeded } from './emoji-catalog.js'
 import {
@@ -88,6 +89,15 @@ app.post(
 )
 
 app.use(express.json({ limit: '10mb' }))
+
+app.use('/api', (req, res, next) => {
+  const message = reviewAccessBlock(req.method, req.path, requestSessionRole(req))
+  if (message) {
+    res.status(403).json({ error: message })
+    return
+  }
+  next()
+})
 
 app.use('/api', loginRouter)
 app.use('/api', workbooksRouter)

@@ -29,10 +29,18 @@ db.exec(`
     token TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
-    user_agent TEXT
+    user_agent TEXT,
+    role TEXT NOT NULL DEFAULT 'owner'
   );
   CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions (expires_at);
 `)
+
+{
+  const sessionCols = db.prepare('PRAGMA table_info(sessions)').all() as Array<{ name: string }>
+  if (!sessionCols.some((c) => c.name === 'role')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN role TEXT NOT NULL DEFAULT 'owner'")
+  }
+}
 
 // Tabela legada que pode não existir mais em DBs novos. Garantir antes de migrar.
 db.exec(`

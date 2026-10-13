@@ -20,6 +20,9 @@ export const env = {
   corsOrigin: process.env.CORS_ORIGIN ?? '*',
   authUsername: required('AUTH_USERNAME'),
   authPassword: required('AUTH_PASSWORD'),
+  /** Login só de leitura, sem chat nem etiquetas — para avaliação da Shopee. */
+  authReviewUsername: envTrim('AUTH_REVIEW_USERNAME'),
+  authReviewPassword: envTrim('AUTH_REVIEW_PASSWORD'),
   dataDir: process.env.DATA_DIR ?? './data',
   sessionSecret: required('SESSION_SECRET'),
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS ?? 30),

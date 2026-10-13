@@ -3,9 +3,10 @@ import { existsSync, statSync, unlinkSync } from 'node:fs'
 import { Router } from 'express'
 
 import { recordAudit } from '../audit.js'
-import { requireAuth } from '../auth.js'
+import { requireAuth, type AuthenticatedRequest } from '../auth.js'
 import { db, nowMs } from '../db.js'
 import { env } from '../env.js'
+import { maskRecipientInRow } from '../review-access.js'
 
 const router = Router()
 
@@ -98,7 +99,7 @@ function resolveOrderKey(workbookId: string, ref: string): { ok: true; key: stri
   return { ok: false, status: 404, error: 'Pedido não encontrado' }
 }
 
-function buildWorkbookPayload(workbookId: string, since?: number) {
+function buildWorkbookPayload(workbookId: string, since?: number, maskRecipients = false) {
   const wb = getWorkbook(workbookId)
   if (!wb) return null
   if (since != null && wb.updated_at <= since) {
@@ -129,7 +130,7 @@ function buildWorkbookPayload(workbookId: string, since?: number) {
     orders: orders.map((o) => ({
       key: o.order_key,
       id: o.id,
-      row: JSON.parse(o.row_json),
+      row: maskRecipients ? maskRecipientInRow(JSON.parse(o.row_json), o.sheet_date || '') : JSON.parse(o.row_json),
       styles: JSON.parse(o.styles_json || '{}'),
       disappeared: o.disappeared === 1,
       sheetDate: o.sheet_date || '',
@@ -151,9 +152,10 @@ function buildWorkbookPayload(workbookId: string, since?: number) {
   }
 }
 
-router.get('/workbooks/:workbookId/data', requireAuth, (req, res) => {
+router.get('/workbooks/:workbookId/data', requireAuth, (req: AuthenticatedRequest, res) => {
   const since = req.query.since ? Number(req.query.since) : undefined
-  const payload = buildWorkbookPayload(req.params.workbookId, since)
+  const maskRecipients = req.sessionRole === 'review'
+  const payload = buildWorkbookPayload(req.params.workbookId, since, maskRecipients)
   if (!payload) {
     res.status(404).json({ error: 'Planilha não encontrada' })
     return
@@ -399,11 +401,12 @@ router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
 
 const STATUS_COL = 5
 
-function serializeOrderRow(workbookId: string, o: OrderRow) {
+function serializeOrderRow(workbookId: string, o: OrderRow, maskRecipients = false) {
+  const row = JSON.parse(o.row_json) as unknown[]
   return {
     key: o.order_key,
     id: o.id,
-    row: JSON.parse(o.row_json) as unknown[],
+    row: maskRecipients ? maskRecipientInRow(row, o.sheet_date || '') : row,
     styles: JSON.parse(o.styles_json || '{}'),
     disappeared: o.disappeared === 1,
     sheetDate: o.sheet_date || '',
@@ -424,7 +427,7 @@ function serializeOrderRow(workbookId: string, o: OrderRow) {
 }
 
 /** GET /workbooks/:workbookId/orders?status=Separado&sheetDate=27-05-2026 */
-router.get('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
+router.get('/workbooks/:workbookId/orders', requireAuth, (req: AuthenticatedRequest, res) => {
   const workbookId = req.params.workbookId
   if (!getWorkbook(workbookId)) {
     res.status(404).json({ error: 'Planilha não encontrada' })
@@ -454,7 +457,8 @@ router.get('/workbooks/:workbookId/orders', requireAuth, (req, res) => {
         return v != null && String(v) === status
       })
 
-  res.json(filtered.map((o) => serializeOrderRow(workbookId, o)))
+  const maskRecipients = req.sessionRole === 'review'
+  res.json(filtered.map((o) => serializeOrderRow(workbookId, o, maskRecipients)))
 })
 
 /** POST /workbooks/:workbookId/orders — cria pedido novo. Body: {id, row, sheetDate?} */
