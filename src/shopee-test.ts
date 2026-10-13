@@ -1,6 +1,6 @@
 import './style.css'
 
-import { checkAuth, isReviewSession, login, syncShopeeWorkbookInitial } from './api'
+import { checkAuth, isReviewSession, login } from './api'
 
 interface ShopeeStatus {
   configured: boolean
@@ -14,7 +14,8 @@ interface ShopeeStatus {
 }
 
 async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`/api${path}`, { credentials: 'include', ...init })
+  const sandboxPath = path.startsWith('/shopee/') ? `/shopee/sandbox/${path.slice('/shopee/'.length)}` : path
+  const response = await fetch(`/api${sandboxPath}`, { credentials: 'include', ...init })
   if (response.status === 401) throw new Error('Login necessário')
   const data = (await response.json().catch(() => ({}))) as T & { error?: string }
   if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`)
@@ -74,7 +75,7 @@ async function boot(): Promise<void> {
     <div>
       <a href="/" class="shopee-test-back">← Planilha</a>
       <h1>Teste Shopee — API</h1>
-      <p class="shopee-test-sub">Pedidos, produtos e mensagens via Open Platform</p>
+      <p class="shopee-test-sub">Push, webhook e API do app de teste. Não grava na planilha.</p>
     </div>
   `
   wrap.appendChild(header)
@@ -86,7 +87,7 @@ async function boot(): Promise<void> {
   const authBox = el('section', 'shopee-test-card')
   authBox.innerHTML = `
     <h2>1. Autorizar loja</h2>
-    <p class="shopee-test-hint">No console Shopee, cadastre o Redirect URL igual ao mostrado no status.</p>
+    <p class="shopee-test-hint">No console, Test Redirect URL Domain é só https://planilha.guilhermesales.com. O callback completo é o Redirect OAuth do status. O push de teste usa o mesmo Push callback.</p>
     <div class="shopee-test-actions">
       <button type="button" class="btn btn-primary" id="btn-auth">Abrir autorização Shopee</button>
       <button type="button" class="btn" id="btn-shop">Testar get_shop_info</button>
@@ -94,7 +95,7 @@ async function boot(): Promise<void> {
     </div>
     <div class="shopee-test-paste">
       <label>Colar URL de callback (use logo após autorizar — code expira em ~10 min)
-        <input type="text" id="callback-url" placeholder="https://planilha.guilhermesales.com/api/shopee/oauth/callback?code=...&shop_id=..." />
+        <input type="text" id="callback-url" placeholder="https://planilha.guilhermesales.com/api/shopee/sandbox/oauth/callback?code=...&shop_id=..." />
       </label>
       <button type="button" class="btn btn-primary" id="btn-exchange">Trocar code por token</button>
     </div>
@@ -133,25 +134,6 @@ async function boot(): Promise<void> {
     </div>
   `
   wrap.appendChild(ordersBox)
-
-  const syncBox = el('section', 'shopee-test-card')
-  syncBox.innerHTML = `
-    <h2>2b. Sincronizar planilha automática</h2>
-    <p class="shopee-test-hint">
-      Importa pedidos com status <strong>RETRY_SHIP</strong> para a planilha fixa Shopee.
-      Se o pedido já existir, só atualiza Status Shopee (H) e nome do destinatário (G).
-      <a href="/?workbook=wb_shopee">Abrir planilha Shopee</a>
-    </p>
-    <div class="shopee-test-form">
-      <button type="button" class="btn btn-primary" id="btn-sync-initial">Importar últimos 5 dias (parcelado)</button>
-      <span class="shopee-test-sync-progress" id="sync-initial-progress" hidden></span>
-    </div>
-    <div class="shopee-test-form">
-      <label>Últimos dias <input type="number" id="sync-days" value="90" min="1" max="365" /></label>
-      <button type="button" class="btn" id="btn-sync-workbook">Importar / atualizar (janela única)</button>
-    </div>
-  `
-  wrap.appendChild(syncBox)
 
   const productsBox = el('section', 'shopee-test-card')
   productsBox.innerHTML = `
@@ -344,41 +326,6 @@ async function boot(): Promise<void> {
     }
     const qs = new URLSearchParams({ orderSn })
     void run('get_order_detail', () => api(`/shopee/orders/detail?${qs}`))
-  })
-
-  syncBox.querySelector('#btn-sync-initial')!.addEventListener('click', async () => {
-    const btn = syncBox.querySelector('#btn-sync-initial') as HTMLButtonElement
-    const progress = syncBox.querySelector('#sync-initial-progress') as HTMLSpanElement
-    btn.disabled = true
-    progress.hidden = false
-    progress.textContent = 'Iniciando…'
-    try {
-      const result = await syncShopeeWorkbookInitial(5, (done, total, parcel) => {
-        progress.textContent = `Dia ${done}/${total} — ${parcel.listed} listados, ${parcel.created} novos`
-        out.textContent = `Importando… dia ${done} de ${total}`
-      })
-      progress.textContent = `Concluído — ${result.created} novos, ${result.updated} atualizados`
-      out.textContent = `=== Importação 5 dias ===\n${JSON.stringify(result, null, 2)}`
-      if (result.errors.length) {
-        alert(`${result.errors.length} erro(s) — veja o log abaixo`)
-      }
-    } catch (error) {
-      out.textContent = `Erro: ${(error as Error).message}`
-      progress.textContent = ''
-    } finally {
-      btn.disabled = false
-    }
-  })
-
-  syncBox.querySelector('#btn-sync-workbook')!.addEventListener('click', () => {
-    const days = (syncBox.querySelector('#sync-days') as HTMLInputElement).value
-    void run('sync-workbook', () =>
-      api('/shopee/sync-workbook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days: Number(days) || 90 }),
-      }),
-    )
   })
 
   productsBox.querySelector('#btn-products')!.addEventListener('click', () => {

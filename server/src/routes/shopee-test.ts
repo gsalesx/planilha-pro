@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express'
 
 import { requireAuth } from '../auth.js'
+import { currentShopeeAccount, isSandboxShopeeAccount } from '../shopee-account.js'
 import { env } from '../env.js'
 import {
   buildAuthPartnerUrl,
@@ -49,20 +50,47 @@ import { existsSync } from 'node:fs'
 
 const router = Router()
 
+const SANDBOX_SHEET_WRITES = new Set([
+  '/shopee/sync-workbook',
+  '/shopee/resync-all',
+  '/shopee/sync-now',
+  '/shopee/link-conversations',
+  '/shopee/link-conversations/start-cursor',
+  '/shopee/link-conversations/warm-cursor/chunk',
+  '/shopee/link-conversations/scan-chunk',
+  '/shopee/buyer-chats/clear',
+  '/shopee/auto-greet/arm',
+  '/shopee/auto-greet/disarm',
+])
+
+router.use((req, res, next) => {
+  if (!isSandboxShopeeAccount() || req.method === 'GET' || req.method === 'HEAD') {
+    next()
+    return
+  }
+  if (SANDBOX_SHEET_WRITES.has(req.path)) {
+    res.status(403).json({ error: 'O app de teste não grava na planilha.' })
+    return
+  }
+  next()
+})
+
 function shopeeConfigured(): boolean {
-  return Boolean(env.shopeePartnerId && env.shopeePartnerKey)
+  const account = currentShopeeAccount()
+  return Boolean(account.partnerId && account.partnerKey)
 }
 
 function statusPayload() {
-  const auth = loadShopeeAuth()
+  const account = currentShopeeAccount()
+  const auth = loadShopeeAuth(account.authFile)
   return {
     configured: shopeeConfigured(),
-    env: env.shopeeEnv,
-    partnerId: env.shopeePartnerId || null,
-    hasPartnerKey: Boolean(env.shopeePartnerKey),
-    hasPushPartnerKey: Boolean(env.shopeePushPartnerKey),
+    env: account.runtime,
+    partnerId: account.partnerId || null,
+    hasPartnerKey: Boolean(account.partnerKey),
+    hasPushPartnerKey: account.pushKeyConfigured,
     pushCallbackUrl: env.shopeePushCallbackUrl || null,
-    redirectUrl: env.shopeeRedirectUrl || null,
+    redirectUrl: account.redirectUrl || null,
     shop: auth
       ? {
           shopId: auth.shopId,
@@ -84,7 +112,7 @@ router.get('/shopee/auth-url', requireAuth, (_req, res) => {
     res.status(400).json({ error: 'Defina SHOPEE_PARTNER_ID e SHOPEE_PARTNER_KEY' })
     return
   }
-  if (!env.shopeeRedirectUrl) {
+  if (!currentShopeeAccount().redirectUrl) {
     res.status(400).json({ error: 'Defina SHOPEE_REDIRECT_URL (callback OAuth)' })
     return
   }
@@ -923,7 +951,7 @@ router.post('/shopee/auto-greet/disarm', requireAuth, (_req, res) => {
 
 /** POST /api/shopee/disconnect */
 router.post('/shopee/disconnect', requireAuth, (_req, res) => {
-  clearShopeeAuth()
+  clearShopeeAuth(currentShopeeAccount().authFile)
   res.json({ ok: true })
 })
 

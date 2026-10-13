@@ -12,13 +12,16 @@ export interface ShopeeAuthRecord {
   updatedAt: number
 }
 
-function authPath(): string {
+function authPath(fileName = 'shopee-auth.json'): string {
+  if (fileName !== path.basename(fileName) || !fileName.endsWith('.json')) {
+    throw new Error('Arquivo de auth Shopee inválido')
+  }
   mkdirSync(env.dataDir, { recursive: true })
-  return path.join(env.dataDir, 'shopee-auth.json')
+  return path.join(env.dataDir, fileName)
 }
 
-export function loadShopeeAuth(): ShopeeAuthRecord | null {
-  const file = authPath()
+export function loadShopeeAuth(fileName = 'shopee-auth.json'): ShopeeAuthRecord | null {
+  const file = authPath(fileName)
   if (!existsSync(file)) return null
   try {
     const raw = JSON.parse(readFileSync(file, 'utf8')) as ShopeeAuthRecord
@@ -29,11 +32,11 @@ export function loadShopeeAuth(): ShopeeAuthRecord | null {
   }
 }
 
-export function saveShopeeAuth(record: ShopeeAuthRecord): void {
-  writeFileSync(authPath(), JSON.stringify(record, null, 2), 'utf8')
+export function saveShopeeAuth(record: ShopeeAuthRecord, fileName = 'shopee-auth.json'): void {
+  writeFileSync(authPath(fileName), JSON.stringify(record, null, 2), 'utf8')
 }
 
-export function clearShopeeAuth(): void {
-  const file = authPath()
+export function clearShopeeAuth(fileName = 'shopee-auth.json'): void {
+  const file = authPath(fileName)
   if (existsSync(file)) writeFileSync(file, '{}', 'utf8')
 }

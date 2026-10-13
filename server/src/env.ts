@@ -48,6 +48,13 @@ export const env = {
   shopeePushCallbackUrl: envTrim('SHOPEE_PUSH_CALLBACK_URL'),
   /** Partner ID numérico do app na Shopee Open Platform */
   shopeePartnerId: envTrim('SHOPEE_PARTNER_ID'),
+  /**
+   * App de teste (sandbox) no mesmo endereço da loja.
+   * Não substitui SHOPEE_PARTNER_ID / SHOPEE_PARTNER_KEY.
+   * Usado só em /api/shopee/sandbox e na página /shopee-test.html.
+   */
+  shopeeTestPartnerId: envTrim('SHOPEE_TEST_PARTNER_ID'),
+  shopeeTestPartnerKey: envTrim('SHOPEE_TEST_PARTNER_KEY'),
   /** sandbox | production */
   shopeeEnv: (process.env.SHOPEE_ENV === 'sandbox' ? 'sandbox' : 'production') as ShopeeRuntimeEnv,
   /** Redirect OAuth — ex. https://planilha.guilhermesales.com/api/shopee/oauth/callback */

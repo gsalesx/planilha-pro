@@ -7,12 +7,12 @@ import { requireAuth } from '../auth.js'
 import { env } from '../env.js'
 import {
   callbackUrlCandidates,
+  classifyShopeePushSignature,
   getRecentShopeePushes,
   isShopeeUrlVerificationPush,
   normalizePushAuthorization,
   recordShopeePush,
   resolveShopeeCallbackUrl,
-  verifyShopeePushSignatureAny,
 } from '../shopee-push.js'
 import { processShopeePush } from '../shopee-push-process.js'
 import { getRecentWebchatPushes } from '../shopee-webchat-push.js'
@@ -61,12 +61,15 @@ export function handleShopeePushPost(req: Request, res: Response): void {
   )
 
   let signatureOk: boolean | null = null
+  let fromTestApp = false
   if (isVerifyPing) {
     // Ping do botão Verify no console Shopee (code 0 + verify_info).
     signatureOk = null
     console.log('[shopee-push] ping de verificação de URL (code 0) — aceitando')
   } else if (partnerKeys.length && authorization) {
-    signatureOk = verifyShopeePushSignatureAny(urlCandidates, rawBody, authorization, partnerKeys)
+    const kind = classifyShopeePushSignature(urlCandidates, rawBody, authorization)
+    signatureOk = kind !== 'none'
+    fromTestApp = kind === 'test'
     if (!signatureOk) {
       const parsedFail = parseJsonSafe(rawBody)
       recordShopeePush({
@@ -138,6 +141,15 @@ export function handleShopeePushPost(req: Request, res: Response): void {
 
   // Shopee exige 2xx com corpo vazio — processamento async depois da resposta.
   res.status(200).end()
+  if (fromTestApp) {
+    recordAudit({
+      source: 'push',
+      runId,
+      event: 'push.teste',
+      detail: { motivo: 'app de teste — aceito, sem gravar na planilha', code },
+    })
+    return
+  }
   if (!isVerifyPing) {
     // Sem o catch, uma exceção aqui virava unhandled rejection e sumia sem rastro.
     void processShopeePush(parsed, runId).catch((error) => {

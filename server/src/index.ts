@@ -47,6 +47,7 @@ import pickerRouter, { limparArtesExpiradas } from './routes/picker.js'
 import piecesRouter from './routes/pieces.js'
 import shopeePushRouter, { handleShopeePushPost } from './routes/shopee-push.js'
 import shopeeProductsRouter from './routes/shopee-products.js'
+import { runWithShopeeAccount, sandboxShopeeAccount } from './shopee-account.js'
 import shopeeTestRouter from './routes/shopee-test.js'
 import tiktokRouter from './routes/tiktok.js'
 import tiktokPushRouter from './routes/tiktok-push.js'
@@ -112,6 +113,18 @@ app.use('/api', workbookRouter)
 app.use('/api', imagesRouter)
 app.use('/api', backupRouter)
 app.use('/api', shopeePushRouter)
+app.use('/api/shopee/sandbox', (req, res, next) => {
+  const account = sandboxShopeeAccount()
+  if (!account) {
+    res.status(503).json({ error: 'App de teste da Shopee não configurado' })
+    return
+  }
+  const suffix = req.url.startsWith('/') ? req.url : `/${req.url}`
+  req.url = `/shopee${suffix}`
+  runWithShopeeAccount(account, () => {
+    shopeeTestRouter(req, res, next)
+  })
+})
 app.use('/api', shopeeTestRouter)
 app.use('/api', shopeeProductsRouter)
 app.use('/api', parseIssuesRouter)

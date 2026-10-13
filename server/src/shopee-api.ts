@@ -2,7 +2,8 @@ import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { basename } from 'node:path'
 
-import { env, type ShopeeRuntimeEnv } from './env.js'
+import { currentShopeeAccount } from './shopee-account.js'
+import { type ShopeeRuntimeEnv } from './env.js'
 import { loadShopeeAuth, saveShopeeAuth, type ShopeeAuthRecord } from './shopee-store.js'
 
 export interface ShopeeApiResponse<T = unknown> {
@@ -18,8 +19,20 @@ const HOSTS: Record<ShopeeRuntimeEnv, string> = {
   production: 'https://partner.shopeemobile.com',
 }
 
+function account() {
+  return currentShopeeAccount()
+}
+
+function readAuth(): ShopeeAuthRecord | null {
+  return loadShopeeAuth(account().authFile)
+}
+
+function writeAuth(record: ShopeeAuthRecord): void {
+  saveShopeeAuth(record, account().authFile)
+}
+
 export function shopeeHost(): string {
-  return HOSTS[env.shopeeEnv]
+  return HOSTS[account().runtime]
 }
 
 function signBase(partnerId: string, path: string, timestamp: number, tail = ''): string {
@@ -27,20 +40,20 @@ function signBase(partnerId: string, path: string, timestamp: number, tail = '')
 }
 
 export function hmacSign(base: string): string {
-  return createHmac('sha256', env.shopeePartnerKey).update(base).digest('hex')
+  return createHmac('sha256', account().partnerKey).update(base).digest('hex')
 }
 
 export function signPublic(path: string, timestamp: number): string {
-  return hmacSign(signBase(env.shopeePartnerId, path, timestamp))
+  return hmacSign(signBase(account().partnerId, path, timestamp))
 }
 
 export function signShop(path: string, timestamp: number, accessToken: string, shopId: number): string {
-  return hmacSign(signBase(env.shopeePartnerId, path, timestamp, `${accessToken}${shopId}`))
+  return hmacSign(signBase(account().partnerId, path, timestamp, `${accessToken}${shopId}`))
 }
 
 function buildSignedUrl(path: string, sign: string, timestamp: number, extra: Record<string, string | number> = {}): string {
   const params = new URLSearchParams({
-    partner_id: env.shopeePartnerId,
+    partner_id: account().partnerId,
     timestamp: String(timestamp),
     sign,
   })
@@ -101,8 +114,8 @@ export function buildAuthPartnerUrl(): string {
   const path = '/api/v2/shop/auth_partner'
   const timestamp = Math.floor(Date.now() / 1000)
   const sign = signPublic(path, timestamp)
-  const redirect = encodeURIComponent(env.shopeeRedirectUrl)
-  return `${shopeeHost()}${path}?partner_id=${env.shopeePartnerId}&timestamp=${timestamp}&sign=${sign}&redirect=${redirect}`
+  const redirect = encodeURIComponent(account().redirectUrl)
+  return `${shopeeHost()}${path}?partner_id=${account().partnerId}&timestamp=${timestamp}&sign=${sign}&redirect=${redirect}`
 }
 
 export async function exchangeAuthCode(code: string, shopId: number): Promise<ShopeeAuthRecord> {
@@ -116,7 +129,7 @@ export async function exchangeAuthCode(code: string, shopId: number): Promise<Sh
     body: JSON.stringify({
       code,
       shop_id: shopId,
-      partner_id: Number(env.shopeePartnerId),
+      partner_id: Number(account().partnerId),
     }),
   })
   const data = await parseShopeeJson<TokenPayload>(response)
@@ -132,7 +145,7 @@ export async function exchangeAuthCode(code: string, shopId: number): Promise<Sh
     accessExpireAt: now + tokenExpireSeconds(payload) * 1000,
     updatedAt: now,
   }
-  saveShopeeAuth(record)
+  writeAuth(record)
   return record
 }
 
@@ -147,7 +160,7 @@ export async function refreshShopAccessToken(record: ShopeeAuthRecord): Promise<
     body: JSON.stringify({
       shop_id: record.shopId,
       refresh_token: record.refreshToken,
-      partner_id: Number(env.shopeePartnerId),
+      partner_id: Number(account().partnerId),
     }),
   })
   const data = await parseShopeeJson<TokenPayload>(response)
@@ -163,12 +176,12 @@ export async function refreshShopAccessToken(record: ShopeeAuthRecord): Promise<
     accessExpireAt: now + tokenExpireSeconds(payload) * 1000,
     updatedAt: now,
   }
-  saveShopeeAuth(updated)
+  writeAuth(updated)
   return updated
 }
 
 export async function ensureShopAuth(): Promise<ShopeeAuthRecord> {
-  let record = loadShopeeAuth()
+  let record = readAuth()
   if (!record) throw new Error('Loja não autorizada. Use o link de autorização no painel Shopee.')
   if (Date.now() >= record.accessExpireAt - 5 * 60 * 1000) {
     record = await refreshShopAccessToken(record)
@@ -1129,7 +1142,7 @@ export async function fetchConversationPage(options: {
   hasMore: boolean
   connectedShopId: number | null
 }> {
-  const auth = loadShopeeAuth()
+  const auth = readAuth()
   const inputTimestampNano = options.nextTimestampNano?.trim() || null
   const data = await getConversationList({
     direction: options.direction ?? 'older',
@@ -1198,7 +1211,7 @@ export async function fetchConversationMap(
   pageMetrics: ConversationPageMetric[]
   resumeCursor: string | null
 }> {
-  const auth = loadShopeeAuth()
+  const auth = readAuth()
   const chatShopIds = new Set<number>()
   const byUsername = new Map<string, ShopeeConversationEntry>()
   const pageMetrics: ConversationPageMetric[] = []

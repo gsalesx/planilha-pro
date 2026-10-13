@@ -101,7 +101,20 @@ export function verifyShopeePushSignature(
   return false
 }
 
-/** Tenta URL(s) e chave(s) — cobre diferenças de proxy e formatos de Live Push Key. */
+/** live = chave da loja; test = Test Push Partner Key, sem gravar na planilha. */
+export function classifyShopeePushSignature(
+  callbackUrls: string[],
+  rawBody: string,
+  authorization: string,
+): 'live' | 'test' | 'none' {
+  const live = [env.shopeePushPartnerKey, env.shopeePartnerKey].filter(Boolean)
+  const testKey = env.shopeePushTestPartnerKey
+  const test = testKey && !live.includes(testKey) ? [testKey] : []
+  if (live.length && verifyShopeePushSignatureAny(callbackUrls, rawBody, authorization, live)) return 'live'
+  if (test.length && verifyShopeePushSignatureAny(callbackUrls, rawBody, authorization, test)) return 'test'
+  return 'none'
+}
+
 export function verifyShopeePushSignatureAny(
   callbackUrls: string[],
   rawBody: string,
