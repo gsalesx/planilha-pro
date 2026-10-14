@@ -43,6 +43,7 @@ import emojiCatalogRouter from './routes/emoji-catalog.js'
 import imagesRouter from './routes/images.js'
 import loginRouter from './routes/login.js'
 import parseIssuesRouter from './routes/parse-issues.js'
+import { limparFotosAntigas } from './limpar-fotos-antigas.js'
 import pickerRouter, { limparArtesExpiradas } from './routes/picker.js'
 import piecesRouter from './routes/pieces.js'
 import shopeePushRouter, { handleShopeePushPost } from './routes/shopee-push.js'
@@ -182,6 +183,18 @@ setInterval(() => {
   if (apagadas > 0) console.log(`[arte-cache] ${apagadas} arte(s) expirada(s) apagada(s)`)
 }, 60 * 60 * 1000)
 limparArtesExpiradas()
+
+// Foto e arte de pedido com mais de 15 dias saem do disco. A linha do pedido fica.
+const DIA_MS = 24 * 60 * 60 * 1000
+function rodarLimpezaFotos() {
+  const { pedidos, arquivos, bytes } = limparFotosAntigas()
+  if (pedidos > 0) {
+    const mb = Math.round(bytes / (1024 * 1024))
+    console.log(`[fotos] ${pedidos} pedido(s) antigo(s): ${arquivos} arquivo(s), ${mb} MB`)
+  }
+}
+setInterval(rodarLimpezaFotos, DIA_MS)
+setTimeout(rodarLimpezaFotos, 15_000)
 
 // Reinício do servidor é o evento que explica buraco no log — registrar sempre.
 recordAudit({
