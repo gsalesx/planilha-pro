@@ -518,8 +518,10 @@ export type MarketplaceChatHistory = {
 export async function fetchMarketplaceChatHistory(
   channel: MarketplaceChatChannel,
   username: string,
+  opts: { maxPages?: number } = {},
 ): Promise<MarketplaceChatHistory> {
   const qs = new URLSearchParams({ username })
+  if (opts.maxPages) qs.set('maxPages', String(opts.maxPages))
   return request(`${marketplaceApiPrefix(channel)}/chat-history?${qs}`)
 }
 

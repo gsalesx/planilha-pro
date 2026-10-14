@@ -1462,6 +1462,7 @@ export async function fetchAllChatMessages(
   const byId = new Map<string, ParsedChatMessage>()
   let offset: string | undefined = ''
   let pages = 0
+  let hasMore = false
 
   while (pages < maxPages) {
     const data = await getMessageList({ conversationId, pageSize, offset })
@@ -1473,8 +1474,9 @@ export async function fetchAllChatMessages(
     }
     pages++
     const next = messagePageNextOffset(body)
-    if (!next || list.length === 0) break
-    offset = next
+    hasMore = Boolean(next) && list.length > 0
+    if (!hasMore) break
+    offset = next!
   }
 
   const messages = [...byId.values()].sort((a, b) => {
@@ -1482,5 +1484,5 @@ export async function fetchAllChatMessages(
     const tb = b.createdAt ?? 0
     return ta - tb
   })
-  return { messages, pages, truncated: pages >= maxPages }
+  return { messages, pages, truncated: hasMore }
 }

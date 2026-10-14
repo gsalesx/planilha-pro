@@ -1294,6 +1294,22 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   document.addEventListener('keydown', onKey)
 
   let chatMeta: { conversationId: string; toId: number } | null = null
+  let shownMessages: ShopeeChatMessage[] = []
+
+  const mergeMessages = (a: ShopeeChatMessage[], b: ShopeeChatMessage[]): ShopeeChatMessage[] => {
+    const byId = new Map<string, ShopeeChatMessage>()
+    for (const m of a) byId.set(m.id, m)
+    for (const m of b) byId.set(m.id, m)
+    return [...byId.values()].sort((x, y) => (x.createdAt ?? 0) - (y.createdAt ?? 0))
+  }
+
+  const paintMessages = (messages: ShopeeChatMessage[], keepBottomOffset: boolean) => {
+    const fromBottom = messagesEl.scrollHeight - messagesEl.scrollTop
+    shownMessages = messages
+    messagesEl.innerHTML = renderMessages(messages, order.buyerUsername)
+    wireChatImages(messagesEl)
+    messagesEl.scrollTop = keepBottomOffset ? messagesEl.scrollHeight - fromBottom : messagesEl.scrollHeight
+  }
 
   const syncSendState = () => {
     sendBtn.disabled = !chatMeta || !inputEl.value.trim()
@@ -1313,11 +1329,9 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         text,
       })
       inputEl.value = ''
-      const history = await fetchMarketplaceChatHistory(channel, order.buyerUsername)
-      chatMeta = { conversationId: history.chat.conversationId, toId: history.chat.toId }
-      messagesEl.innerHTML = renderMessages(history.messages, order.buyerUsername)
-      wireChatImages(messagesEl)
-      messagesEl.scrollTop = messagesEl.scrollHeight
+      const recent = await fetchMarketplaceChatHistory(channel, order.buyerUsername, { maxPages: 1 })
+      chatMeta = { conversationId: recent.chat.conversationId, toId: recent.chat.toId }
+      paintMessages(mergeMessages(shownMessages, recent.messages), false)
     } catch (error) {
       messagesEl.insertAdjacentHTML(
         'beforeend',
@@ -1338,19 +1352,27 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   })
 
   try {
-    const history = await fetchMarketplaceChatHistory(channel, order.buyerUsername)
-    chatMeta = { conversationId: history.chat.conversationId, toId: history.chat.toId }
-    messagesEl.innerHTML = renderMessages(history.messages, order.buyerUsername)
-    wireChatImages(messagesEl)
-    if (history.truncated) {
-      messagesEl.insertAdjacentHTML(
-        'afterbegin',
-        `<div class="shopee-chat-warn">Histórico truncado (${history.pages} páginas). Mensagens mais antigas podem não aparecer.</div>`,
-      )
-    }
-    messagesEl.scrollTop = messagesEl.scrollHeight
+    const recent = await fetchMarketplaceChatHistory(channel, order.buyerUsername, { maxPages: 1 })
+    chatMeta = { conversationId: recent.chat.conversationId, toId: recent.chat.toId }
+    paintMessages(recent.messages, false)
     syncSendState()
     inputEl.focus()
+    if (recent.truncated) {
+      messagesEl.insertAdjacentHTML('afterbegin', '<div class="shopee-chat-warn">Carregando mensagens antigas…</div>')
+      void fetchMarketplaceChatHistory(channel, order.buyerUsername)
+        .then((full) => {
+          paintMessages(mergeMessages(full.messages, shownMessages), true)
+          if (full.truncated) {
+            messagesEl.insertAdjacentHTML(
+              'afterbegin',
+              `<div class="shopee-chat-warn">Histórico truncado (${full.pages} páginas). Mensagens mais antigas podem não aparecer.</div>`,
+            )
+          }
+        })
+        .catch(() => {
+          messagesEl.querySelector('.shopee-chat-warn')?.remove()
+        })
+    }
   } catch (error) {
     messagesEl.innerHTML = `<div class="shopee-chat-error">${escapeHtml((error as Error).message)}</div>`
     sendBtn.disabled = true

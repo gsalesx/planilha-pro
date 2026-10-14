@@ -576,8 +576,10 @@ router.get('/shopee/chat-history', requireAuth, async (req, res) => {
     res.status(404).json({ error: 'Chat não vinculado para este username (col E)' })
     return
   }
+  const maxPagesRaw = Number(req.query.maxPages)
+  const maxPages = Number.isFinite(maxPagesRaw) && maxPagesRaw > 0 ? maxPagesRaw : undefined
   try {
-    const history = await fetchAllChatMessages(chat.conversationId, chat.toId)
+    const history = await fetchAllChatMessages(chat.conversationId, chat.toId, { maxPages })
     res.json({
       ok: true,
       chat: {
