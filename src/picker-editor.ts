@@ -244,6 +244,7 @@ export async function abrirPickerEditor(
             <span class="picker-editor-label">Borracha</span>
             <div class="picker-editor-borracha">
               <button type="button" class="in-borracha">Apagar</button>
+              <button type="button" class="in-restaurar" title="Pinta de volta a parte que foi removida">Restaurar</button>
               <button type="button" class="in-borracha-desfazer" title="Desfazer o último traço (Ctrl+Z)" disabled>←</button>
               <button type="button" class="in-borracha-refazer" title="Refazer (Ctrl+Y)" disabled>→</button>
               <input type="range" class="in-brush" min="10" max="200" step="5" value="60" />
@@ -358,9 +359,16 @@ export async function abrirPickerEditor(
     heartGrownMask = null
   }
 
-  /** Camada onde a borracha pinta (mesma resolução da foto sem fundo). */
-  let apagador: HTMLCanvasElement | null = null
+  /** Foto sem fundo já com os traços de apagar/restaurar (mesma resolução). null = sem edição. */
+  let editada: HTMLCanvasElement | null = null
+  /**
+   * De onde o pincel Restaurar copia os pixels. No recorte é a foto original (mesmo
+   * enquadramento do PicWish, então volta até o que o PicWish tirou). No rosto o
+   * face cutout vem cortado e não alinha com a original: aí só volta o que a borracha apagou.
+   */
+  let origemRestauro: HTMLImageElement | null = null
   let borrachaAtiva = false
+  let restaurando = false
   /** Posição do mouse no canvas — só usada pra desenhar a bolinha da borracha. */
   let cursor: { x: number; y: number } | null = null
   /** Cada item é a máscara ANTES de um traço. A seta pra trás volta um traço; a da frente refaz. */
@@ -395,7 +403,7 @@ export async function abrirPickerEditor(
   function guardarAntesDoTraco(): void {
     if (tracoAtivo) return
     tracoAtivo = true
-    mascaraAntes = clonarMascara(apagador)
+    mascaraAntes = clonarMascara(editada)
   }
 
   function confirmarTraco(): void {
@@ -410,16 +418,16 @@ export async function abrirPickerEditor(
 
   function desfazerBorracha(): void {
     if (tracoAtivo || historico.length === 0) return
-    futuro.push(clonarMascara(apagador))
-    apagador = historico.pop() ?? null
+    futuro.push(clonarMascara(editada))
+    editada = historico.pop() ?? null
     desenhar()
     atualizarSetas()
   }
 
   function refazerBorracha(): void {
     if (tracoAtivo || futuro.length === 0) return
-    historico.push(clonarMascara(apagador))
-    apagador = futuro.pop() ?? null
+    historico.push(clonarMascara(editada))
+    editada = futuro.pop() ?? null
     desenhar()
     atualizarSetas()
   }
@@ -437,9 +445,11 @@ export async function abrirPickerEditor(
         const r = tamanhoRotacionado(fonte.naturalWidth, fonte.naturalHeight, ajuste.rotation)
         ajuste.width = Math.round((CANVAS / Math.min(r.w, r.h)) * r.w)
       }
-      apagador = null
+      editada = null
+      origemRestauro = null
       limparHistoricoBorracha()
       desenhar()
+      if (usaSemFundo && modo === 'recorte') void carregarOrigemRestauro(fonte)
     } catch {
       fonte = null
       if ((modo === 'recorte' || modo === 'coracao') && fonteRecorte === 'sem_fundo') {
@@ -460,6 +470,18 @@ export async function abrirPickerEditor(
     }
   }
 
+  async function carregarOrigemRestauro(semFundo: HTMLImageElement): Promise<void> {
+    try {
+      const img = await carregarImagem(`${base}?t=${Date.now()}`)
+      const proporcaoSemFundo = semFundo.naturalWidth / semFundo.naturalHeight
+      const proporcaoOriginal = img.naturalWidth / img.naturalHeight
+      if (fonte !== semFundo || Math.abs(proporcaoOriginal / proporcaoSemFundo - 1) > 0.015) return
+      origemRestauro = img
+    } catch {
+      // sem a original, Restaurar só desfaz o que a borracha apagou
+    }
+  }
+
   /* ---------------- desenho do preview ---------------- */
   /** Carimba a foto com o enquadramento atual no contexto dado. */
   function desenharFoto(c: CanvasRenderingContext2D): void {
@@ -472,11 +494,7 @@ export async function abrirPickerEditor(
     c.translate(CANVAS / 2 + ajuste.dx, CANVAS / 2 + ajuste.dy)
     c.rotate((ajuste.rotation * Math.PI) / 180)
     c.imageSmoothingQuality = 'high'
-    c.drawImage(fonte, -dw / 2, -dh / 2, dw, dh)
-    if (apagador) {
-      c.globalCompositeOperation = 'destination-out'
-      c.drawImage(apagador, -dw / 2, -dh / 2, dw, dh)
-    }
+    c.drawImage(editada ?? fonte, -dw / 2, -dh / 2, dw, dh)
     c.restore()
   }
 
@@ -536,7 +554,7 @@ export async function abrirPickerEditor(
     c.save()
     c.beginPath()
     c.arc(cursor.x, cursor.y, Number(inBrush.value) / 2, 0, Math.PI * 2)
-    c.strokeStyle = 'rgba(255,255,255,.95)'
+    c.strokeStyle = restaurando ? 'rgba(34,197,94,.95)' : 'rgba(255,255,255,.95)'
     c.lineWidth = 4
     c.stroke()
     c.strokeStyle = 'rgba(15,23,42,.9)'
@@ -666,25 +684,32 @@ export async function abrirPickerEditor(
     return { x: rx / escala + fonte.naturalWidth / 2, y: ry / escala + fonte.naturalHeight / 2 }
   }
 
-  function apagarEm(p: { x: number; y: number }): void {
+  function pincelEm(p: { x: number; y: number }): void {
     if (!fonte) return
-    if (!apagador) {
-      apagador = document.createElement('canvas')
-      apagador.width = fonte.naturalWidth
-      apagador.height = fonte.naturalHeight
+    if (!editada) {
+      editada = document.createElement('canvas')
+      editada.width = fonte.naturalWidth
+      editada.height = fonte.naturalHeight
+      editada.getContext('2d')!.drawImage(fonte, 0, 0)
     }
     const alvo = paraFoto(p)
     if (!alvo) return
-    const c = apagador.getContext('2d')!
-    // Marca o buraco. O preview e o Salvar furam a foto com essa máscara.
-    // A seta pra trás devolve a máscara de antes do traço.
-    c.globalCompositeOperation = 'source-over'
-    c.fillStyle = '#fff'
-    c.beginPath()
+    const c = editada.getContext('2d')!
     const rot = tamanhoRotacionado(fonte.naturalWidth, fonte.naturalHeight, ajuste.rotation)
     const escala = (ajuste.width || rot.w) / rot.w
+    c.save()
+    c.beginPath()
     c.arc(alvo.x, alvo.y, Number(inBrush.value) / 2 / escala, 0, Math.PI * 2)
-    c.fill()
+    if (restaurando) {
+      c.clip()
+      c.clearRect(0, 0, editada.width, editada.height)
+      c.drawImage(origemRestauro ?? fonte, 0, 0, editada.width, editada.height)
+    } else {
+      c.globalCompositeOperation = 'destination-out'
+      c.fillStyle = '#fff'
+      c.fill()
+    }
+    c.restore()
     desenhar()
   }
 
@@ -695,7 +720,7 @@ export async function abrirPickerEditor(
     const p = paraCanvas(ev)
     if (borrachaAtiva) {
       guardarAntesDoTraco()
-      apagarEm(p)
+      pincelEm(p)
       arrastando = true
       ultimo = p
       return
@@ -721,7 +746,7 @@ export async function abrirPickerEditor(
     const p = paraCanvas(ev)
     if (borrachaAtiva) {
       cursor = p
-      apagarEm(p)
+      pincelEm(p)
     } else {
       ajuste.dx += p.x - ultimo.x
       ajuste.dy += p.y - ultimo.y
@@ -933,18 +958,23 @@ export async function abrirPickerEditor(
   }
 
   function sincronizarBorracha(): void {
-    q<HTMLButtonElement>('.in-borracha').classList.toggle('ativo', borrachaAtiva)
+    q<HTMLButtonElement>('.in-borracha').classList.toggle('ativo', borrachaAtiva && !restaurando)
+    q<HTMLButtonElement>('.in-restaurar').classList.toggle('ativo', borrachaAtiva && restaurando)
     canvas.style.cursor = borrachaAtiva ? 'none' : 'grab'
     atualizarSetas()
   }
 
-  q<HTMLButtonElement>('.in-borracha').addEventListener('click', () => {
+  function alternarPincel(restaurar: boolean): void {
     if (!borrachaDisponivel()) return
-    borrachaAtiva = !borrachaAtiva
+    borrachaAtiva = !(borrachaAtiva && restaurando === restaurar)
+    restaurando = restaurar
     if (!borrachaAtiva) cursor = null
     sincronizarBorracha()
     desenhar()
-  })
+  }
+
+  q<HTMLButtonElement>('.in-borracha').addEventListener('click', () => alternarPincel(false))
+  q<HTMLButtonElement>('.in-restaurar').addEventListener('click', () => alternarPincel(true))
   q<HTMLButtonElement>('.in-borracha-desfazer').addEventListener('click', () => {
     desfazerBorracha()
   })
@@ -1075,8 +1105,9 @@ export async function abrirPickerEditor(
     ajuste.dy = 0
     ajuste.rotation = 0
     ajuste.width = 0
-    apagador = null
+    editada = null
     borrachaAtiva = false
+    restaurando = false
     cursor = null
     limparHistoricoBorracha()
     sincronizarBorracha()
@@ -1084,22 +1115,15 @@ export async function abrirPickerEditor(
     sincronizarControles()
   })
 
-  /** Aplica a borracha de verdade na foto sem fundo e sobe pro servidor. */
+  /** Grava os traços de apagar/restaurar na foto sem fundo do servidor. */
   async function aplicarBorracha(): Promise<void> {
-    if (!apagador || !fonte) return
-    const out = document.createElement('canvas')
-    out.width = fonte.naturalWidth
-    out.height = fonte.naturalHeight
-    const c = out.getContext('2d')!
-    c.drawImage(fonte, 0, 0)
-    c.globalCompositeOperation = 'destination-out'
-    c.drawImage(apagador, 0, 0)
-    const blob = await new Promise<Blob | null>((r) => out.toBlob(r, 'image/png'))
+    if (!editada) return
+    const blob = await new Promise<Blob | null>((r) => editada!.toBlob(r, 'image/png'))
     if (!blob) return
     const fd = new FormData()
     fd.append('image', blob, 'sem-fundo.png')
     await fetch(`${base}/sem-fundo`, { method: 'PUT', credentials: 'include', body: fd })
-    apagador = null
+    editada = null
   }
 
   q<HTMLButtonElement>('.in-salvar').addEventListener('click', async (ev) => {
@@ -1107,7 +1131,7 @@ export async function abrirPickerEditor(
     btn.disabled = true
     setStatus('Salvando…')
     try {
-      if ((modo === 'recorte' || modo === 'face') && apagador) await aplicarBorracha()
+      if ((modo === 'recorte' || modo === 'face') && editada) await aplicarBorracha()
       await api(`${base}/ajuste`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
