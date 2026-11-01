@@ -569,8 +569,8 @@ router.post('/workbooks/:workbookId/pieces/:orderKey/confirm', requireAuth, asyn
   res.json({ ok: true })
 })
 
-/** PATCH /api/pieces/:id/photo/:slot — { crop: 'rosto'|'coracao'|'face' }. Troca só o TIPO de
- * composição da foto já escolhida (recorte/cápsula vs coração vs rosto), sem reenviar a imagem. */
+/** PATCH /api/pieces/:id/photo/:slot — { crop: 'rosto'|'coracao'|'face'|'sem' }. Troca só o TIPO de
+ * composição da foto já escolhida (recorte/cápsula vs coração vs rosto vs sem ajuste), sem reenviar a imagem. */
 router.patch('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
   const pieceId = Number(req.params.id)
   const slot = Number(req.params.slot)
@@ -579,8 +579,8 @@ router.patch('/pieces/:id/photo/:slot', requireAuth, (req, res) => {
     res.status(400).json({ error: 'id/slot inválidos' })
     return
   }
-  if (crop !== 'rosto' && crop !== 'coracao' && crop !== 'face') {
-    res.status(400).json({ error: "crop precisa ser 'rosto', 'coracao' ou 'face'" })
+  if (crop !== 'rosto' && crop !== 'coracao' && crop !== 'face' && crop !== 'sem') {
+    res.status(400).json({ error: "crop precisa ser 'rosto', 'coracao', 'face' ou 'sem'" })
     return
   }
   const now = nowMs()

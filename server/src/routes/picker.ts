@@ -47,6 +47,7 @@ import { SHOPEE_WORKBOOK_ID } from '../shopee-workbook.js'
 import {
   BORDER_PX,
   type ParamsEnquadramento,
+  encaixarFotoInteira,
   renderCoracao,
   renderFace,
   renderRecorte,
@@ -690,14 +691,30 @@ function nomeArteFinal(molde: string, orderKey: string, workbookId: string, ext:
   return `${base}.${ext}`
 }
 
-/** Resolve fotos compostas + emojis de uma peça (comum a molde único e conjunto). */
-function resolverInsumosPeca(peca: LinhaPeca): { fotos: Buffer[]; emojis: Buffer[] } {
+/** Bytes que entram no carimbo. 'sem' usa a foto escolhida inteira; os outros tipos usam a composta do picker. */
+async function bytesDaFoto(l: LinhaFoto): Promise<Buffer | null> {
+  if (!l.storage_path || !existsSync(l.storage_path)) return null
+  if (l.crop === 'sem') return encaixarFotoInteira(readFileSync(l.storage_path))
+  if (l.composta_path && existsSync(l.composta_path)) return readFileSync(l.composta_path)
+  return null
+}
+
+function slotEntraNaArte(l: LinhaFoto | undefined): boolean {
+  if (!l?.storage_path || !existsSync(l.storage_path)) return false
+  if (l.crop === 'sem') return true
+  return Boolean(l.composta_path && existsSync(l.composta_path))
+}
+
+/** Resolve fotos + emojis de uma peça (comum a molde único e conjunto). */
+async function resolverInsumosPeca(peca: LinhaPeca): Promise<{ fotos: Buffer[]; emojis: Buffer[] }> {
   const fotos: Buffer[] = []
   for (const slot of [1, 2]) {
-    const l = foto(peca.id, slot)
-    if (l?.composta_path && existsSync(l.composta_path)) fotos.push(readFileSync(l.composta_path))
+    const l = await garantirFoto(peca.id, slot)
+    if (!l) continue
+    const bytes = await bytesDaFoto(l)
+    if (bytes) fotos.push(bytes)
   }
-  if (fotos.length === 0) throw new Error('nenhuma foto composta — ajuste as fotos no picker antes')
+  if (fotos.length === 0) throw new Error('nenhuma foto pronta — ajuste no picker ou marque Sem ajuste')
   // Foto única: o slot 2 repete a 1 (mesma regra do pipeline local).
   if (fotos.length === 1) fotos.push(fotos[0])
 
@@ -735,7 +752,7 @@ export async function gerarArteDaPeca(pieceId: number, workbookId: string = SHOP
     throw new Error(`molde sem canvas cadastrado: "${peca.molde}"`)
   }
 
-  const { fotos, emojis } = resolverInsumosPeca(peca)
+  const { fotos, emojis } = await resolverInsumosPeca(peca)
 
   if (ehConjunto) {
     const paineis = await renderConjunto({ molde, cor: peca.cor || '#000000', fotos, emojis })
@@ -780,6 +797,10 @@ function chaveCacheArte(pieceId: number): string | null {
  * (individual, do pedido, ou o zip de aprovados) ser praticamente instantâneo depois.
  */
 export async function gerarArteDaPecaCache(pieceId: number, workbookId: string = SHOPEE_WORKBOOK_ID): Promise<{ nome: string; jpg: Buffer }> {
+  // Pendência do chat ainda é só URL. Baixa antes da chave, senão a arte cacheada
+  // ignora a foto nova (a chave olha piece_images, que ainda não existe).
+  await garantirFoto(pieceId, 1)
+  await garantirFoto(pieceId, 2)
   const chave = chaveCacheArte(pieceId)
   if (chave) {
     const cache = db
@@ -1291,10 +1312,7 @@ async function gerarEGuardarPrint(pieceId: number, workbookId: string): Promise<
   const arte = await gerarArteDaPecaCache(pieceId, workbookId)
   const jpg = await jpgPraPrint(arte.nome, arte.jpg)
   // nFotos = quantas fotos a arte usa; define a largura da unidade do padrão.
-  const nFotos = [1, 2].filter((slot) => {
-    const l = foto(pieceId, slot)
-    return !!l?.composta_path && existsSync(l.composta_path)
-  }).length
+  const nFotos = [1, 2].filter((slot) => slotEntraNaArte(foto(pieceId, slot))).length
   const print = await gerarPrint4x4(jpg, Math.max(1, nFotos))
 
   const col = colunaDaPeca(peca.seq)

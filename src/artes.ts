@@ -431,6 +431,7 @@ async function boot(): Promise<void> {
           ${opt('rosto', 'Recorte')}
           ${opt('coracao', 'Coração')}
           ${opt('face', 'Rosto')}
+          ${opt('sem', 'Sem ajuste')}
         </div>
       `
     }
@@ -438,12 +439,14 @@ async function boot(): Promise<void> {
     function slotHtml(slot: 1 | 2): string {
       const has = piece.photos[slot]
       const ajustadoEm = piece.compostas?.[slot] ?? null
+      const semAjuste = (piece.crops[slot] ?? 'rosto') === 'sem'
       const fotoEm = piece.fotosUpdatedAt?.[slot] ?? null
-      const src = ajustadoEm
+      const mostraAjuste = Boolean(ajustadoEm) && !semAjuste
+      const src = mostraAjuste
         ? `/api/pieces/${piece.id}/photo/${slot}/composta?v=${ajustadoEm}`
         : `/api/pieces/${piece.id}/photo/${slot}${fotoEm ? `?v=${fotoEm}` : ''}`
       const thumb = has
-        ? `<img class="shopee-chat-piece-thumb${ajustadoEm ? ' is-ajustada' : ''}" src="${src}" alt="Foto ${slot}" referrerpolicy="no-referrer" />`
+        ? `<img class="shopee-chat-piece-thumb${mostraAjuste ? ' is-ajustada' : ''}" src="${src}" alt="Foto ${slot}" referrerpolicy="no-referrer" />`
         : `<div class="shopee-chat-piece-thumb shopee-chat-piece-thumb--empty">Foto ${slot}</div>`
       const removeBtn = has
         ? `<button type="button" class="shopee-chat-piece-photo-remove" data-piece-id="${piece.id}" data-slot="${slot}" title="Remover">×</button>`
@@ -459,7 +462,7 @@ async function boot(): Promise<void> {
           </div>
           ${has ? cropToggleHtml(slot) : ''}
           ${
-            has
+            has && !semAjuste
               ? `<button type="button" class="shopee-chat-piece-ajustar" data-piece-id="${piece.id}" data-slot="${slot}" data-molde="${escapeHtml(piece.molde)}" title="Ajustar enquadramento (coração/recorte/rosto)">✎ Ajustar</button>`
               : ''
           }

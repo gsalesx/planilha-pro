@@ -494,3 +494,16 @@ export async function reframe(rgba: Buffer, margem = MARGEM_BORDA): Promise<Buff
     .png()
     .toBuffer()
 }
+
+/** Foto do jeito que foi escolhida: cabe inteira no quadrado 900×900, sem cortar,
+ *  sem esticar e sem máscara. O que sobra fica transparente e, na arte, mostra a cor da peça. */
+export async function encaixarFotoInteira(bytes: Buffer): Promise<Buffer> {
+  return sharp(bytes)
+    .rotate()
+    .resize(CANVAS, CANVAS, {
+      fit: 'contain',
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    })
+    .png()
+    .toBuffer()
+}

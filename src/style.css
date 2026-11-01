@@ -2322,6 +2322,7 @@ body.shopee-chat-open {
 
 .shopee-chat-piece-crop {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
 }
 

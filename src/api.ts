@@ -646,7 +646,8 @@ export type PecaGenero = 'MASCULINO' | 'FEMININO'
 export type PecaTamanhoInfantil = '2 ANOS' | '4 ANOS' | '6 ANOS' | '8 ANOS' | '10 ANOS' | '12 ANOS'
 export type PecaTamanho = 'P' | 'M' | 'G' | 'GG' | PecaTamanhoInfantil
 
-export type PhotoCrop = 'rosto' | 'coracao' | 'face'
+/** 'rosto' = recorte/cápsula, 'coracao', 'face' = face cutout, 'sem' = foto inteira, sem enquadramento. */
+export type PhotoCrop = 'rosto' | 'coracao' | 'face' | 'sem'
 
 export interface OrderPiece {
   id: number
@@ -666,7 +667,7 @@ export interface OrderPiece {
   nota: string
   source: 'auto' | 'manual'
   photos: { 1: boolean; 2: boolean }
-  /** Tipo de composição por foto (recorte/cápsula vs coração vs rosto) — null = sem foto. */
+  /** Tipo de composição por foto (recorte, coração, rosto ou sem ajuste) — null = sem foto. */
   crops: { 1: PhotoCrop | null; 2: PhotoCrop | null }
   /** URL do CDN Shopee pra foto escolhida mas ainda não confirmada/baixada (hotlink
    * direto pro preview) — null quando já foi confirmada ou quando não tem foto. */

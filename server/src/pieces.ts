@@ -34,12 +34,14 @@ export interface OrderPieceRow {
   updated_at: number
 }
 
-export type PhotoCrop = 'rosto' | 'coracao' | 'face'
+/** 'sem' = a foto escolhida entra inteira na arte, sem coração/recorte/rosto. */
+export type PhotoCrop = 'rosto' | 'coracao' | 'face' | 'sem'
 
 export interface PieceWithPhotos extends OrderPieceRow {
   photos: { 1: boolean; 2: boolean }
   /** Tipo de composição por foto — 'rosto' (recorte/cápsula) | 'coracao' | 'face'
-   * (face cutout PicWish, sem moldura). null = sem foto nesse slot ainda. */
+   * (face cutout PicWish, sem moldura) | 'sem' (foto inteira, sem ajuste).
+   * null = sem foto nesse slot ainda. */
   crops: { 1: PhotoCrop | null; 2: PhotoCrop | null }
   /** URL do CDN Shopee pra foto escolhida mas AINDA NÃO baixada (hotlink direto —
    * ver piece_pending_photos). null = já confirmada/baixada, ou sem foto. */
