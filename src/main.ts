@@ -3,6 +3,7 @@ import './style.css'
 import {
   AuthRequiredError,
   checkAuth,
+  createOrder,
   createWorkbook,
   isReviewSession,
   deleteImage,
@@ -28,6 +29,7 @@ import {
   openBaixarAprovadosDialog,
   openCalendarPickerDialog,
   openConfirmDialog,
+  openPromptDialog,
   openPreviewPickerDialog,
   openTextareaDialog,
 } from './dialog'
@@ -46,6 +48,8 @@ import {
   channelOfWorkbook,
   isMarketplaceWorkbookId,
   isShopeeWorkbookId,
+  isWhatsappWorkbookId,
+  SHEET_SWITCH_TARGETS,
   marketplaceDef,
   REVIEW_WORKBOOK_ID,
   marketplaceStatusMatchValues,
@@ -96,6 +100,12 @@ function buildShell() {
         <h1>Planilha Pro</h1>
         <span class="review-badge" id="review-badge" hidden>Avaliação</span>
         <span class="filename" id="filename">Relatórios</span>
+        <nav class="sheet-switch" id="sheet-switch" aria-label="Trocar planilha">
+          ${SHEET_SWITCH_TARGETS.map(
+            (target) =>
+              `<button type="button" class="sheet-switch-btn" data-workbook="${target.id}">${target.label}</button>`,
+          ).join('')}
+        </nav>
         <div class="search-box">
           <span class="search-icon">⌕</span>
           <input id="search-input" type="search" placeholder="Buscar em toda a planilha..." autocomplete="off" />
@@ -120,6 +130,9 @@ function buildShell() {
           </button>
           <button type="button" class="btn" id="baixar-aprovados-data-btn" hidden title="Baixa as artes dos pedidos Aprovado da data selecionada (usa o cache se já foram geradas)">
             ⬇ Baixar aprovados (data)
+          </button>
+          <button type="button" class="btn btn-primary" id="wpp-new-order-btn" hidden title="Inclui um pedido nesta data para preencher na mão">
+            + Novo pedido
           </button>
           <button class="btn" id="logout-btn" title="Sair">Sair</button>
         </div>
@@ -2074,7 +2087,66 @@ function applyMarketplaceWorkbookToolbar(workbookId: string) {
   setToolbarBtnVisible(document.querySelector('#shopee-xlsx-import-label'), isShopee)
   setToolbarBtnVisible(document.querySelector('#xlsx-update-label'), !isMp)
   setToolbarBtnVisible(document.querySelector('#xlsx-photos-label'), !isMp)
+  setToolbarBtnVisible(document.querySelector('#wpp-new-order-btn'), isWhatsappWorkbookId(workbookId))
   setShopeeActionBanner('', 'hidden')
+}
+
+function todaySheetDate(): string {
+  const d = new Date()
+  const dd = String(d.getDate()).padStart(2, '0')
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  return `${dd}-${mm}-${d.getFullYear()}`
+}
+
+function bindSheetSwitch() {
+  const nav = document.querySelector<HTMLElement>('#sheet-switch')
+  if (!nav) return
+  if (isReviewSession()) {
+    nav.hidden = true
+    return
+  }
+  nav.querySelectorAll<HTMLButtonElement>('[data-workbook]').forEach((btn) => {
+    const id = btn.dataset.workbook ?? ''
+    btn.classList.toggle('is-active', id === currentWorkbookId)
+    btn.addEventListener('click', () => {
+      if (!id || id === currentWorkbookId) return
+      leaveWorkbook()
+      void enterWorkbook(id)
+    })
+  })
+}
+
+function bindWhatsappNewOrder() {
+  const btn = document.querySelector<HTMLButtonElement>('#wpp-new-order-btn')
+  if (!btn) return
+  btn.addEventListener('click', () => {
+    openPromptDialog({
+      title: 'Novo pedido WhatsApp',
+      label: 'ID do pedido',
+      confirmLabel: 'Criar',
+      onConfirm: async (id) => {
+        try {
+          await insertManualOrder(id)
+        } catch (error) {
+          handleApiError(error, 'Falha ao criar pedido')
+        }
+      },
+    })
+  })
+}
+
+async function insertManualOrder(id: string) {
+  if (!currentWorkbookId) return
+  const sheetDate = todaySheetDate()
+  const row: CellValue[] = FIXED_HEADERS.map(() => null)
+  row[ID_COL] = id
+  setStatusText('Criando pedido…')
+  await createOrder(currentWorkbookId, { id, row, sheetDate })
+  setUrlDate(sheetDate)
+  await refreshFromServer({ force: true })
+  grid.setDateFilter(sheetDate)
+  renderDateSelect()
+  setStatusText(`Pedido ${id} criado em ${sheetDate}. Preencha produto, modelo e destinatário.`)
 }
 
 async function enterWorkbook(workbookId: string) {
@@ -2123,6 +2195,8 @@ async function enterWorkbook(workbookId: string) {
   bindZoomControls()
   bindPendingMutationsButton()
   applyMarketplaceWorkbookToolbar(workbookId)
+  bindSheetSwitch()
+  bindWhatsappNewOrder()
   applyReviewChrome()
   bindBaixarAprovados()
   bindShopeeLinkConversations()

@@ -18,6 +18,8 @@ export interface MarketplaceWorkbookDef {
 export const SHOPEE_WORKBOOK_ID = 'wb_shopee'
 export const TIKTOK_WORKBOOK_ID = 'wb_tiktok'
 export const MERCADOLIVRE_WORKBOOK_ID = 'wb_mercadolivre'
+/** Pedidos digitados na mão (WhatsApp). Não sincroniza com marketplace. */
+export const WHATSAPP_WORKBOOK_ID = 'wb_whatsapp'
 
 export const MARKETPLACE_WORKBOOKS: readonly MarketplaceWorkbookDef[] = [
   {
@@ -46,6 +48,15 @@ export function isMarketplaceWorkbookId(id: string): boolean {
   return BY_ID.has(id)
 }
 
+export function isWhatsappWorkbookId(id: string): boolean {
+  return id === WHATSAPP_WORKBOOK_ID
+}
+
+/** Planilhas fixas: marketplace automático + pedidos WhatsApp. */
+export function isSystemWorkbookId(id: string): boolean {
+  return isMarketplaceWorkbookId(id) || isWhatsappWorkbookId(id)
+}
+
 export function isShopeeWorkbookId(id: string): boolean {
   return id === SHOPEE_WORKBOOK_ID
 }
@@ -63,16 +74,20 @@ export function headersForMarketplaceWorkbook(id: string): string[] | null {
   return def ? marketplaceHeaders(def.statusHeader) : null
 }
 
-/** Garante que as 3 planilhas de sistema existam após boot. */
+/** Garante as planilhas fixas após o boot: Shopee, TikTok, Mercado Livre e WhatsApp. */
 export function ensureMarketplaceWorkbooks(): void {
   const now = nowMs()
   const insert = db.prepare(
     'INSERT OR IGNORE INTO workbooks (id, name, created_at, updated_at, column_widths) VALUES (?, ?, ?, ?, ?)',
   )
-  for (const w of MARKETPLACE_WORKBOOKS) {
+  const fixed = [
+    ...MARKETPLACE_WORKBOOKS.map((w) => ({ id: w.id, name: w.name })),
+    { id: WHATSAPP_WORKBOOK_ID, name: 'Pedidos WhatsApp' },
+  ]
+  for (const w of fixed) {
     const info = insert.run(w.id, w.name, now, now, '{}')
     if (info.changes > 0) {
-      console.log(`[marketplace] planilha automática criada: ${w.id} (${w.name})`)
+      console.log(`[marketplace] planilha fixa criada: ${w.id} (${w.name})`)
     }
   }
 }

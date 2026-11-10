@@ -7,7 +7,11 @@ import { Router } from 'express'
 import { requireAuth, type AuthenticatedRequest } from '../auth.js'
 import { db, nowMs } from '../db.js'
 import { env } from '../env.js'
-import { isMarketplaceWorkbookId, MARKETPLACE_WORKBOOKS } from '../marketplace.js'
+import {
+  isSystemWorkbookId,
+  MARKETPLACE_WORKBOOKS,
+  WHATSAPP_WORKBOOK_ID,
+} from '../marketplace.js'
 import { REVIEW_WORKBOOK_ID } from '../review-access.js'
 
 const router = Router()
@@ -43,14 +47,14 @@ function serializeWorkbook(row: WorkbookRow & { count?: number }) {
     updatedAt: row.updated_at,
     columnWidths: JSON.parse(row.column_widths || '{}') as Record<string, number>,
     count: row.count ?? 0,
-    system: isMarketplaceWorkbookId(row.id),
+    system: isSystemWorkbookId(row.id),
   }
 }
 
 router.get('/workbooks', requireAuth, (req: AuthenticatedRequest, res) => {
-  // Pin: Shopee, TikTok, ML no topo (nessa ordem), depois as demais por updated_at.
+  // Pin: Shopee, TikTok, ML, WhatsApp no topo (nessa ordem), depois as demais por updated_at.
   // A planilha de avaliação não entra na lista da loja, e o login de avaliação só vê essa.
-  const pinOrder = MARKETPLACE_WORKBOOKS.map((w) => w.id)
+  const pinOrder = [...MARKETPLACE_WORKBOOKS.map((w) => w.id), WHATSAPP_WORKBOOK_ID]
   const caseSql = pinOrder.map((id, i) => `WHEN w.id = '${id}' THEN ${i}`).join(' ')
   const review = req.sessionRole === 'review'
   const where = review ? 'WHERE w.id = ?' : 'WHERE w.id <> ?'
@@ -78,8 +82,8 @@ router.post('/workbooks', requireAuth, (req, res) => {
 
 router.patch('/workbooks/:id', requireAuth, (req, res) => {
   const id = req.params.id
-  if (isMarketplaceWorkbookId(id)) {
-    res.status(403).json({ error: 'Planilha automática de marketplace não pode ser renomeada' })
+  if (isSystemWorkbookId(id)) {
+    res.status(403).json({ error: 'Planilha fixa não pode ser renomeada' })
     return
   }
   const name = String((req.body as { name?: unknown }).name ?? '').trim()
@@ -100,8 +104,8 @@ router.patch('/workbooks/:id', requireAuth, (req, res) => {
 
 router.delete('/workbooks/:id', requireAuth, (req, res) => {
   const id = req.params.id
-  if (isMarketplaceWorkbookId(id)) {
-    res.status(403).json({ error: 'Planilha automática de marketplace não pode ser excluída' })
+  if (isSystemWorkbookId(id)) {
+    res.status(403).json({ error: 'Planilha fixa não pode ser excluída' })
     return
   }
   const exists = db.prepare('SELECT id FROM workbooks WHERE id = ?').get(id)

@@ -30,6 +30,15 @@ export const SHOPEE_WORKBOOK_ID = 'wb_shopee'
 export const REVIEW_WORKBOOK_ID = 'wb_avaliacao'
 export const TIKTOK_WORKBOOK_ID = 'wb_tiktok'
 export const MERCADOLIVRE_WORKBOOK_ID = 'wb_mercadolivre'
+/** Pedidos digitados na mão. Mesmo layout da planilha comum, sem sync. */
+export const WHATSAPP_WORKBOOK_ID = 'wb_whatsapp'
+
+export const SHEET_SWITCH_TARGETS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: SHOPEE_WORKBOOK_ID, label: 'Shopee' },
+  { id: TIKTOK_WORKBOOK_ID, label: 'TikTok' },
+  { id: MERCADOLIVRE_WORKBOOK_ID, label: 'Mercado Livre' },
+  { id: WHATSAPP_WORKBOOK_ID, label: 'WhatsApp' },
+]
 
 export const DEFAULT_PHOTO_COLUMN_INDEX = 7
 export const DEFAULT_PHOTO_COLUMN_INDICES = Array.from({ length: 10 }, (_, i) => DEFAULT_PHOTO_COLUMN_INDEX + i)
@@ -136,6 +145,10 @@ export function isMarketplaceWorkbookId(id: string): boolean {
 
 export function isShopeeWorkbookId(id: string): boolean {
   return id === SHOPEE_WORKBOOK_ID
+}
+
+export function isWhatsappWorkbookId(id: string): boolean {
+  return id === WHATSAPP_WORKBOOK_ID
 }
 
 export function channelOfWorkbook(id: string): MarketplaceChannel | null {

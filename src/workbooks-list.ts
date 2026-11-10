@@ -8,7 +8,7 @@ import {
   type WorkbookSummary,
 } from './api'
 import { openConfirmDialog, openPromptDialog } from './dialog'
-import { channelOfWorkbook } from './marketplace'
+import { channelOfWorkbook, isWhatsappWorkbookId } from './marketplace'
 
 type OpenHandler = (workbookId: string) => void
 type AuthLostHandler = () => void
@@ -30,6 +30,7 @@ function formatTimestamp(ms: number): string {
 }
 
 function channelSyncLabel(id: string): string {
+  if (isWhatsappWorkbookId(id)) return 'Pedidos digitados na mão · '
   const channel = channelOfWorkbook(id)
   if (channel === 'shopee') return 'Sincronizada com a Shopee · '
   if (channel === 'tiktok') return 'Sincronizada com o TikTok · '
@@ -38,6 +39,7 @@ function channelSyncLabel(id: string): string {
 }
 
 function channelBadge(id: string): string {
+  if (isWhatsappWorkbookId(id)) return 'WhatsApp'
   const channel = channelOfWorkbook(id)
   if (channel === 'shopee') return 'Shopee'
   if (channel === 'tiktok') return 'TikTok'

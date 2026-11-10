@@ -198,6 +198,16 @@ export interface OrderStyleDelta {
   clearComment?: boolean
 }
 
+export async function createOrder(
+  workbookId: string,
+  body: { id: string; row: CellValue[]; sheetDate?: string },
+): Promise<{ key: string; id: string }> {
+  return request(`/workbooks/${encodeURIComponent(workbookId)}/orders`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
 export async function patchOrderDelta(
   workbookId: string,
   orderId: string,

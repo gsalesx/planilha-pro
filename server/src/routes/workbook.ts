@@ -345,6 +345,7 @@ router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
 
     const sets: string[] = []
     const params: unknown[] = []
+    let nextId: string | null = null
     if (cellPatches) {
       const row = JSON.parse(current.row_json || '[]') as unknown[]
       for (const item of cellPatches) {
@@ -352,6 +353,8 @@ router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
         while (row.length <= col) row.push(null)
         row[col] = item.value ?? null
       }
+      const idText = row[0] == null ? '' : String(row[0]).trim()
+      if (cellPatches.some((item) => Number(item.col) === 0) && idText) nextId = idText
       sets.push('row_json = ?')
       params.push(JSON.stringify(row))
     } else if (Array.isArray(patch.row)) {
@@ -376,6 +379,11 @@ router.patch('/workbooks/:workbookId/orders/:id', requireAuth, (req, res) => {
     } else if (patch.styles && typeof patch.styles === 'object' && !Array.isArray(patch.styles)) {
       sets.push('styles_json = ?')
       params.push(JSON.stringify(patch.styles))
+    }
+
+    if (nextId) {
+      sets.push('id = ?')
+      params.push(nextId)
     }
 
     if (hasDisappearedPatch) {
