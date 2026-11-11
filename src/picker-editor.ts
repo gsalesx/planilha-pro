@@ -118,6 +118,8 @@ export async function abrirPickerEditor(
 
   const estado = await api<EstadoServidor>(`${base}/ajuste`)
   let modo: ModoFoto = estado.modo
+  // Altura fixa da cápsula (864 − 36). Com essa largura o raio fecha um círculo.
+  const LARGURA_REDONDA = 828
   let uWidth = estado.uWidth || 600
   const ajuste: Required<AjusteFoto> = {
     width: estado.ajuste.width ?? 0,
@@ -182,7 +184,10 @@ export async function abrirPickerEditor(
 
           <div class="picker-editor-grupo" data-so-recorte>
             <span class="picker-editor-label">Largura do recorte <b class="v-uwidth"></b></span>
-            <input type="range" class="in-uwidth" min="200" max="1000" step="10" />
+            <div class="picker-editor-uwidth">
+              <input type="range" class="in-uwidth" min="200" max="1000" step="1" />
+              <button type="button" class="btn in-redondo" title="Largura igual à altura da cápsula — recorte circular">Redondo</button>
+            </div>
           </div>
 
           <div class="picker-editor-grupo" data-so-fonte>
@@ -794,6 +799,7 @@ export async function abrirPickerEditor(
     posicionarBolaRotacao()
     inUWidth.value = String(uWidth)
     q('.v-uwidth').textContent = String(uWidth)
+    q('.in-redondo').classList.toggle('ativo', uWidth === LARGURA_REDONDA)
     overlay.querySelectorAll<HTMLElement>('[data-so-recorte]').forEach((el) => {
       el.style.display = modo === 'recorte' ? '' : 'none'
     })
@@ -939,6 +945,11 @@ export async function abrirPickerEditor(
 
   inUWidth.addEventListener('input', () => {
     uWidth = Number(inUWidth.value)
+    sincronizarControles()
+    desenhar()
+  })
+  q('.in-redondo').addEventListener('click', () => {
+    uWidth = LARGURA_REDONDA
     sincronizarControles()
     desenhar()
   })

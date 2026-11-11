@@ -4278,6 +4278,19 @@ table.sheet tbody th.row-num.is-active {
 .picker-editor-borracha input[type='range'] { flex: 1 0 100%; }
 .picker-editor-controles input[type='range'] { width: 100%; }
 
+.picker-editor-uwidth { display: flex; align-items: center; gap: 8px; }
+.picker-editor-uwidth .in-uwidth { flex: 1; min-width: 0; }
+.picker-editor-uwidth .in-redondo {
+  flex: none;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.picker-editor-controles .btn.in-redondo.ativo {
+  background: #0f172a;
+  border-color: #0f172a;
+  color: #fff;
+}
+
 .picker-editor-acoes { display: flex; gap: 8px; margin-top: auto; }
 .picker-editor-acoes .btn { flex: 1; }
 
