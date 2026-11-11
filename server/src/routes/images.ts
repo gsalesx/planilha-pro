@@ -20,6 +20,11 @@ const THUMB_MAX = 400
 const THUMB_MIN = 64
 const THUMB_QUALITY = 70
 
+function contentDispositionInline(fileName: string): string {
+  const ascii = fileName.replace(/[^\x20-\x7E]/g, '_').replace(/"/g, '')
+  return `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
+}
+
 function parseThumbSize(raw: unknown): number | null {
   if (typeof raw !== 'string' || raw.length === 0) return null
   const n = Number(raw)
@@ -201,8 +206,8 @@ router.get('/workbooks/:workbookId/images/:orderId/:col', requireAuth, async (re
   }
   const orderId = resolved.key
   const row = db
-    .prepare('SELECT storage_path, mime FROM images WHERE workbook_id = ? AND order_id = ? AND col = ?')
-    .get(workbookId, orderId, col) as { storage_path: string; mime: string } | undefined
+    .prepare('SELECT storage_path, mime, file_name FROM images WHERE workbook_id = ? AND order_id = ? AND col = ?')
+    .get(workbookId, orderId, col) as { storage_path: string; mime: string; file_name: string } | undefined
   if (!row || !existsSync(row.storage_path)) {
     res.status(404).end()
     return
@@ -221,6 +226,7 @@ router.get('/workbooks/:workbookId/images/:orderId/:col', requireAuth, async (re
   }
   res.setHeader('content-type', row.mime)
   res.setHeader('cache-control', 'private, max-age=86400')
+  if (row.file_name) res.setHeader('content-disposition', contentDispositionInline(row.file_name))
   createReadStream(row.storage_path).pipe(res)
 })
 

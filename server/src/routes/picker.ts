@@ -39,10 +39,14 @@ import {
 } from '../render-molde.js'
 import {
   SHOPEE_COL_INTERNAL_STATUS,
+  SHOPEE_COL_PRODUCT,
+  SHOPEE_COL_RECIPIENT,
+  SHOPEE_COL_USERNAME,
   SHOPEE_INTERNAL_STATUS_SHIPPED,
   SHOPEE_PHOTO_COL_START,
   SHOPEE_PHOTO_COUNT,
 } from '../shopee-columns.js'
+import { resolveFamily, type Family } from '../sku-rules.js'
 import { SHOPEE_WORKBOOK_ID } from '../shopee-workbook.js'
 import {
   BORDER_PX,
@@ -1218,10 +1222,69 @@ function colunaDaPeca(seq: number): number {
   return SHOPEE_PHOTO_COL_START + offset
 }
 
+const ROTULO_FAMILIA: Record<Family, string> = {
+  CAMISOLA: 'CAMISOLA',
+  CAMISOLA_SHORT: 'CAMISOLA + SHORT',
+  CAMISOLA_CONJUNTO: 'CAMISOLA + CONJUNTO',
+  SHORT: 'SHORT',
+  SHORT_CASAL: 'SHORT CASAL',
+  CONJUNTO_UNITARIO: 'CONJUNTO UNITARIO',
+  CONJUNTO_COMPLETO_CASAL: 'CONJUNTO COMPLETO CASAL',
+}
+
+function textoCelula(row: unknown[], col: number): string {
+  return String(row[col] ?? '').replace(/\s+/g, ' ').trim()
+}
+
+/** Tira o que o sistema de arquivo não aceita, sem mudar o nome que a pessoa lê. */
+function limparNomeArquivo(nome: string): string {
+  return nome.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/g, '')
+}
+
+/** "Luana Leite Lorenzon - CAMISOLA + SHORT", sem o .jpg e sem o número. */
+function baseNomePrevia(workbookId: string, orderKey: string, col: number): string {
+  const linha = db
+    .prepare('SELECT row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(workbookId, orderKey) as { row_json: string } | undefined
+  const row = linha ? (JSON.parse(linha.row_json || '[]') as unknown[]) : []
+  const cliente = textoCelula(row, SHOPEE_COL_RECIPIENT) || textoCelula(row, SHOPEE_COL_USERNAME) || 'Cliente'
+  const sku = textoCelula(row, SHOPEE_COL_PRODUCT)
+  const familia = resolveFamily(sku)
+  let produto = familia ? ROTULO_FAMILIA[familia] : ''
+  if (!produto) {
+    const seq = col - SHOPEE_PHOTO_COL_START + 1
+    const peca = db
+      .prepare('SELECT tipo FROM order_pieces WHERE workbook_id = ? AND order_key = ? AND seq = ?')
+      .get(workbookId, orderKey, seq) as { tipo: string } | undefined
+    produto = (peca?.tipo || sku || 'PRÉVIA').trim()
+  }
+  return limparNomeArquivo(`${cliente} - ${produto}`) || 'previa'
+}
+
+/** Segunda foto igual vira "… 2.jpg", a terceira "… 3.jpg". A própria célula não conta. */
+function nomePreviaLivre(workbookId: string, orderKey: string, col: number, base: string): string {
+  const rows = db
+    .prepare('SELECT order_id, col, file_name FROM images WHERE workbook_id = ?')
+    .all(workbookId) as Array<{ order_id: string; col: number; file_name: string }>
+  const re = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?: (\\d+))?\\.jpg$`, 'i')
+  const usados = new Set<number>()
+  for (const row of rows) {
+    if (row.order_id === orderKey && row.col === col) continue
+    const match = row.file_name.match(re)
+    if (!match) continue
+    usados.add(match[1] ? Number(match[1]) : 1)
+  }
+  if (!usados.has(1)) return `${base}.jpg`
+  let n = 2
+  while (usados.has(n)) n += 1
+  return `${base} ${n}.jpg`
+}
+
 /** Grava o print na coluna de foto da linha, substituindo o anterior (arquivo incluso). */
 function guardarPrint(workbookId: string, orderKey: string, col: number, jpg: Buffer): void {
-  const fileName = `print_${orderKey.replace(/[^A-Za-z0-9_-]/g, '_')}_c${col}_${crypto.randomBytes(4).toString('hex')}.jpg`
-  const storagePath = path.join(imagesDir, fileName)
+  const fileName = nomePreviaLivre(workbookId, orderKey, col, baseNomePrevia(workbookId, orderKey, col))
+  const storageName = `print_${crypto.randomBytes(8).toString('hex')}.jpg`
+  const storagePath = path.join(imagesDir, storageName)
   writeFileSync(storagePath, jpg)
   const now = nowMs()
   db.transaction(() => {

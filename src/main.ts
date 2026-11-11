@@ -2122,7 +2122,7 @@ function bindWhatsappNewOrder() {
   btn.addEventListener('click', () => {
     openPromptDialog({
       title: 'Novo pedido WhatsApp',
-      label: 'ID do pedido',
+      label: 'Número',
       confirmLabel: 'Criar',
       onConfirm: async (id) => {
         try {
