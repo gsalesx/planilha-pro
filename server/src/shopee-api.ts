@@ -202,6 +202,16 @@ async function shopApiGet(path: string, query: Record<string, string | number> =
   return parseShopeeJson(response)
 }
 
+/** Desempenho diário somado de todos os anúncios CPC. Datas DD-MM-YYYY no fuso da loja; o dia de hoje vem parcial. */
+export async function getAdsDailyPerformance(startDate: string, endDate: string): Promise<ShopeeApiResponse> {
+  return shopApiGet('/api/v2/ads/get_all_cpc_ads_daily_performance', { start_date: startDate, end_date: endDate })
+}
+
+/** Saldo de anúncios da loja (BRL). */
+export async function getAdsTotalBalance(): Promise<ShopeeApiResponse> {
+  return shopApiGet('/api/v2/ads/get_total_balance')
+}
+
 async function shopApiPost(
   path: string,
   body: unknown,

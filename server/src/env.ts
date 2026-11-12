@@ -28,6 +28,8 @@ export const env = {
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS ?? 30),
   /** Opcional. Se definida, requests com Authorization: Bearer <key> ou X-API-Key: <key> autenticam. */
   apiKey: process.env.API_KEY ?? '',
+  /** Opcional. Chave que só lê GET /api/resumo-dia (widget de vendas e ads no PC). Header X-Resumo-Token. */
+  resumoToken: envTrim('RESUMO_TOKEN'),
   /** Shopee Open Platform — Live API Partner Key (chamadas Open API). */
   shopeePartnerKey: envTrim('SHOPEE_PARTNER_KEY'),
   /**

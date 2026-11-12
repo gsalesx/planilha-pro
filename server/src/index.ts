@@ -46,6 +46,7 @@ import parseIssuesRouter from './routes/parse-issues.js'
 import { limparFotosAntigas } from './limpar-fotos-antigas.js'
 import pickerRouter, { limparArtesExpiradas } from './routes/picker.js'
 import piecesRouter from './routes/pieces.js'
+import resumoRouter from './routes/resumo.js'
 import shopeePushRouter, { handleShopeePushPost } from './routes/shopee-push.js'
 import shopeeProductsRouter from './routes/shopee-products.js'
 import { runWithShopeeAccount, sandboxShopeeAccount } from './shopee-account.js'
@@ -138,6 +139,7 @@ app.use('/api', tiktokPushRouter)
 app.use('/api', mercadolivreRouter)
 app.use('/api', mercadolivrePushRouter)
 app.use('/api', auditRouter)
+app.use('/api', resumoRouter)
 
 // imagens builtin do catálogo de emoji (server/assets/emojis, servido em build-time) —
 // cache longo no navegador: são bytes fixos (baked na imagem Docker), só a LISTA de
