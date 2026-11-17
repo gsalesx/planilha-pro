@@ -27,6 +27,7 @@ import {
   type ShopeeQuotedMessage,
 } from './api'
 import { openConfirmDialog, openPreviewPickerDialog } from './dialog'
+import { isPedidoEmCancelamento } from './marketplace'
 import { PREVIEW_SENT_STATUS, STATUS_COLUMN_INDEX } from './status'
 import { openImageLightbox } from './lightbox'
 import { abrirPickerEditor, abrirPickerFila, type ItemFila } from './picker-editor'
@@ -40,6 +41,8 @@ export interface ShopeeChatOrderInfo {
   model: string
   quantity: string
   status: string
+  /** Status do pedido no marketplace (col. H), ex. IN_CANCEL. */
+  marketplaceStatus?: string
   buyerUsername: string
   recipient: string
   /** Canal do marketplace — roteia chat/histórico/envio. Default Shopee. */
@@ -1025,7 +1028,7 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
   function bindBaixarArtes(pieces: OrderPiece[]): void {
     const btn = overlay.querySelector<HTMLButtonElement>('#shopee-chat-baixar-artes')
     if (!btn) return
-    btn.addEventListener('click', () =>
+    const baixar = () =>
       acionarBotaoAssincrono(btn, '⏳ Gerando…', async () => {
         if (pieces.length === 0) throw new Error('Nenhuma peça montada ainda pra este pedido')
         const r = await fetch(
@@ -1038,8 +1041,20 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         }
         const blob = await r.blob()
         baixarBlob(nomeDoAttachment(r, `${order.buyerUsername || order.orderId}.jpg`), blob)
-      }),
-    )
+      })
+    btn.addEventListener('click', () => {
+      if (!isPedidoEmCancelamento(order.marketplaceStatus ?? '')) {
+        void baixar()
+        return
+      }
+      openConfirmDialog({
+        title: '⚠️ Pedido com solicitação de cancelamento',
+        body: 'Este pedido está com <strong>solicitação de cancelamento</strong>. Confira antes de produzir a arte.',
+        confirmLabel: 'Baixar mesmo assim',
+        danger: true,
+        onConfirm: () => baixar(),
+      })
+    })
   }
 
   /**

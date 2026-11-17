@@ -160,6 +160,12 @@ export function marketplaceDef(id: string): MarketplaceWorkbookDef | undefined {
   return BY_ID.get(id)
 }
 
+/** Pedido com solicitação de cancelamento: Shopee IN_CANCEL; ML pending_cancel (col. H "order/shipment"). */
+export function isPedidoEmCancelamento(status: string): boolean {
+  const s = status.trim().toLowerCase()
+  return s === 'in_cancel' || s.split('/')[0] === 'pending_cancel'
+}
+
 export function marketplaceStatusMatchValues(workbookId: string, filterValue: string): string[] {
   const def = BY_ID.get(workbookId)
   if (!def || !filterValue) return filterValue ? [filterValue] : []

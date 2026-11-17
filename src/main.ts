@@ -28,6 +28,7 @@ import {
   openAlertDialog,
   openBaixarAprovadosDialog,
   openCalendarPickerDialog,
+  openCancelamentoAlertDialog,
   openConfirmDialog,
   openPromptDialog,
   openPreviewPickerDialog,
@@ -986,6 +987,10 @@ function openChatPanelForRow(
     model: cellText(cells, MODEL_COLUMN_INDEX),
     quantity: cellText(cells, QTY_COL),
     status: cellText(cells, STATUS_COLUMN_INDEX),
+    marketplaceStatus: (() => {
+      const mpDef = marketplaceDef(currentWorkbookId ?? '')
+      return mpDef ? cellText(cells, mpDef.statusColumnIndex) : ''
+    })(),
     buyerUsername,
     recipient: cellText(cells, RECIPIENT_COLUMN_INDEX),
     channel,
@@ -2046,17 +2051,49 @@ function bindBaixarAprovados() {
       setStatusText('Selecione uma data primeiro.')
       return
     }
-    openBaixarAprovadosDialog({
-      sheetDate: data,
-      onChoose: async (action) => {
-        if (action.kind === 'download') {
-          await baixar(porData, data)
-        } else {
-          await baixar(porData, data, action.status)
-        }
-      },
-    })
+    const abrirEscolha = () =>
+      openBaixarAprovadosDialog({
+        sheetDate: data,
+        onChoose: async (action) => {
+          if (action.kind === 'download') {
+            await baixar(porData, data)
+          } else {
+            await baixar(porData, data, action.status)
+          }
+        },
+      })
+    void (async () => {
+      // Antes de tudo: algum aprovado da data está com solicitação de cancelamento?
+      let emCancelamento: Array<{ id: string; cliente: string }> = []
+      try {
+        const qs = `?sheetDate=${encodeURIComponent(data)}&workbookId=${encodeURIComponent(currentWorkbookId ?? '')}`
+        const r = await fetch(`/api/picker/artes-aprovadas/contagem${qs}`, { credentials: 'include' })
+        if (r.ok) emCancelamento = ((await r.json()) as { emCancelamento?: typeof emCancelamento }).emCancelamento ?? []
+      } catch {
+        // sem a checagem, segue o fluxo normal
+      }
+      if (emCancelamento.length === 0) {
+        abrirEscolha()
+        return
+      }
+      openCancelamentoAlertDialog({
+        pedidos: emCancelamento,
+        onContinuar: abrirEscolha,
+        onVerPedido: (id) => irParaPedido(id),
+      })
+    })()
   })
+
+  /** Seleciona e rola até a linha do pedido na planilha aberta. */
+  function irParaPedido(id: string) {
+    const sheet = workbook?.sheets[workbook.sheetOrder[0]]
+    const row = sheet ? sheet.rows.findIndex((r) => String(r?.[ID_COL] ?? '').trim() === id) : -1
+    if (row < 0) {
+      setStatusText(`Pedido ${id} não está visível com o filtro atual — mude o filtro de status para encontrá-lo.`)
+      return
+    }
+    grid?.selectAndReveal(row, ID_COL)
+  }
 }
 
 function applyReviewChrome() {

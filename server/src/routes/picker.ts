@@ -1116,8 +1116,28 @@ router.get('/picker/artes-aprovadas/contagem', requireAuth, (req, res) => {
     .prepare(`SELECT order_key, parent_key FROM orders WHERE ${where.join(' AND ')}`)
     .all(...params) as Array<{ order_key: string; parent_key: string | null }>
   const pedidosUnicos = new Set(linhas.map((l) => l.parent_key ?? l.order_key))
-  res.json({ pedidos: pedidosUnicos.size })
+
+  // Aprovados cujo pedido está com solicitação de cancelamento no marketplace
+  // (col. H da linha-pai) — o botão avisa antes de baixar o zip.
+  const MP_STATUS_COL = 7
+  const linhaPai = db.prepare('SELECT id, row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
+  const emCancelamento: Array<{ id: string; cliente: string }> = []
+  for (const chave of pedidosUnicos) {
+    const pai = linhaPai.get(workbookId, chave) as { id: string; row_json: string } | undefined
+    if (!pai) continue
+    const row = JSON.parse(pai.row_json) as unknown[]
+    if (isPedidoEmCancelamento(String(row[MP_STATUS_COL] ?? ''))) {
+      emCancelamento.push({ id: pai.id, cliente: String(row[4] ?? '') || pai.id })
+    }
+  }
+  res.json({ pedidos: pedidosUnicos.size, emCancelamento })
 })
+
+/** Shopee IN_CANCEL; Mercado Livre pending_cancel (ex. "pending_cancel/ready_to_ship"). */
+function isPedidoEmCancelamento(status: string): boolean {
+  const s = status.trim().toLowerCase()
+  return s === 'in_cancel' || s.split('/')[0] === 'pending_cancel'
+}
 
 router.get('/pieces/:id/arte', requireAuth, async (req, res) => {
   const pieceId = Number(req.params.id)

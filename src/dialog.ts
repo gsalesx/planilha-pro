@@ -200,6 +200,68 @@ export function openAlertDialog(opts: {
   confirmBtn.focus()
 }
 
+/**
+ * Aviso antes de baixar aprovados: lista os pedidos com solicitação de cancelamento.
+ * "Ver pedido" fecha o aviso e leva até a linha; "Continuar e baixar" segue o fluxo.
+ */
+export function openCancelamentoAlertDialog(opts: {
+  pedidos: Array<{ id: string; cliente: string }>
+  onContinuar: () => void
+  onVerPedido: (id: string) => void
+}): void {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  const n = opts.pedidos.length
+  const linhas = opts.pedidos
+    .map(
+      (p) => `
+        <li class="cancelamento-alerta-item">
+          <span><strong>${esc(p.cliente)}</strong> · ${esc(p.id)}</span>
+          <button type="button" class="btn cancelamento-ver-pedido" data-id="${esc(p.id)}">Ver pedido</button>
+        </li>`,
+    )
+    .join('')
+  const overlay = document.createElement('div')
+  overlay.className = 'modal-overlay'
+  overlay.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-title">⚠️ ${n === 1 ? 'Pedido' : `${n} pedidos`} com solicitação de cancelamento</div>
+      <div class="modal-body">
+        ${n === 1 ? 'Este pedido aprovado está' : 'Estes pedidos aprovados estão'} com solicitação de cancelamento. Confira antes de produzir:
+        <ul class="cancelamento-alerta-lista">${linhas}</ul>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn modal-cancel">Cancelar</button>
+        <button type="button" class="btn btn-danger modal-confirm">Continuar e baixar</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(overlay)
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') close()
+  }
+  const close = () => {
+    overlay.remove()
+    document.removeEventListener('keydown', onKey)
+  }
+  document.addEventListener('keydown', onKey)
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) close()
+  })
+  overlay.querySelector('.modal-cancel')!.addEventListener('click', close)
+  overlay.querySelector('.modal-confirm')!.addEventListener('click', () => {
+    close()
+    opts.onContinuar()
+  })
+  overlay.querySelectorAll<HTMLButtonElement>('.cancelamento-ver-pedido').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      close()
+      opts.onVerPedido(btn.dataset.id ?? '')
+    })
+  })
+  overlay.querySelector<HTMLButtonElement>('.modal-confirm')!.focus()
+}
+
 function parseDDMMYYYY(raw: string): Date | null {
   const m = /^(\d{2})-(\d{2})-(\d{4})$/.exec(raw)
   if (!m) return null
