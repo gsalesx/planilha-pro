@@ -36,6 +36,7 @@ export type Family =
   | 'CAMISOLA_CONJUNTO'
   | 'SHORT'
   | 'SHORT_CASAL'
+  | 'SHORT_CONJUNTO'
   | 'CONJUNTO_UNITARIO'
   | 'CONJUNTO_COMPLETO_CASAL'
 
@@ -108,6 +109,7 @@ export function resolveFamily(sku: string): Family | null {
   if (hasConjunto && hasCasal && hasCompleto) return 'CONJUNTO_COMPLETO_CASAL'
   if (hasConjunto && hasUnitario) return 'CONJUNTO_UNITARIO'
   if (hasShort && hasCasal) return 'SHORT_CASAL'
+  if (hasShort && hasConjunto) return 'SHORT_CONJUNTO'
   if (hasCamisola) return 'CAMISOLA'
   if (hasShort) return 'SHORT'
   return null
@@ -259,6 +261,38 @@ function parseShortCasal(modelName: string): ParseResult {
   return { ok: true, pieces }
 }
 
+/** SHORT + CONJUNTO (kit de casal: 1 short + 1 conjunto completo), modelo
+ * "tamanho genero,tamanho genero" (ex. "M Feminino,G Masculino"). A ordem dos dois
+ * valores segue a ordem das palavras no SKU: "SHORT + CONJUNTO" = short primeiro;
+ * "CONJUNTO + SHORT" = conjunto primeiro (anúncio com as variações na outra ordem). */
+function parseShortConjunto(sku: string, modelName: string): ParseResult {
+  const tokens = splitTokens(modelName, 2)
+  if (!tokens) {
+    return {
+      ok: false,
+      reason: `SHORT + CONJUNTO: esperado 2 valores separados por vírgula (ex. "M Feminino,G Masculino"), veio "${modelName}"`,
+    }
+  }
+  const s = norm(sku)
+  const conjPrimeiro = s.indexOf('CONJ') < s.indexOf('SHORT')
+  const tipos: Array<'SHORT' | 'CONJ'> = conjPrimeiro ? ['CONJ', 'SHORT'] : ['SHORT', 'CONJ']
+  const pieces: Peca[] = []
+  for (let i = 0; i < 2; i++) {
+    const token = tokens[i]
+    const parts = token.split(/\s+/).filter(Boolean)
+    const tamanho = parts.length === 2 ? normalizeTamanho(parts[0]) : null
+    const genero = parts.length === 2 ? normalizeGenero(parts[1]) : null
+    if (!tamanho || !genero) {
+      return {
+        ok: false,
+        reason: `SHORT + CONJUNTO: token "${token}" não é "tamanho genero" (ex. "M Feminino"), veio "${modelName}"`,
+      }
+    }
+    pieces.push({ tipo: tipos[i], genero, tamanho, molde: buildMolde(tipos[i], genero, tamanho) })
+  }
+  return { ok: true, pieces }
+}
+
 export function parseOrderPieces(sku: string, modelName: string): ParseResult {
   const family = resolveFamily(sku)
   if (!family) {
@@ -279,6 +313,8 @@ export function parseOrderPieces(sku: string, modelName: string): ParseResult {
       return parseConjuntoCompletoCasal(modelName)
     case 'SHORT_CASAL':
       return parseShortCasal(modelName)
+    case 'SHORT_CONJUNTO':
+      return parseShortConjunto(sku, modelName)
   }
 }
 
