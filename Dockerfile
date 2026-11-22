@@ -41,6 +41,13 @@ COPY --from=server-build /app/server/dist ./dist
 # Catálogo builtin do picker de emoji (server/assets/emojis) — estático, servido em /emoji-assets
 COPY server/assets ./assets
 
+# Detector de rosto SCRFD-10G (InsightFace buffalo_l/det_10g) do relatório de ajustes.
+# Pesos com licença de pesquisa não comercial: não vão pro repo (público) — baixados aqui,
+# com sha256 conferido. YuNet (MIT) já vem em server/assets/models.
+RUN curl -fsSL --retry 3 -o assets/models/scrfd_10g.onnx \
+      https://huggingface.co/public-data/insightface/resolve/main/models/buffalo_l/det_10g.onnx \
+  && echo "5838f7fe053675b1c7a08b633df49e7af5495cee0493c7dcf6697200b85b5b91  assets/models/scrfd_10g.onnx" | sha256sum -c -
+
 # Vite client build → served as static
 COPY --from=client-build /app/client/dist ./public
 

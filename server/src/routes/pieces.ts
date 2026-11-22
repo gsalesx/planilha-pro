@@ -305,7 +305,7 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
     // arquivo que o outro ainda usa.
     const sourceImages = db
       .prepare(
-        'SELECT slot, mime, storage_path, crop, sem_fundo_path, composta_path, ajuste_json, u_width FROM piece_images WHERE piece_id = ?',
+        'SELECT slot, mime, storage_path, crop, sem_fundo_path, composta_path, ajuste_json, u_width, origem_url FROM piece_images WHERE piece_id = ?',
       )
       .all(sourceId) as Array<{
         slot: number
@@ -316,6 +316,7 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
         composta_path: string
         ajuste_json: string
         u_width: number | null
+        origem_url: string
       }>
     const confirmedSlots = new Set(
       sourceImages.filter((img) => existsSync(img.storage_path)).map((img) => img.slot),
@@ -365,15 +366,16 @@ router.post('/pieces/:id/copy-from/:sourceId', requireAuth, (req, res) => {
       }
       db.prepare(
         `INSERT INTO piece_images
-           (piece_id, slot, file_name, mime, storage_path, crop, sem_fundo_path, composta_path, ajuste_json, u_width, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (piece_id, slot, file_name, mime, storage_path, crop, sem_fundo_path, composta_path, ajuste_json, u_width, origem_url, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(piece_id, slot) DO UPDATE SET
            file_name = excluded.file_name, mime = excluded.mime, storage_path = excluded.storage_path,
            crop = excluded.crop, sem_fundo_path = excluded.sem_fundo_path, composta_path = excluded.composta_path,
-           ajuste_json = excluded.ajuste_json, u_width = excluded.u_width, updated_at = excluded.updated_at`,
+           ajuste_json = excluded.ajuste_json, u_width = excluded.u_width, origem_url = excluded.origem_url,
+           updated_at = excluded.updated_at`,
       ).run(
         targetId, img.slot, fileName, img.mime, newPath, img.crop,
-        newSemFundo, newComposta, img.ajuste_json, img.u_width, now,
+        newSemFundo, newComposta, img.ajuste_json, img.u_width, img.origem_url, now,
       )
     }
   })
@@ -484,7 +486,7 @@ router.post('/pieces/:id/photo/:slot/upload', requireAuth, upload.single('image'
        VALUES (?, ?, ?, ?, ?, 'rosto', ?)
        ON CONFLICT(piece_id, slot) DO UPDATE SET
          file_name = excluded.file_name, mime = excluded.mime,
-         storage_path = excluded.storage_path,
+         storage_path = excluded.storage_path, origem_url = '',
          sem_fundo_path = '', composta_path = '', ajuste_json = '', u_width = NULL,
          updated_at = excluded.updated_at`,
     ).run(pieceId, slot, fileName, req.file!.mimetype, storagePath, now)
@@ -546,13 +548,13 @@ router.post('/workbooks/:workbookId/pieces/:orderKey/confirm', requireAuth, asyn
             }
           }
           db.prepare(
-            `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, crop, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, crop, origem_url, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(piece_id, slot) DO UPDATE SET
                file_name = excluded.file_name, mime = excluded.mime, storage_path = excluded.storage_path,
-               crop = excluded.crop, updated_at = excluded.updated_at,
+               crop = excluded.crop, updated_at = excluded.updated_at, origem_url = excluded.origem_url,
                sem_fundo_path = '', composta_path = '', ajuste_json = '', u_width = NULL`,
-          ).run(pieceId, p.slot, fileName, mime, storagePath, p.crop, now)
+          ).run(pieceId, p.slot, fileName, mime, storagePath, p.crop, p.url, now)
           db.prepare('DELETE FROM piece_pending_photos WHERE piece_id = ? AND slot = ?').run(pieceId, p.slot)
         })
         txn()

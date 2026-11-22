@@ -482,6 +482,9 @@ db.exec(`
   add('u_width', 'u_width INTEGER')
   add('sem_fundo_path', "sem_fundo_path TEXT NOT NULL DEFAULT ''")
   add('composta_path', "composta_path TEXT NOT NULL DEFAULT ''")
+  // URL do CDN da Shopee de onde a foto veio (vazio = upload manual). Liga a foto da
+  // peça à mensagem do chat que o operador escolheu — insumo do relatório de ajustes.
+  add('origem_url', "origem_url TEXT NOT NULL DEFAULT ''")
 }
 
 /** Status legado "Em produção" → "Em produção 1" (coluna F, índice 5 do row_json). */

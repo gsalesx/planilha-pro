@@ -13,3 +13,6 @@ src/*.js
 
 # Dados locais do servidor (tokens OAuth, sqlite dev)
 server/data/
+
+# Pesos do SCRFD (licença não comercial) — baixados no build do Docker, nunca no repo.
+server/assets/models/scrfd_10g.onnx

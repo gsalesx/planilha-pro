@@ -188,13 +188,14 @@ async function garantirFoto(pieceId: number, slot: number): Promise<LinhaFoto | 
   }
 
   db.prepare(
-    `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, crop, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, crop, origem_url, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(piece_id, slot) DO UPDATE SET
        file_name = excluded.file_name, mime = excluded.mime,
        storage_path = excluded.storage_path, crop = excluded.crop, updated_at = excluded.updated_at,
+       origem_url = excluded.origem_url,
        sem_fundo_path = '', composta_path = '', ajuste_json = '', u_width = NULL`,
-  ).run(pieceId, slot, path.basename(destino), mime, destino, pendente.crop || 'rosto', nowMs())
+  ).run(pieceId, slot, path.basename(destino), mime, destino, pendente.crop || 'rosto', pendente.url, nowMs())
   // A foto já está confirmada em piece_images — sem isso, a linha pendente ficava
   // ÓRFÃ (residual) mesmo depois de baixada/ajustada, e /copy-from (que checa
   // "tem pendência?" pra decidir se copia só a URL crua ou o ajuste completo)

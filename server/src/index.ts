@@ -43,7 +43,9 @@ import emojiCatalogRouter from './routes/emoji-catalog.js'
 import imagesRouter from './routes/images.js'
 import loginRouter from './routes/login.js'
 import parseIssuesRouter from './routes/parse-issues.js'
-import { limparFotosAntigas } from './limpar-fotos-antigas.js'
+import { limiteFotosYmd, limparFotosAntigas } from './limpar-fotos-antigas.js'
+import { gravarRelatorioAjustes, talvezRodarLeituraNoturna } from './relatorio-ajustes.js'
+import relatorioAjustesRouter from './routes/relatorio-ajustes.js'
 import pickerRouter, { limparArtesExpiradas } from './routes/picker.js'
 import piecesRouter from './routes/pieces.js'
 import resumoRouter from './routes/resumo.js'
@@ -140,6 +142,7 @@ app.use('/api', mercadolivreRouter)
 app.use('/api', mercadolivrePushRouter)
 app.use('/api', auditRouter)
 app.use('/api', resumoRouter)
+app.use('/api', relatorioAjustesRouter)
 
 // imagens builtin do catálogo de emoji (server/assets/emojis, servido em build-time) —
 // cache longo no navegador: são bytes fixos (baked na imagem Docker), só a LISTA de
@@ -186,17 +189,31 @@ setInterval(() => {
 }, 60 * 60 * 1000)
 limparArtesExpiradas()
 
+// Relatório de ajustes (base de treino do enquadramento): 1x por dia a partir das 4h.
+setInterval(() => void talvezRodarLeituraNoturna().catch((e) => console.warn('[relatorio-ajustes]', e)), 10 * 60 * 1000)
+setTimeout(() => void talvezRodarLeituraNoturna().catch((e) => console.warn('[relatorio-ajustes]', e)), 5 * 60 * 1000)
+
 // Foto e arte de pedido com mais de 15 dias saem do disco. A linha do pedido fica.
+// Antes de apagar, o relatório lê o que ainda não foi lido desses pedidos.
 const DIA_MS = 24 * 60 * 60 * 1000
-function rodarLimpezaFotos() {
+async function rodarLimpezaFotos() {
+  const limite = limiteFotosYmd()
+  try {
+    await gravarRelatorioAjustes('antes-limpeza', (l) => {
+      const m = /^(\d{2})-(\d{2})-(\d{4})$/.exec((l.sheet_date ?? '').trim())
+      return Boolean(m) && `${m![3]}${m![2]}${m![1]}` < limite
+    })
+  } catch (e) {
+    console.warn('[relatorio-ajustes] antes da limpeza', e)
+  }
   const { pedidos, arquivos, bytes } = limparFotosAntigas()
   if (pedidos > 0) {
     const mb = Math.round(bytes / (1024 * 1024))
     console.log(`[fotos] ${pedidos} pedido(s) antigo(s): ${arquivos} arquivo(s), ${mb} MB`)
   }
 }
-setInterval(rodarLimpezaFotos, DIA_MS)
-setTimeout(rodarLimpezaFotos, 15_000)
+setInterval(() => void rodarLimpezaFotos(), DIA_MS)
+setTimeout(() => void rodarLimpezaFotos(), 15_000)
 
 // Reinício do servidor é o evento que explica buraco no log — registrar sempre.
 recordAudit({
