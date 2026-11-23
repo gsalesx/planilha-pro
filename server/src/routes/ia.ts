@@ -18,7 +18,8 @@ import {
 } from '../marketplace-columns.js'
 import { MERCADOLIVRE_WORKBOOK_ID, SHOPEE_WORKBOOK_ID, TIKTOK_WORKBOOK_ID } from '../marketplace.js'
 import { listPieces } from '../pieces.js'
-import { resumoRelatorio } from '../relatorio-ajustes.js'
+import { paginaRelatorio, resumoRelatorio } from '../relatorio-ajustes.js'
+import { carregarModelo, salvarModelo, type PacoteModelo } from '../enquadramento-modelo.js'
 import { conversaDoPedido, execucoesMontagem, miniaturaDoChat, montagensDoDia, montarComEscolha, pendentesDoDia, type EscolhaPedido } from '../montagem-ia.js'
 
 const router = Router()
@@ -188,6 +189,29 @@ router.get('/ia/imagem', requireAuth, async (req, res) => {
 router.post('/ia/montar/:orderKey', requireAuth, async (req, res) => {
   try {
     res.json(await montarComEscolha(req.params.orderKey, req.body as EscolhaPedido))
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
+})
+
+/** GET /ia/relatorio?desde=&limite= — export do relatório de ajustes (só medidas) pro treino. */
+router.get('/ia/relatorio', requireAuth, (req, res) => {
+  const desde = Math.max(0, Number(req.query.desde) || 0)
+  const limite = Math.min(5000, Math.max(1, Number(req.query.limite) || 1000))
+  res.json({ ok: true, ...paginaRelatorio(desde, limite) })
+})
+
+/** GET /ia/modelo-enquadramento — métricas do modelo salvo (sem as árvores). */
+router.get('/ia/modelo-enquadramento', requireAuth, (_req, res) => {
+  const m = carregarModelo()
+  res.json({ ok: true, existe: Boolean(m), ativo: process.env.IA_ENQUADRAMENTO === 'modelo', versao: m?.versao, criadoEm: m?.criadoEm, metricas: m?.metricas ?? null })
+})
+
+/** POST /ia/modelo-enquadramento — o job de treino grava o modelo novo (não liga sozinho). */
+router.post('/ia/modelo-enquadramento', requireAuth, (req, res) => {
+  try {
+    salvarModelo(req.body as PacoteModelo)
+    res.json({ ok: true })
   } catch (e) {
     res.status(400).json({ error: (e as Error).message })
   }

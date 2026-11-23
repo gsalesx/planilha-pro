@@ -26,6 +26,7 @@ import { analisarFoto } from './analise-foto.js'
 import { recordAudit } from './audit.js'
 import { db, nowMs } from './db.js'
 import { listCatalog, resolveByAlias, searchByName } from './emoji-catalog.js'
+import { girarComExpand, grupoModelo, modeloAtivo, preverEnquadramento } from './enquadramento-modelo.js'
 import {
   MP_COL_INTERNAL_STATUS,
   MP_COL_MARKETPLACE_STATUS,
@@ -222,6 +223,8 @@ function enquadrar(
   alvos: Record<'coracao' | 'rosto', Record<number, Alvo>>,
 ): { ajuste: Ajuste; uWidth: number } {
   if (formato === 'rosto') return { ajuste: giro ? { rotation: giro } : {}, uWidth: 600 }
+  const pelo = giro === 0 ? enquadrarPeloModelo(formato, W, H, rostos) : null
+  if (pelo) return pelo
   const chave = formato === 'coracao' ? 'coracao' : 'rosto'
   const [Wr, Hr] = giro === 90 || giro === 270 ? [H, W] : [W, H]
   const g = grupoDeRostos(rostos, giro, W, H)
@@ -253,6 +256,39 @@ function enquadrar(
   return { ajuste, uWidth: Math.round(Math.min(1000, Math.max(300, alvo.uWidth))) }
 }
 const U_ALTURA = 828
+
+/** Enquadramento pelo modelo treinado (IA_ENQUADRAMENTO=modelo); null = usa as medianas. */
+function enquadrarPeloModelo(formato: Formato, W: number, H: number, rostos: Rosto[]): { ajuste: Ajuste; uWidth: number } | null {
+  const pacote = modeloAtivo()
+  if (!pacote) return null
+  const coracao = formato === 'coracao'
+  const p = preverEnquadramento(pacote, coracao, W, H, rostos)
+  if (!p) return null
+  const { ficam } = grupoModelo(rostos)
+  const x0 = Math.min(...ficam.map((r) => r.x))
+  const y0 = Math.min(...ficam.map((r) => r.y))
+  const x1 = Math.max(...ficam.map((r) => r.x + r.w))
+  const y1 = Math.max(...ficam.map((r) => r.y + r.h))
+  const rot = Math.abs(p.rot) >= 1 ? Math.round(p.rot * 10) / 10 : 0
+  const g = girarComExpand((x0 + x1) / 2, (y0 + y1) / 2, W, H, rot)
+  let s = p.gw / Math.max(1, x1 - x0)
+  if (coracao) s = Math.max(s, CANVAS / g.W2)
+  s = Math.min(Math.max(s, 0.05), 12)
+  let dx = p.cx - CANVAS / 2 - (g.x - g.W2 / 2) * s
+  let dy = p.cy - CANVAS / 2 - (g.y - g.H2 / 2) * s
+  const sw = g.W2 * s
+  const sh = g.H2 * s
+  if (coracao) {
+    const fx = Math.max(0, (sw - CANVAS) / 2)
+    const fy = Math.max(0, (sh - CANVAS) / 2)
+    dx = Math.min(fx, Math.max(-fx, dx))
+    dy = Math.min(fy, Math.max(-fy, dy))
+  }
+  // width é a largura da foto JÁ girada (o render gira antes de escalar).
+  const ajuste: Ajuste = { width: Math.round(sw), dx: Math.round(dx * 10) / 10, dy: Math.round(dy * 10) / 10 }
+  if (rot) ajuste.rotation = rot
+  return { ajuste, uWidth: coracao ? 600 : Math.round(Math.min(1000, Math.max(300, p.uw))) }
+}
 
 /* ------------------------------------------------------------------ *
  * LFM (Liquid) — lê a conversa e devolve o pedido em JSON.
