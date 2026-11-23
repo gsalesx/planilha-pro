@@ -17,7 +17,7 @@
  * operador mudar depois.
  */
 import crypto from 'node:crypto'
-import { writeFileSync } from 'node:fs'
+import { unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import sharp from 'sharp'
@@ -441,7 +441,11 @@ async function gravarFoto(
     }
   }
 
-  const { ajuste, uWidth } = enquadrar(formato, W, H, giro, rostos, alvos)
+  // As fotos do chat chegam em pé (a Shopee tira o EXIF): giro ≠ 0 do detector era falso
+  // positivo (selfie inclinada, espelho) e deixava a foto de lado. Os rostos já vêm nas
+  // coordenadas da imagem original, então valem com giro 0.
+  void giro
+  const { ajuste, uWidth } = enquadrar(formato, W, H, 0, rostos, alvos)
   const agora = nowMs()
   db.prepare(
     `INSERT INTO piece_images (piece_id, slot, file_name, mime, storage_path, crop, origem_url, sem_fundo_path, updated_at)
@@ -466,7 +470,7 @@ async function gravarFoto(
     pieceId,
     slot,
   )
-  return { slot, imagem: img.n, formato, ajuste, uWidth, rostos: rostos.length, giro }
+  return { slot, imagem: img.n, formato, ajuste, uWidth, rostos: rostos.length, giroDetector: giro }
 }
 
 function registrar(l: LinhaPedido, data: string, resultado: string, motivo: string, decisao: unknown): void {
@@ -786,12 +790,29 @@ export async function conversaDoPedido(orderKey: string): Promise<Record<string,
   }
 }
 
+/** A foto atual do pedido foi posta pela IA e ninguém mexeu depois? */
+function soMontagemDaIa(orderKey: string, pecas: PieceWithPhotos[]): boolean {
+  const ultima = db
+    .prepare("SELECT criado_em FROM ia_montagens WHERE workbook_id = ? AND order_key = ? AND resultado = 'montado' ORDER BY id DESC LIMIT 1")
+    .get(SHOPEE_WORKBOOK_ID, orderKey) as { criado_em: number } | undefined
+  if (!ultima) return false
+  for (const p of pecas) {
+    const pend = db.prepare('SELECT 1 FROM piece_pending_photos WHERE piece_id = ?').get(p.id)
+    if (pend) return false
+    const mexida = db.prepare('SELECT MAX(updated_at) AS t FROM piece_images WHERE piece_id = ?').get(p.id) as { t: number | null }
+    if (mexida.t && mexida.t > ultima.criado_em + 2 * 60_000) return false
+  }
+  return true
+}
+
 export interface EscolhaPedido {
   /** `emojis`/`cor` na peça valem só pra ela; `emojis: []` = sem emoji. */
   pecas: Array<{ fotos: Array<{ url: string; formato: Formato }>; emojis?: string[]; cor?: string }>
   emojis?: string[]
   cor?: string
   autor?: string
+  /** Refaz por cima de uma montagem anterior da IA (só se ninguém mexeu depois). */
+  substituir?: boolean
 }
 
 export async function montarComEscolha(orderKey: string, escolha: EscolhaPedido): Promise<Record<string, unknown>> {
@@ -802,7 +823,15 @@ export async function montarComEscolha(orderKey: string, escolha: EscolhaPedido)
   if (bloqueio) throw new Error(`arte já feita ou pedido fora (${bloqueio}) — não mexo`)
   const pecas: PieceWithPhotos[] = []
   for (const chave of chavesDoPedido(orderKey)) pecas.push(...ensurePieces(SHOPEE_WORKBOOK_ID, chave).pieces)
-  if (pecas.some((p) => pecaTemFoto(p.id))) throw new Error('pedido já tem foto escolhida — não mexo')
+  if (pecas.some((p) => pecaTemFoto(p.id))) {
+    if (!escolha?.substituir || !soMontagemDaIa(orderKey, pecas)) throw new Error('pedido já tem foto escolhida — não mexo')
+    // Limpa só o que a IA tinha posto (fotos e derivados) pra montar de novo.
+    for (const p of pecas) {
+      const rows = db.prepare('SELECT storage_path, sem_fundo_path, composta_path FROM piece_images WHERE piece_id = ?').all(p.id) as Array<Record<string, string>>
+      for (const r of rows) for (const k of ['storage_path', 'sem_fundo_path', 'composta_path']) if (r[k]) try { unlinkSync(r[k]) } catch { /* já sumiu */ }
+      db.prepare('DELETE FROM piece_images WHERE piece_id = ?').run(p.id)
+    }
+  }
   if (!Array.isArray(escolha?.pecas) || escolha.pecas.length === 0) throw new Error('escolha sem peças')
   const alvos = alvosDoRelatorio()
 
