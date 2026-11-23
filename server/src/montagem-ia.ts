@@ -349,6 +349,10 @@ async function perguntarLfm(
     `- "rosto": só o rosto recortado\n` +
     `Cada peça leva no máximo 2 fotos. Imagens disponíveis: ${imagens.map((i) => `${i.n} (${i.rostos.length} rosto(s))`).join(', ')}.\n` +
     `Imagem sem rosto quase nunca é foto pra estampa (print de tela, produto, comprovante).\n` +
+    `REGRA DO CASAL: em pedido com peça feminina e peça masculina, quando o cliente manda uma foto ` +
+    `da mulher e outra do homem sem dizer onde vai cada uma, a foto da MULHER vai na peça MASCULINA ` +
+    `e a foto do HOMEM vai na peça FEMININA (cada um veste o rosto do outro). Se o cliente disser ` +
+    `onde vai cada foto, vale o que ele disse.\n` +
     `Emojis do catálogo (use exatamente estes nomes): ${nomesEmoji.join(', ')}.\n\n` +
     `Conversa (mais antiga primeiro):\n${conversa}\n\n` +
     `Responda SÓ com JSON neste formato:\n` +
