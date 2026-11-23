@@ -787,7 +787,8 @@ export async function conversaDoPedido(orderKey: string): Promise<Record<string,
 }
 
 export interface EscolhaPedido {
-  pecas: Array<{ fotos: Array<{ url: string; formato: Formato }> }>
+  /** `emojis`/`cor` na peça valem só pra ela; `emojis: []` = sem emoji. */
+  pecas: Array<{ fotos: Array<{ url: string; formato: Formato }>; emojis?: string[]; cor?: string }>
   emojis?: string[]
   cor?: string
   autor?: string
@@ -842,15 +843,23 @@ export async function montarComEscolha(orderKey: string, escolha: EscolhaPedido)
     }
   }
 
-  const patch: { emoji1?: string; emoji2?: string; cor?: string } = {}
   const nomes = new Set(listCatalog().map((x) => x.name))
-  const emojis = (escolha.emojis ?? []).map((n) => (nomes.has(n) ? n : searchByName(n)[0]?.name)).filter(Boolean) as string[]
-  if (emojis[0]) {
-    patch.emoji1 = emojis[0]
-    patch.emoji2 = emojis[1] ?? emojis[0]
+  const patches: unknown[] = []
+  for (let i = 0; i < pecas.length; i++) {
+    const e = escolha.pecas[Math.min(i, escolha.pecas.length - 1)]
+    const lista = e?.emojis ?? escolha.emojis
+    const cor = e?.cor ?? escolha.cor
+    const patch: { emoji1?: string; emoji2?: string; cor?: string } = {}
+    if (Array.isArray(lista)) {
+      const emojis = lista.map((n) => (nomes.has(n) ? n : searchByName(n)[0]?.name)).filter(Boolean) as string[]
+      patch.emoji1 = emojis[0] ?? ''
+      patch.emoji2 = emojis[1] ?? emojis[0] ?? ''
+    }
+    if (cor && /^#[0-9a-fA-F]{6}$/.test(cor)) patch.cor = cor.toLowerCase()
+    if (Object.keys(patch).length) updatePiece(pecas[i].id, patch)
+    patches.push(patch)
   }
-  if (escolha.cor && /^#[0-9a-fA-F]{6}$/.test(escolha.cor)) patch.cor = escolha.cor.toLowerCase()
-  if (Object.keys(patch).length) for (const p of pecas) updatePiece(p.id, patch)
+  const patch = patches
 
   const data = db.prepare('SELECT sheet_date FROM orders WHERE workbook_id = ? AND order_key = ?').get(SHOPEE_WORKBOOK_ID, orderKey) as
     | { sheet_date: string }
