@@ -34,7 +34,7 @@ import {
   MP_COL_PRODUCT,
   MP_COL_USERNAME,
 } from './marketplace-columns.js'
-import { SHOPEE_WORKBOOK_ID } from './marketplace.js'
+import { isMarketplaceWorkbookId, isWhatsappWorkbookId, SHOPEE_WORKBOOK_ID } from './marketplace.js'
 import { recortarRosto, removerFundo } from './picwish.js'
 import { ensurePieces, listPieces, updatePiece, type PieceWithPhotos } from './pieces.js'
 import { caminhoNovo, comporFoto, foto, type FonteRecorte, type Modo } from './routes/picker.js'
@@ -412,10 +412,10 @@ interface LinhaPedido {
   row_json: string
 }
 
-function chavesDoPedido(orderKey: string): string[] {
+function chavesDoPedido(orderKey: string, wb: string = SHOPEE_WORKBOOK_ID): string[] {
   const filhas = db
     .prepare('SELECT order_key FROM orders WHERE workbook_id = ? AND parent_key = ? ORDER BY position')
-    .all(SHOPEE_WORKBOOK_ID, orderKey) as Array<{ order_key: string }>
+    .all(wb, orderKey) as Array<{ order_key: string }>
   return [orderKey, ...filhas.map((f) => f.order_key)]
 }
 
@@ -516,11 +516,11 @@ async function gravarFoto(
   return { slot, imagem: img.n, formato, ajuste, uWidth, rostos: rostos.length, giroDetector: giro }
 }
 
-function registrar(l: LinhaPedido, data: string, resultado: string, motivo: string, decisao: unknown): void {
+function registrar(l: LinhaPedido, data: string, resultado: string, motivo: string, decisao: unknown, wb: string = SHOPEE_WORKBOOK_ID): void {
   db.prepare(
     `INSERT INTO ia_montagens (workbook_id, order_key, order_id, sheet_date, criado_em, resultado, motivo, decisao_json)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(SHOPEE_WORKBOOK_ID, l.order_key, l.id, data, nowMs(), resultado, motivo, JSON.stringify(decisao ?? {}))
+  ).run(wb, l.order_key, l.id, data, nowMs(), resultado, motivo, JSON.stringify(decisao ?? {}))
 }
 
 async function montarPedido(
@@ -764,10 +764,10 @@ export function execucoesMontagem(): unknown[] {
  * Só pedido sem arte feita: sem foto em nenhuma peça e status sem prévia.
  * ------------------------------------------------------------------ */
 
-function linhaDoPedido(orderKey: string): LinhaPedido | undefined {
+function linhaDoPedido(orderKey: string, wb: string = SHOPEE_WORKBOOK_ID): LinhaPedido | undefined {
   return db
     .prepare('SELECT order_key, id, row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
-    .get(SHOPEE_WORKBOOK_ID, orderKey) as LinhaPedido | undefined
+    .get(wb, orderKey) as LinhaPedido | undefined
 }
 
 function pedidoIntocavel(cells: string[]): string | null {
@@ -843,10 +843,10 @@ export async function conversaDoPedido(orderKey: string): Promise<Record<string,
 }
 
 /** A foto atual do pedido foi posta pela IA e ninguém mexeu depois? */
-function soMontagemDaIa(orderKey: string, pecas: PieceWithPhotos[]): boolean {
+function soMontagemDaIa(orderKey: string, pecas: PieceWithPhotos[], wb: string = SHOPEE_WORKBOOK_ID): boolean {
   const ultima = db
     .prepare("SELECT criado_em FROM ia_montagens WHERE workbook_id = ? AND order_key = ? AND resultado = 'montado' ORDER BY id DESC LIMIT 1")
-    .get(SHOPEE_WORKBOOK_ID, orderKey) as { criado_em: number } | undefined
+    .get(wb, orderKey) as { criado_em: number } | undefined
   if (!ultima) return false
   for (const p of pecas) {
     const pend = db.prepare('SELECT 1 FROM piece_pending_photos WHERE piece_id = ?').get(p.id)
@@ -857,9 +857,20 @@ function soMontagemDaIa(orderKey: string, pecas: PieceWithPhotos[]): boolean {
   return true
 }
 
+/** Foto da escolha: `url` = imagem do chat da Shopee; `salva` = foto que já está numa
+ *  peça do próprio pedido (subida à mão, ex. pedido de WhatsApp). `peca` é 1-based e,
+ *  sem ela, vale a peça que está sendo montada. */
+export interface FotoEscolhida {
+  url?: string
+  salva?: { peca?: number; slot: 1 | 2 }
+  formato: Formato
+}
+
 export interface EscolhaPedido {
   /** `emojis`/`cor` na peça valem só pra ela; `emojis: []` = sem emoji. */
-  pecas: Array<{ fotos: Array<{ url: string; formato: Formato }>; emojis?: string[]; cor?: string }>
+  pecas: Array<{ fotos: FotoEscolhida[]; emojis?: string[]; cor?: string }>
+  /** Aba do pedido (padrão Shopee). Aceita as abas de marketplace e a de WhatsApp. */
+  planilha?: string
   emojis?: string[]
   cor?: string
   autor?: string
@@ -868,15 +879,38 @@ export interface EscolhaPedido {
 }
 
 export async function montarComEscolha(orderKey: string, escolha: EscolhaPedido): Promise<Record<string, unknown>> {
-  const l = linhaDoPedido(orderKey)
+  const wb = escolha?.planilha || SHOPEE_WORKBOOK_ID
+  if (!isMarketplaceWorkbookId(wb) && !isWhatsappWorkbookId(wb)) throw new Error(`aba ${wb} não aceita montagem`)
+  const l = linhaDoPedido(orderKey, wb)
   if (!l) throw new Error('pedido não encontrado')
   const cells = JSON.parse(l.row_json) as string[]
   const bloqueio = pedidoIntocavel(cells)
   if (bloqueio) throw new Error(`arte já feita ou pedido fora (${bloqueio}) — não mexo`)
   const pecas: PieceWithPhotos[] = []
-  for (const chave of chavesDoPedido(orderKey)) pecas.push(...ensurePieces(SHOPEE_WORKBOOK_ID, chave).pieces)
+  for (const chave of chavesDoPedido(orderKey, wb)) pecas.push(...ensurePieces(wb, chave).pieces)
+  if (!Array.isArray(escolha?.pecas) || escolha.pecas.length === 0) throw new Error('escolha sem peças')
+
+  // Fotos que já estão nas peças (subidas à mão): lê os bytes ANTES de limpar, porque
+  // a montagem grava uma cópia nova e apaga os arquivos antigos.
+  const usaSalvas = escolha.pecas.some((e) => (e?.fotos ?? []).some((f) => f?.salva))
+  const salvas = new Map<string, Buffer>()
+  if (usaSalvas) {
+    pecas.forEach((p, i) => {
+      for (const slot of [1, 2]) {
+        const linha = foto(p.id, slot)
+        if (linha?.storage_path && existsSync(linha.storage_path)) salvas.set(`${i + 1}:${slot}`, readFileSync(linha.storage_path))
+      }
+    })
+  }
+
   if (pecas.some((p) => pecaTemFoto(p.id))) {
-    if (!escolha?.substituir || !soMontagemDaIa(orderKey, pecas)) throw new Error('pedido já tem foto escolhida — não mexo')
+    // Foto crua subida à mão (sem ajuste salvo por ninguém) pode virar rascunho; o
+    // resto só se a última mexida foi da própria IA e a escolha pedir pra substituir.
+    const pendente = pecas.some((p) => db.prepare('SELECT 1 FROM piece_pending_photos WHERE piece_id = ?').get(p.id))
+    const ajustada = pecas.some((p) => db.prepare("SELECT 1 FROM piece_images WHERE piece_id = ? AND composta_path != ''").get(p.id))
+    const fotoCruaSubida = usaSalvas && !pendente && !ajustada
+    const refazerDaIa = Boolean(escolha?.substituir) && soMontagemDaIa(orderKey, pecas, wb)
+    if (!fotoCruaSubida && !refazerDaIa) throw new Error('pedido já tem foto escolhida — não mexo')
     // Limpa só o que a IA tinha posto (fotos e derivados) pra montar de novo.
     for (const p of pecas) {
       const rows = db.prepare('SELECT storage_path, sem_fundo_path, composta_path FROM piece_images WHERE piece_id = ?').all(p.id) as Array<Record<string, string>>
@@ -884,21 +918,15 @@ export async function montarComEscolha(orderKey: string, escolha: EscolhaPedido)
       db.prepare('DELETE FROM piece_images WHERE piece_id = ?').run(p.id)
     }
   }
-  if (!Array.isArray(escolha?.pecas) || escolha.pecas.length === 0) throw new Error('escolha sem peças')
   const alvos = alvosDoRelatorio()
 
   const cache = new Map<string, Imagem>()
-  async function imagemDe(url: string): Promise<Imagem> {
-    const ja = cache.get(url)
-    if (ja) return ja
-    const limpa = url.includes('@') ? url.slice(0, url.indexOf('@')) : url
-    const resp = await fetchShopeeCdn(limpa)
-    const bytes = Buffer.from(await resp.arrayBuffer())
+  async function analisar(chave: string, url: string, bytes: Buffer): Promise<Imagem> {
     const a = await analisarFoto(bytes, ['scrfd'])
     const det = (a.deteccao as { scrfd?: { giro: number; rostos: Rosto[] } }).scrfd
     const img: Imagem = {
       n: cache.size + 1,
-      url: limpa,
+      url,
       bytes,
       largura: Number(a.medidas.largura) || 0,
       altura: Number(a.medidas.altura) || 0,
@@ -906,8 +934,25 @@ export async function montarComEscolha(orderKey: string, escolha: EscolhaPedido)
       rostos: det?.rostos ?? [],
       hash: String(a.medidas.hash ?? ''),
     }
-    cache.set(url, img)
+    cache.set(chave, img)
     return img
+  }
+  async function imagemDe(f: FotoEscolhida, pecaAtual: number): Promise<Imagem> {
+    if (f.salva) {
+      const peca = f.salva.peca ?? pecaAtual
+      const chave = `salva:${peca}:${f.salva.slot}`
+      const ja = cache.get(chave)
+      if (ja) return ja
+      const bytes = salvas.get(`${peca}:${f.salva.slot}`)
+      if (!bytes) throw new Error(`peça ${peca} não tem foto ${f.salva.slot} salva`)
+      return analisar(chave, '', bytes)
+    }
+    const url = f.url!
+    const ja = cache.get(url)
+    if (ja) return ja
+    const limpa = url.includes('@') ? url.slice(0, url.indexOf('@')) : url
+    const resp = await fetchShopeeCdn(limpa)
+    return analisar(url, limpa, Buffer.from(await resp.arrayBuffer()))
   }
 
   const formatos = new Set(['coracao', 'recorte', 'rosto'])
@@ -918,8 +963,8 @@ export async function montarComEscolha(orderKey: string, escolha: EscolhaPedido)
     const fotos = (e?.fotos ?? []).slice(0, 2)
     for (let k = 0; k < fotos.length; k++) {
       const f = fotos[k]
-      if (!f?.url || !formatos.has(f.formato)) throw new Error(`peça ${i + 1} foto ${k + 1}: url/formato inválido`)
-      const img = await imagemDe(f.url)
+      if ((!f?.url && !f?.salva) || !formatos.has(f.formato)) throw new Error(`peça ${i + 1} foto ${k + 1}: url/formato inválido`)
+      const img = await imagemDe(f, i + 1)
       feitas.push({ peca: pecas[i].id, ...(await gravarFoto(pecas[i].id, k + 1, img, f.formato, alvos)) })
     }
   }
@@ -942,10 +987,10 @@ export async function montarComEscolha(orderKey: string, escolha: EscolhaPedido)
   }
   const patch = patches
 
-  const data = db.prepare('SELECT sheet_date FROM orders WHERE workbook_id = ? AND order_key = ?').get(SHOPEE_WORKBOOK_ID, orderKey) as
+  const data = db.prepare('SELECT sheet_date FROM orders WHERE workbook_id = ? AND order_key = ?').get(wb, orderKey) as
     | { sheet_date: string }
     | undefined
-  registrar(l, data?.sheet_date ?? '', 'montado', '', { autor: escolha.autor ?? 'claude', escolha, fotos: feitas, emojis: patch })
+  registrar(l, data?.sheet_date ?? '', 'montado', '', { autor: escolha.autor ?? 'claude', escolha, fotos: feitas, emojis: patch }, wb)
   return { ok: true, fotos: feitas, emojis: patch }
 }
 
