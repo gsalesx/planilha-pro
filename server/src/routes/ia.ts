@@ -20,7 +20,7 @@ import { MERCADOLIVRE_WORKBOOK_ID, SHOPEE_WORKBOOK_ID, TIKTOK_WORKBOOK_ID } from
 import { listPieces } from '../pieces.js'
 import { paginaRelatorio, resumoRelatorio } from '../relatorio-ajustes.js'
 import { carregarModelo, salvarModelo, type PacoteModelo } from '../enquadramento-modelo.js'
-import { conversaDoPedido, execucoesMontagem, miniaturaDoChat, montagensDoDia, montarComEscolha, pendentesDoDia, type EscolhaPedido } from '../montagem-ia.js'
+import { conversaDoPedido, execucoesMontagem, miniaturaDoChat, montagensDoDia, montarComEscolha, pendentesDoDia, reenquadrarPedido, type EscolhaPedido } from '../montagem-ia.js'
 
 const router = Router()
 
@@ -212,6 +212,15 @@ router.post('/ia/modelo-enquadramento', requireAuth, (req, res) => {
   try {
     salvarModelo(req.body as PacoteModelo)
     res.json({ ok: true })
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
+})
+
+/** POST /ia/reenquadrar/:orderKey — refaz zoom/posição das fotos que a IA montou (sem PicWish). */
+router.post('/ia/reenquadrar/:orderKey', requireAuth, async (req, res) => {
+  try {
+    res.json(await reenquadrarPedido(req.params.orderKey))
   } catch (e) {
     res.status(400).json({ error: (e as Error).message })
   }

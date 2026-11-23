@@ -17,7 +17,7 @@
  * operador mudar depois.
  */
 import crypto from 'node:crypto'
-import { unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import sharp from 'sharp'
@@ -36,7 +36,7 @@ import {
 } from './marketplace-columns.js'
 import { SHOPEE_WORKBOOK_ID } from './marketplace.js'
 import { recortarRosto, removerFundo } from './picwish.js'
-import { ensurePieces, updatePiece, type PieceWithPhotos } from './pieces.js'
+import { ensurePieces, listPieces, updatePiece, type PieceWithPhotos } from './pieces.js'
 import { caminhoNovo, comporFoto, foto, type FonteRecorte, type Modo } from './routes/picker.js'
 import { fetchShopeeCdn } from './routes/pieces.js'
 import { fetchAllChatMessages, type ParsedChatMessage } from './shopee-api.js'
@@ -942,4 +942,75 @@ export async function miniaturaDoChat(url: string, largura: number): Promise<Buf
   const resp = await fetchShopeeCdn(limpa)
   const bytes = Buffer.from(await resp.arrayBuffer())
   return sharp(bytes).rotate().resize({ width: largura, height: largura, fit: 'inside' }).jpeg({ quality: 70 }).toBuffer()
+}
+
+/* ------------------------------------------------------------------ *
+ * Reenquadrar: refaz só zoom/posição (e a composta) das fotos que a IA
+ * montou, com o enquadramento atual (modelo treinado). Usa os arquivos já
+ * salvos — não baixa de novo nem chama o PicWish. Só pedido que ninguém
+ * conferiu: sem status de prévia e sem foto salva por alguém depois da IA.
+ * ------------------------------------------------------------------ */
+export async function reenquadrarPedido(orderKey: string): Promise<Record<string, unknown>> {
+  const l = linhaDoPedido(orderKey)
+  if (!l) throw new Error('pedido não encontrado')
+  const cells = JSON.parse(l.row_json) as string[]
+  const bloqueio = pedidoIntocavel(cells)
+  if (bloqueio) return { ok: false, pulado: `já conferido (${bloqueio})` }
+  const pecas: PieceWithPhotos[] = []
+  for (const chave of chavesDoPedido(orderKey)) pecas.push(...listPieces(SHOPEE_WORKBOOK_ID, chave))
+  if (!pecas.some((p) => pecaTemFoto(p.id))) return { ok: false, pulado: 'sem foto' }
+  if (!soMontagemDaIa(orderKey, pecas)) return { ok: false, pulado: 'alguém mexeu depois da IA' }
+  const alvos = alvosDoRelatorio()
+
+  const feitas: unknown[] = []
+  for (const p of pecas) {
+    for (const slot of [1, 2]) {
+      const linha = foto(p.id, slot)
+      if (!linha || (linha.crop !== 'coracao' && linha.crop !== 'rosto')) continue
+      const coracao = linha.crop === 'coracao'
+      let extra: Record<string, unknown> = {}
+      try {
+        extra = JSON.parse(linha.ajuste_json || '{}') as Record<string, unknown>
+      } catch {
+        extra = {}
+      }
+      const fonte: FonteRecorte = extra.fonteRecorte === 'sem_fundo' ? 'sem_fundo' : extra.fonteRecorte === 'original' ? 'original' : coracao ? 'original' : 'sem_fundo'
+      const arquivo = fonte === 'sem_fundo' ? linha.sem_fundo_path : linha.storage_path
+      if (!arquivo || !existsSync(arquivo)) continue
+      const bytes = readFileSync(arquivo)
+      const meta = await sharp(bytes).metadata()
+      const a = await analisarFoto(bytes, ['scrfd'])
+      const det = (a.deteccao as { scrfd?: { rostos: Rosto[] } }).scrfd
+      const formato: Formato = coracao ? 'coracao' : 'recorte'
+      const { ajuste, uWidth } = enquadrar(formato, meta.width ?? 0, meta.height ?? 0, 0, det?.rostos ?? [], alvos)
+      const fundoCor = typeof extra.fundoCor === 'string' ? extra.fundoCor : FUNDO_COR_PADRAO
+      const bordaCor = typeof extra.bordaCor === 'string' ? extra.bordaCor : BORDA_COR_PADRAO
+      const semBorda = extra.semBorda === true
+      const composta = await comporFoto(linha, coracao ? 'coracao' : 'recorte', ajuste, uWidth, false, fonte, fundoCor, bordaCor, semBorda)
+      const destino = caminhoNovo('composta', p.id, slot)
+      writeFileSync(destino, composta)
+      if (linha.composta_path && linha.composta_path !== destino) {
+        try {
+          unlinkSync(linha.composta_path)
+        } catch {
+          // já sumiu
+        }
+      }
+      db.prepare('UPDATE piece_images SET ajuste_json = ?, u_width = ?, composta_path = ?, updated_at = ? WHERE piece_id = ? AND slot = ?').run(
+        JSON.stringify({ ...ajuste, fonteRecorte: fonte, fundoCor, bordaCor, semBorda }),
+        uWidth,
+        destino,
+        nowMs(),
+        p.id,
+        slot,
+      )
+      feitas.push({ peca: p.id, slot, formato, antes: { width: extra.width, dx: extra.dx, dy: extra.dy, uWidth: linha.u_width }, depois: { ...ajuste, uWidth } })
+    }
+  }
+  const data = db.prepare('SELECT sheet_date FROM orders WHERE workbook_id = ? AND order_key = ?').get(SHOPEE_WORKBOOK_ID, orderKey) as
+    | { sheet_date: string }
+    | undefined
+  // Registro novo: marca que a última mexida também foi da IA.
+  registrar(l, data?.sheet_date ?? '', 'montado', 'reenquadrado', { autor: 'modelo-enquadramento', fotos: feitas })
+  return { ok: true, fotos: feitas }
 }
