@@ -269,7 +269,8 @@ function enquadrarPeloModelo(formato: Formato, W: number, H: number, rostos: Ros
   const y0 = Math.min(...ficam.map((r) => r.y))
   const x1 = Math.max(...ficam.map((r) => r.x + r.w))
   const y1 = Math.max(...ficam.map((r) => r.y + r.h))
-  const rot = Math.abs(p.rot) >= 1 ? Math.round(p.rot * 10) / 10 : 0
+  // Treino v1: a inclinação prevista errou mais que deixar reto (3,1° × 2,1°) — fica 0 até ter mais dado.
+  const rot = 0
   const g = girarComExpand((x0 + x1) / 2, (y0 + y1) / 2, W, H, rot)
   let s = p.gw / Math.max(1, x1 - x0)
   if (coracao) s = Math.max(s, CANVAS / g.W2)
