@@ -701,3 +701,170 @@ export function execucoesMontagem(): unknown[] {
     return []
   }
 }
+
+/* ------------------------------------------------------------------ *
+ * Montagem com escolha externa (1ª vez feita pelo Claude, conferindo
+ * cada conversa): as mesmas peças, a mesma gravação e o mesmo registro.
+ * Só pedido sem arte feita: sem foto em nenhuma peça e status sem prévia.
+ * ------------------------------------------------------------------ */
+
+function linhaDoPedido(orderKey: string): LinhaPedido | undefined {
+  return db
+    .prepare('SELECT order_key, id, row_json FROM orders WHERE workbook_id = ? AND order_key = ?')
+    .get(SHOPEE_WORKBOOK_ID, orderKey) as LinhaPedido | undefined
+}
+
+function pedidoIntocavel(cells: string[]): string | null {
+  const status = (cells[MP_COL_INTERNAL_STATUS] ?? '').trim()
+  const canal = (cells[MP_COL_MARKETPLACE_STATUS] ?? '').trim()
+  if (STATUS_INTOCAVEIS.has(status)) return `status ${status}`
+  if (CANAL_CANCELADO.has(canal)) return `canal ${canal}`
+  return null
+}
+
+/** Pedidos do dia que ninguém começou e que a IA pode montar. */
+export function pendentesDoDia(data: string): unknown[] {
+  const linhas = db
+    .prepare(
+      `SELECT order_key, id, row_json FROM orders
+        WHERE workbook_id = ? AND sheet_date = ? AND parent_key IS NULL ORDER BY position`,
+    )
+    .all(SHOPEE_WORKBOOK_ID, data) as LinhaPedido[]
+  const out: unknown[] = []
+  for (const l of linhas) {
+    const cells = JSON.parse(l.row_json) as string[]
+    if (pedidoIntocavel(cells)) continue
+    const chaves = chavesDoPedido(l.order_key)
+    const pecas = chaves.flatMap(
+      (k) =>
+        db.prepare('SELECT id FROM order_pieces WHERE workbook_id = ? AND order_key = ?').all(SHOPEE_WORKBOOK_ID, k) as Array<{ id: number }>,
+    )
+    if (pecas.some((p) => pecaTemFoto(p.id))) continue
+    const username = (cells[MP_COL_USERNAME] ?? '').trim()
+    out.push({
+      orderKey: l.order_key,
+      pedido: l.id,
+      cliente: username,
+      produto: cells[MP_COL_PRODUCT] ?? '',
+      modelo: cells[MP_COL_MODEL] ?? '',
+      status: (cells[MP_COL_INTERNAL_STATUS] ?? '').trim(),
+      unidades: chaves.length,
+      chatVinculado: Boolean(username && getBuyerChatByUsername(username)),
+    })
+  }
+  return out
+}
+
+/** Peças (derivadas do SKU, como ao abrir o chat) + conversa recente do cliente. */
+export async function conversaDoPedido(orderKey: string): Promise<Record<string, unknown>> {
+  const l = linhaDoPedido(orderKey)
+  if (!l) throw new Error('pedido não encontrado')
+  const cells = JSON.parse(l.row_json) as string[]
+  const pecas: PieceWithPhotos[] = []
+  for (const chave of chavesDoPedido(orderKey)) pecas.push(...ensurePieces(SHOPEE_WORKBOOK_ID, chave).pieces)
+  const username = (cells[MP_COL_USERNAME] ?? '').trim()
+  const chat = username ? getBuyerChatByUsername(username) : undefined
+  let mensagens: unknown[] = []
+  if (chat) {
+    const { messages } = await fetchAllChatMessages(chat.conversationId, chat.toId, { maxPages: 6 })
+    const desde = (criadoEmDoPedido(l.id) ?? Date.now() - 10 * 86_400_000) - 3 * 86_400_000
+    mensagens = messages
+      .filter((m) => (m.createdAt ?? 0) >= desde)
+      .map((m) => ({ cliente: m.fromBuyer, tipo: m.type, texto: m.text, imagem: m.imageUrl, em: m.createdAt }))
+  }
+  return {
+    orderKey,
+    pedido: l.id,
+    cliente: username,
+    produto: cells[MP_COL_PRODUCT] ?? '',
+    modelo: cells[MP_COL_MODEL] ?? '',
+    status: cells[MP_COL_INTERNAL_STATUS] ?? '',
+    intocavel: pedidoIntocavel(cells),
+    pecas: pecas.map((p, i) => ({ n: i + 1, id: p.id, molde: p.molde, emoji1: p.emoji1, emoji2: p.emoji2, cor: p.cor, temFoto: pecaTemFoto(p.id) })),
+    chatVinculado: Boolean(chat),
+    mensagens,
+  }
+}
+
+export interface EscolhaPedido {
+  pecas: Array<{ fotos: Array<{ url: string; formato: Formato }> }>
+  emojis?: string[]
+  cor?: string
+  autor?: string
+}
+
+export async function montarComEscolha(orderKey: string, escolha: EscolhaPedido): Promise<Record<string, unknown>> {
+  const l = linhaDoPedido(orderKey)
+  if (!l) throw new Error('pedido não encontrado')
+  const cells = JSON.parse(l.row_json) as string[]
+  const bloqueio = pedidoIntocavel(cells)
+  if (bloqueio) throw new Error(`arte já feita ou pedido fora (${bloqueio}) — não mexo`)
+  const pecas: PieceWithPhotos[] = []
+  for (const chave of chavesDoPedido(orderKey)) pecas.push(...ensurePieces(SHOPEE_WORKBOOK_ID, chave).pieces)
+  if (pecas.some((p) => pecaTemFoto(p.id))) throw new Error('pedido já tem foto escolhida — não mexo')
+  if (!Array.isArray(escolha?.pecas) || escolha.pecas.length === 0) throw new Error('escolha sem peças')
+  const alvos = alvosDoRelatorio()
+
+  const cache = new Map<string, Imagem>()
+  async function imagemDe(url: string): Promise<Imagem> {
+    const ja = cache.get(url)
+    if (ja) return ja
+    const limpa = url.includes('@') ? url.slice(0, url.indexOf('@')) : url
+    const resp = await fetchShopeeCdn(limpa)
+    const bytes = Buffer.from(await resp.arrayBuffer())
+    const a = await analisarFoto(bytes, ['scrfd'])
+    const det = (a.deteccao as { scrfd?: { giro: number; rostos: Rosto[] } }).scrfd
+    const img: Imagem = {
+      n: cache.size + 1,
+      url: limpa,
+      bytes,
+      largura: Number(a.medidas.largura) || 0,
+      altura: Number(a.medidas.altura) || 0,
+      giro: det?.giro ?? 0,
+      rostos: det?.rostos ?? [],
+      hash: String(a.medidas.hash ?? ''),
+    }
+    cache.set(url, img)
+    return img
+  }
+
+  const formatos = new Set(['coracao', 'recorte', 'rosto'])
+  const feitas: unknown[] = []
+  for (let i = 0; i < pecas.length; i++) {
+    // Peça sem escolha própria repete a última (casal com as mesmas fotos).
+    const e = escolha.pecas[Math.min(i, escolha.pecas.length - 1)]
+    const fotos = (e?.fotos ?? []).slice(0, 2)
+    for (let k = 0; k < fotos.length; k++) {
+      const f = fotos[k]
+      if (!f?.url || !formatos.has(f.formato)) throw new Error(`peça ${i + 1} foto ${k + 1}: url/formato inválido`)
+      const img = await imagemDe(f.url)
+      feitas.push({ peca: pecas[i].id, ...(await gravarFoto(pecas[i].id, k + 1, img, f.formato, alvos)) })
+    }
+  }
+
+  const patch: { emoji1?: string; emoji2?: string; cor?: string } = {}
+  const nomes = new Set(listCatalog().map((x) => x.name))
+  const emojis = (escolha.emojis ?? []).map((n) => (nomes.has(n) ? n : searchByName(n)[0]?.name)).filter(Boolean) as string[]
+  if (emojis[0]) {
+    patch.emoji1 = emojis[0]
+    patch.emoji2 = emojis[1] ?? emojis[0]
+  }
+  if (escolha.cor && /^#[0-9a-fA-F]{6}$/.test(escolha.cor)) patch.cor = escolha.cor.toLowerCase()
+  if (Object.keys(patch).length) for (const p of pecas) updatePiece(p.id, patch)
+
+  const data = db.prepare('SELECT sheet_date FROM orders WHERE workbook_id = ? AND order_key = ?').get(SHOPEE_WORKBOOK_ID, orderKey) as
+    | { sheet_date: string }
+    | undefined
+  registrar(l, data?.sheet_date ?? '', 'montado', '', { autor: escolha.autor ?? 'claude', escolha, fotos: feitas, emojis: patch })
+  return { ok: true, fotos: feitas, emojis: patch }
+}
+
+/** Miniatura de imagem do chat (CDN da Shopee) pra conferir a escolha. */
+export async function miniaturaDoChat(url: string, largura: number): Promise<Buffer> {
+  const host = new URL(url).hostname
+  if (!/susercontent|shopee/i.test(host)) throw new Error('só imagem do CDN da Shopee')
+  const limpa = url.includes('@') ? url.slice(0, url.indexOf('@')) : url
+  const resp = await fetchShopeeCdn(limpa)
+  const bytes = Buffer.from(await resp.arrayBuffer())
+  return sharp(bytes).rotate().resize({ width: largura, height: largura, fit: 'inside' }).jpeg({ quality: 70 }).toBuffer()
+}

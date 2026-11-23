@@ -19,7 +19,7 @@ import {
 import { MERCADOLIVRE_WORKBOOK_ID, SHOPEE_WORKBOOK_ID, TIKTOK_WORKBOOK_ID } from '../marketplace.js'
 import { listPieces } from '../pieces.js'
 import { resumoRelatorio } from '../relatorio-ajustes.js'
-import { execucoesMontagem, montagensDoDia } from '../montagem-ia.js'
+import { conversaDoPedido, execucoesMontagem, miniaturaDoChat, montagensDoDia, montarComEscolha, pendentesDoDia, type EscolhaPedido } from '../montagem-ia.js'
 
 const router = Router()
 
@@ -155,6 +155,42 @@ router.get('/ia/pedidos', requireAuth, (req, res) => {
 router.get('/ia/montagens', requireAuth, (req, res) => {
   const data = typeof req.query.data === 'string' ? req.query.data.trim() : ''
   res.json({ ok: true, execucoes: execucoesMontagem(), montagens: data ? montagensDoDia(data) : [] })
+})
+
+/** GET /ia/pendentes?data= — pedidos do dia sem arte feita (ninguém começou). */
+router.get('/ia/pendentes', requireAuth, (req, res) => {
+  const data = typeof req.query.data === 'string' ? req.query.data.trim() : ''
+  res.json({ ok: true, pedidos: data ? pendentesDoDia(data) : [] })
+})
+
+/** GET /ia/conversa/:orderKey — peças + conversa recente do cliente. */
+router.get('/ia/conversa/:orderKey', requireAuth, async (req, res) => {
+  try {
+    res.json({ ok: true, ...(await conversaDoPedido(req.params.orderKey)) })
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
+})
+
+/** GET /ia/imagem?url=&w= — miniatura de uma imagem do chat. */
+router.get('/ia/imagem', requireAuth, async (req, res) => {
+  try {
+    const url = String(req.query.url ?? '')
+    const w = Math.min(1200, Math.max(64, Number(req.query.w) || 320))
+    res.setHeader('content-type', 'image/jpeg')
+    res.send(await miniaturaDoChat(url, w))
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
+})
+
+/** POST /ia/montar/:orderKey — monta o rascunho com a escolha dada (não gera prévia nem muda status). */
+router.post('/ia/montar/:orderKey', requireAuth, async (req, res) => {
+  try {
+    res.json(await montarComEscolha(req.params.orderKey, req.body as EscolhaPedido))
+  } catch (e) {
+    res.status(400).json({ error: (e as Error).message })
+  }
 })
 
 export default router

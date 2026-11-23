@@ -87,6 +87,8 @@ export function iaAccessBlock(method: string, path: string, role: SessionRole | 
   const rotaIa = path === '/ia' || path.startsWith('/ia/')
   if (role !== 'ia') return rotaIa ? [404, 'Não encontrado'] : null
   if (path === '/logout' || path === '/login' || path === '/me') return null
+  // Única escrita do login da IA: montar o rascunho de um pedido sem arte (não gera prévia nem muda status).
+  if (method === 'POST' && /^\/ia\/montar\/[^/]+$/.test(path)) return null
   if (method !== 'GET' && method !== 'HEAD') return [403, 'Este acesso é somente leitura.']
   if (rotaIa || IA_LEITURA.some((re) => re.test(path))) return null
   return [403, 'Este acesso é só do Painel da IA.']
