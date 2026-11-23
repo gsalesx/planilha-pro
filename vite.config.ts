@@ -11,6 +11,7 @@ export default defineConfig({
         parseIssues: resolve(__dirname, 'parse-issues.html'),
         emojiCatalog: resolve(__dirname, 'emoji-catalog.html'),
         artes: resolve(__dirname, 'artes.html'),
+        ia: resolve(__dirname, 'ia.html'),
       },
     },
   },

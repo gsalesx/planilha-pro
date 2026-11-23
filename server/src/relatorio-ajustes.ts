@@ -12,15 +12,12 @@
  *
  * O texto do chat Shopee do pedido vai em `relatorio_chats` (insumo da IA que lê o pedido).
  */
-import crypto from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 
-import sharp from 'sharp'
-
+import { analisarFoto, encerrarAnalise } from './analise-foto.js'
 import { recordAudit } from './audit.js'
 import { db, nowMs } from './db.js'
-import { detectarRostos, motorDisponivel, type Deteccao, type Motor } from './detectar-rostos.js'
 import {
   MP_COL_INTERNAL_STATUS,
   MP_COL_MARKETPLACE_STATUS,
@@ -111,6 +108,8 @@ export interface ResumoLeitura {
   chatsGravados: number
   erros: string[]
   duracaoMs: number
+  /** Leitura noturna parou ao chegar o horário de trabalho; o resto fica pra próxima noite. */
+  interrompida?: boolean
 }
 
 function marketplaceDe(workbookId: string): string {
@@ -143,46 +142,6 @@ function fonteDoAjuste(l: LinhaFonte, ajuste: Record<string, unknown>): { tipo: 
   return usaSemFundo && temSemFundo
     ? { tipo: 'sem_fundo', caminho: l.sem_fundo_path }
     : { tipo: 'original', caminho: l.storage_path }
-}
-
-async function medirImagem(bytes: Buffer): Promise<Record<string, unknown>> {
-  const meta = await sharp(bytes).metadata()
-  const stats = await sharp(bytes).flatten({ background: '#808080' }).stats()
-  const [r, g, b] = stats.channels.map((c) => c.mean)
-  return {
-    hash: crypto.createHash('sha256').update(bytes).digest('hex'),
-    largura: meta.width ?? 0,
-    altura: meta.height ?? 0,
-    formato: meta.format ?? '',
-    bytes: bytes.length,
-    orientacao_exif: meta.orientation ?? null,
-    tem_transparencia: Boolean(meta.hasAlpha),
-    brilho: Math.round(0.299 * r + 0.587 * g + 0.114 * b),
-    nitidez: Math.round(stats.sharpness * 100) / 100,
-    cor_media: [Math.round(r), Math.round(g), Math.round(b)],
-    cor_dominante: [stats.dominant.r, stats.dominant.g, stats.dominant.b],
-  }
-}
-
-function deteccaoResumo(d: Deteccao): Record<string, unknown> {
-  return { detector: d.detector, giro: d.giro, rostos: d.rostos }
-}
-
-/** Roda os motores disponíveis (SCRFD principal, YuNet 2ª opinião). Motor sem modelo
- *  no disco fica fora — o relatório registra só o que rodou. */
-async function detectarComTodos(
-  bytes: Buffer,
-  motores: Motor[],
-): Promise<{ resumo: Record<string, unknown>; principal: Deteccao | null }> {
-  const resumo: Record<string, unknown> = {}
-  let principal: Deteccao | null = null
-  for (const motor of motores) {
-    if (!motorDisponivel(motor)) continue
-    const d = await detectarRostos(bytes, motor)
-    resumo[motor] = deteccaoResumo(d)
-    principal ??= d
-  }
-  return { resumo, principal }
 }
 
 function linhasCandidatas(): LinhaFonte[] {
@@ -245,20 +204,21 @@ async function registrarFoto(
   const ajuste = parseJson<Record<string, unknown>>(l.ajuste_json, {})
   const fonte = fonteDoAjuste(l, ajuste)
 
-  const foto = await medirImagem(original)
-  const detOriginal = await detectarComTodos(original, ['scrfd', 'yunet'])
-  const nRostos = detOriginal.principal?.rostos.length ?? 0
+  // Medidas e rostos saem da thread de análise — a principal fica livre pra planilha.
+  const detOriginal = await analisarFoto(original, ['scrfd', 'yunet'])
+  const foto = detOriginal.medidas
+  const nRostos = detOriginal.nRostos
 
   let fonteInfo: Record<string, unknown> = { tipo: fonte.tipo }
   if (fonte.caminho !== l.storage_path && existsSync(fonte.caminho)) {
     const bytesFonte = readFileSync(fonte.caminho)
-    const medidas = await medirImagem(bytesFonte)
+    const analise = await analisarFoto(bytesFonte, ['scrfd', 'yunet'])
     fonteInfo = {
       tipo: fonte.tipo,
-      hash: medidas.hash,
-      largura: medidas.largura,
-      altura: medidas.altura,
-      deteccao: (await detectarComTodos(bytesFonte, ['scrfd', 'yunet'])).resumo,
+      hash: analise.medidas.hash,
+      largura: analise.medidas.largura,
+      altura: analise.medidas.altura,
+      deteccao: analise.deteccao,
     }
   }
 
@@ -295,7 +255,7 @@ async function registrarFoto(
       origem: l.origem_url ? 'chat' : 'upload',
       origem_url: l.origem_url,
     },
-    deteccao: detOriginal.resumo,
+    deteccao: detOriginal.deteccao,
     fonte: fonteInfo,
     ajuste: {
       modo: l.crop,
@@ -401,6 +361,10 @@ export async function gravarRelatorioAjustes(
     const pedidosComNovidade = new Map<string, { workbookId: string; orderKey: string; cells: string[] }>()
 
     for (const l of todas) {
+      if (motivo === 'noturna' && !dentroDaJanelaNoturna()) {
+        resumo.interrompida = true
+        break
+      }
       if (filtro && !filtro(l)) continue
       if (!l.storage_path || !existsSync(l.storage_path)) continue
       resumo.fotosVistas++
@@ -428,8 +392,6 @@ export async function gravarRelatorioAjustes(
       } catch (e) {
         resumo.erros.push(`peça ${l.piece_id}/foto ${l.slot}: ${(e as Error).message}`)
       }
-      // A inferência WASM segura o processo ~1 s por foto: devolve a vez pras requisições.
-      await new Promise((r) => setImmediate(r))
     }
 
     if (pedidosComNovidade.size > 0 && shopeePronta()) {
@@ -443,6 +405,7 @@ export async function gravarRelatorioAjustes(
       }
     }
   } finally {
+    await encerrarAnalise().catch(() => undefined)
     rodando = false
     resumo.duracaoMs = Date.now() - t0
   }
@@ -471,14 +434,22 @@ function agoraSaoPaulo(): { dia: string; hora: number } {
 }
 
 export const HORA_LEITURA_NOTURNA = 4
+/** A leitura noturna para às 8h (início do expediente) e continua na noite seguinte. */
+export const HORA_FIM_LEITURA_NOTURNA = 8
+
+function dentroDaJanelaNoturna(): boolean {
+  const { hora } = agoraSaoPaulo()
+  return hora >= HORA_LEITURA_NOTURNA && hora < HORA_FIM_LEITURA_NOTURNA
+}
 
 /**
  * Chamado a cada poucos minutos: roda uma vez por dia, a partir das 4h (horário de
- * Brasília). Se o servidor estava fora às 4h, roda assim que voltar no mesmo dia.
+ * Brasília) até as 8h. Se o servidor estava fora às 4h, roda assim que voltar (antes das 8h).
+ * O que não der tempo fica pra noite seguinte (a leitura só pega o que ainda não foi lido).
  */
 export async function talvezRodarLeituraNoturna(): Promise<void> {
   const { dia, hora } = agoraSaoPaulo()
-  if (hora < HORA_LEITURA_NOTURNA) return
+  if (hora < HORA_LEITURA_NOTURNA || hora >= HORA_FIM_LEITURA_NOTURNA) return
   const ja = db.prepare('SELECT dia FROM relatorio_execucoes WHERE dia = ?').get(dia)
   if (ja || rodando) return
   db.prepare('INSERT INTO relatorio_execucoes (dia, inicio) VALUES (?, ?)').run(dia, nowMs())
@@ -494,6 +465,7 @@ export async function talvezRodarLeituraNoturna(): Promise<void> {
       chats: resumo.chatsGravados,
       erros: resumo.erros.length,
       ms: resumo.duracaoMs,
+      interrompida: Boolean(resumo.interrompida),
     })
   }
 }

@@ -14,7 +14,7 @@ function constantTimeEquals(a: string, b: string): boolean {
   return crypto.timingSafeEqual(ab, bb)
 }
 
-export type SessionRole = 'owner' | 'review'
+export type SessionRole = 'owner' | 'review' | 'ia'
 
 function credentialsMatch(username: string, password: string, expectedUser: string, expectedPass: string): boolean {
   if (!expectedUser || !expectedPass) return false
@@ -24,6 +24,7 @@ function credentialsMatch(username: string, password: string, expectedUser: stri
 export function verifyCredentials(username: string, password: string): SessionRole | null {
   if (credentialsMatch(username, password, env.authUsername, env.authPassword)) return 'owner'
   if (credentialsMatch(username, password, env.authReviewUsername, env.authReviewPassword)) return 'review'
+  if (credentialsMatch(username, password, env.authIaUsername, env.authIaPassword)) return 'ia'
   return null
 }
 
@@ -47,7 +48,8 @@ export function readSession(token: string | undefined): { token: string; expires
     .prepare('SELECT token, expires_at AS expiresAt, role FROM sessions WHERE token = ? AND expires_at > ?')
     .get(token, nowMs()) as { token: string; expiresAt: number; role: string | null } | undefined
   if (!row) return null
-  return { token: row.token, expiresAt: row.expiresAt, role: row.role === 'review' ? 'review' : 'owner' }
+  const role: SessionRole = row.role === 'review' || row.role === 'ia' ? row.role : 'owner'
+  return { token: row.token, expiresAt: row.expiresAt, role }
 }
 
 export function refreshSession(token: string): number {

@@ -5,6 +5,7 @@ import {
   checkAuth,
   createOrder,
   createWorkbook,
+  isIaSession,
   isReviewSession,
   deleteImage,
   deleteOrdersBySheetDate,
@@ -2283,6 +2284,10 @@ async function init() {
     showLoginScreen(() => {
       void init()
     })
+    return
+  }
+  if (isIaSession()) {
+    location.replace('/ia.html')
     return
   }
   if (isReviewSession()) {

@@ -72,6 +72,26 @@ export function workbookAccessBlock(
   return null
 }
 
+/** Fotos/emojis que o Painel da IA mostra (só leitura). */
+const IA_LEITURA = [
+  /^\/pieces\/\d+\/photo\/[12](?:\/composta)?$/,
+  /^\/emoji-catalog(?:\/custom\/[^/]+)?$/,
+]
+
+/**
+ * Login da IA vê só o Painel da IA (somente leitura). Os outros logins — inclusive o
+ * dos operadores — nem enxergam as rotas /ia: o aprendizado fica invisível pra eles.
+ * Devolve [status, mensagem] ou null se a rota pode seguir.
+ */
+export function iaAccessBlock(method: string, path: string, role: SessionRole | null): [number, string] | null {
+  const rotaIa = path === '/ia' || path.startsWith('/ia/')
+  if (role !== 'ia') return rotaIa ? [404, 'Não encontrado'] : null
+  if (path === '/logout' || path === '/login' || path === '/me') return null
+  if (method !== 'GET' && method !== 'HEAD') return [403, 'Este acesso é somente leitura.']
+  if (rotaIa || IA_LEITURA.some((re) => re.test(path))) return null
+  return [403, 'Este acesso é só do Painel da IA.']
+}
+
 /** Mensagem de bloqueio do login de avaliação, ou null se a rota pode seguir. */
 export function reviewAccessBlock(method: string, path: string, role: SessionRole | null): string | null {
   if (role !== 'review') return null

@@ -23,6 +23,9 @@ export const env = {
   /** Login só de leitura, sem chat nem etiquetas — para avaliação da Shopee. */
   authReviewUsername: envTrim('AUTH_REVIEW_USERNAME'),
   authReviewPassword: envTrim('AUTH_REVIEW_PASSWORD'),
+  /** Login do Painel da IA (sugestões em modo sombra) — só o dono; operadores não veem. */
+  authIaUsername: envTrim('AUTH_IA_USERNAME'),
+  authIaPassword: envTrim('AUTH_IA_PASSWORD'),
   dataDir: process.env.DATA_DIR ?? './data',
   sessionSecret: required('SESSION_SECRET'),
   sessionTtlDays: Number(process.env.SESSION_TTL_DAYS ?? 30),

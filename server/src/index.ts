@@ -10,7 +10,7 @@ import sharp from 'sharp'
 
 import { newRunId, pruneAudit, recordAudit } from './audit.js'
 import { cleanupExpiredSessions, requestSessionRole, requireAuth } from './auth.js'
-import { reviewAccessBlock, workbookAccessBlock } from './review-access.js'
+import { iaAccessBlock, reviewAccessBlock, workbookAccessBlock } from './review-access.js'
 import { env, isProd } from './env.js'
 import { ASSETS_DIR, ensureEmojiCatalogSeeded } from './emoji-catalog.js'
 import {
@@ -46,6 +46,7 @@ import parseIssuesRouter from './routes/parse-issues.js'
 import { limiteFotosYmd, limparFotosAntigas } from './limpar-fotos-antigas.js'
 import { gravarRelatorioAjustes, talvezRodarLeituraNoturna } from './relatorio-ajustes.js'
 import relatorioAjustesRouter from './routes/relatorio-ajustes.js'
+import iaRouter from './routes/ia.js'
 import pickerRouter, { limparArtesExpiradas } from './routes/picker.js'
 import piecesRouter from './routes/pieces.js'
 import resumoRouter from './routes/resumo.js'
@@ -97,6 +98,11 @@ app.use(express.json({ limit: '10mb' }))
 
 app.use('/api', (req, res, next) => {
   const role = requestSessionRole(req)
+  const bloqueioIa = iaAccessBlock(req.method, req.path, role)
+  if (bloqueioIa) {
+    res.status(bloqueioIa[0]).json({ error: bloqueioIa[1] })
+    return
+  }
   const message = reviewAccessBlock(req.method, req.path, role)
   if (message) {
     res.status(403).json({ error: message })
@@ -143,6 +149,7 @@ app.use('/api', mercadolivrePushRouter)
 app.use('/api', auditRouter)
 app.use('/api', resumoRouter)
 app.use('/api', relatorioAjustesRouter)
+app.use('/api', iaRouter)
 
 // imagens builtin do catálogo de emoji (server/assets/emojis, servido em build-time) —
 // cache longo no navegador: são bytes fixos (baked na imagem Docker), só a LISTA de

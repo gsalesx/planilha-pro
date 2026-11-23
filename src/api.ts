@@ -3,12 +3,16 @@ import { headersForWorkbook } from './shopee-workbook'
 
 const API_BASE = '/api'
 
-export type SessionRole = 'owner' | 'review'
+export type SessionRole = 'owner' | 'review' | 'ia'
 
 let sessionRole: SessionRole = 'owner'
 
 export function isReviewSession(): boolean {
   return sessionRole === 'review'
+}
+
+export function isIaSession(): boolean {
+  return sessionRole === 'ia'
 }
 
 export interface WorkbookSummary {
@@ -80,7 +84,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export async function checkAuth(): Promise<boolean> {
   try {
     const me = await request<{ role?: SessionRole }>('/me')
-    sessionRole = me.role === 'review' ? 'review' : 'owner'
+    sessionRole = me.role === 'review' || me.role === 'ia' ? me.role : 'owner'
     return true
   } catch (error) {
     if (error instanceof AuthRequiredError) {
