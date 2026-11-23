@@ -353,6 +353,9 @@ async function perguntarLfm(
     `da mulher e outra do homem sem dizer onde vai cada uma, a foto da MULHER vai na peça MASCULINA ` +
     `e a foto do HOMEM vai na peça FEMININA (cada um veste o rosto do outro). Se o cliente disser ` +
     `onde vai cada foto, vale o que ele disse.\n` +
+    `FOTO SOZINHA × FOTO DO CASAL: quando a mesma peça leva uma foto de UMA pessoa e outra do ` +
+    `CASAL (2+ rostos), a foto da pessoa sozinha vai em "recorte" e a do casal vai em "coracao", ` +
+    `que encaixa melhor. Nunca o contrário, salvo pedido do cliente.\n` +
     `EMOJIS: "❤️🔥" (coração e fogo lado a lado) são DOIS emojis, CORAÇÃO e FOGO; só é ` +
     `"CORAÇÃO ROSA COM FOGO" se o cliente pedir o coração pegando fogo.\n` +
     `Emojis do catálogo (use exatamente estes nomes): ${nomesEmoji.join(', ')}.\n\n` +
