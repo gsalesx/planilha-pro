@@ -9,7 +9,6 @@ treina com tudo e grava o modelo na planilha (POST /api/ia/modelo-enquadramento)
 
 As features e a geometria têm que bater 1:1 com server/src/enquadramento-modelo.ts.
 """
-import http.cookiejar
 import json
 import math
 import os
@@ -29,16 +28,23 @@ FEATURES = [
     "rosto_w", "rosto_cx", "rosto_cy", "inclinacao", "score", "W_k", "H_k",
 ]
 
-jar = http.cookiejar.CookieJar()
-opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+# O cookie de sessão é "Secure": pela rede interna (http) o CookieJar não devolveria.
+# Guarda e manda à mão.
+COOKIE = {"v": ""}
 
 
 def chamar(caminho, corpo=None, tentativas=6):
     for t in range(tentativas):
         try:
             dados = None if corpo is None else json.dumps(corpo).encode()
-            req = urllib.request.Request(API + caminho, data=dados, headers={"Content-Type": "application/json"})
-            with opener.open(req, timeout=120) as r:
+            cab = {"Content-Type": "application/json"}
+            if COOKIE["v"]:
+                cab["Cookie"] = COOKIE["v"]
+            req = urllib.request.Request(API + caminho, data=dados, headers=cab)
+            with urllib.request.urlopen(req, timeout=120) as r:
+                sc = r.headers.get("Set-Cookie")
+                if sc:
+                    COOKIE["v"] = sc.split(";")[0]
                 return json.loads(r.read())
         except Exception as e:  # planilha reiniciando etc.
             if t == tentativas - 1:
@@ -236,7 +242,9 @@ def compactar(m, X_check):
 
 
 def main():
-    chamar("/login", {"username": "ia", "password": SENHA})
+    login = chamar("/login", {"username": "ia", "password": SENHA})
+    if login.get("role") != "ia" or not COOKIE["v"]:
+        raise SystemExit(f"login falhou: {login}")
     itens = baixar_relatorio()
     linhas, pulos = montar_linhas(itens)
     print("RELATORIO", json.dumps({"registros": len(itens), "usados": len(linhas), "pulados": pulos}), flush=True)
