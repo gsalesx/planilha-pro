@@ -45,6 +45,7 @@ import loginRouter from './routes/login.js'
 import parseIssuesRouter from './routes/parse-issues.js'
 import { limiteFotosYmd, limparFotosAntigas } from './limpar-fotos-antigas.js'
 import { gravarRelatorioAjustes, talvezRodarLeituraNoturna } from './relatorio-ajustes.js'
+import { montarDatasPendentes } from './montagem-ia.js'
 import relatorioAjustesRouter from './routes/relatorio-ajustes.js'
 import iaRouter from './routes/ia.js'
 import pickerRouter, { limparArtesExpiradas } from './routes/picker.js'
@@ -199,6 +200,8 @@ limparArtesExpiradas()
 // Relatório de ajustes (base de treino do enquadramento): 1x por dia a partir das 4h.
 setInterval(() => void talvezRodarLeituraNoturna().catch((e) => console.warn('[relatorio-ajustes]', e)), 10 * 60 * 1000)
 setTimeout(() => void talvezRodarLeituraNoturna().catch((e) => console.warn('[relatorio-ajustes]', e)), 5 * 60 * 1000)
+// Montagem da IA (rascunho das artes) das datas pedidas em IA_MONTAR_DATAS — uma vez por data.
+setTimeout(() => void montarDatasPendentes().catch((e) => console.warn('[montagem-ia]', e)), 2 * 60 * 1000)
 
 // Foto e arte de pedido com mais de 15 dias saem do disco. A linha do pedido fica.
 // Antes de apagar, o relatório lê o que ainda não foi lido desses pedidos.

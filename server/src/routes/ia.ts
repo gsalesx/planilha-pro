@@ -19,6 +19,7 @@ import {
 import { MERCADOLIVRE_WORKBOOK_ID, SHOPEE_WORKBOOK_ID, TIKTOK_WORKBOOK_ID } from '../marketplace.js'
 import { listPieces } from '../pieces.js'
 import { resumoRelatorio } from '../relatorio-ajustes.js'
+import { execucoesMontagem, montagensDoDia } from '../montagem-ia.js'
 
 const router = Router()
 
@@ -148,6 +149,12 @@ router.get('/ia/pedidos', requireAuth, (req, res) => {
     }
   })
   res.json({ ok: true, data, pedidos: itens })
+})
+
+/** GET /ia/montagens?data=DD-MM-AAAA — o que a IA montou (ou por que pulou) em cada pedido. */
+router.get('/ia/montagens', requireAuth, (req, res) => {
+  const data = typeof req.query.data === 'string' ? req.query.data.trim() : ''
+  res.json({ ok: true, execucoes: execucoesMontagem(), montagens: data ? montagensDoDia(data) : [] })
 })
 
 export default router

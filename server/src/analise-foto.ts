@@ -49,7 +49,10 @@ export function analisarFoto(bytes: Buffer, motores: Motor[]): Promise<Resultado
   })
 }
 
+/** Encerra a thread se ninguém estiver esperando resposta (a montagem da IA e o
+ *  relatório usam a mesma; quem chamar depois recria). */
 export async function encerrarAnalise(): Promise<void> {
+  if (pendentes.size > 0) return
   const w = worker
   worker = null
   if (w) await w.terminate()

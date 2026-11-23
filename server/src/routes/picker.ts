@@ -106,7 +106,7 @@ router.get('/picker/mask/heart-grown', requireAuth, (_req, res) => {
 })
 
 /** 'rosto' no banco = recorte/cápsula (legado); 'face' = face cutout PicWish. */
-type Modo = 'coracao' | 'recorte' | 'face'
+export type Modo = 'coracao' | 'recorte' | 'face'
 
 function cropDoModo(modo: Modo): string {
   if (modo === 'coracao') return 'coracao'
@@ -124,7 +124,7 @@ function cacheEhDoKind(pathStr: string, kind: 'fundo' | 'face'): boolean {
   return kind === 'face' ? base.startsWith('facecut_') : base.startsWith('semfundo_')
 }
 
-interface LinhaFoto {
+export interface LinhaFoto {
   piece_id: number
   slot: number
   storage_path: string
@@ -135,7 +135,7 @@ interface LinhaFoto {
   composta_path: string
 }
 
-function foto(pieceId: number, slot: number): LinhaFoto | undefined {
+export function foto(pieceId: number, slot: number): LinhaFoto | undefined {
   return db
     .prepare(
       `SELECT piece_id, slot, storage_path, crop, ajuste_json, u_width,
@@ -218,7 +218,7 @@ function modoDa(l: LinhaFoto): Modo {
 
 /** 'original' = foto COM fundo, cortada direto (uso legítimo — nem toda foto precisa
  *  de remoção de fundo); 'sem_fundo' = usa o PicWish (silhueta recortada de verdade). */
-type FonteRecorte = 'original' | 'sem_fundo'
+export type FonteRecorte = 'original' | 'sem_fundo'
 
 /** `fonteRecorte` mora dentro do MESMO ajuste_json que dx/dy/rotation/width — evita
  *  migração de schema pra guardar 1 campo a mais. `parseAjuste` só devolve os campos
@@ -293,7 +293,7 @@ function parseSemBorda(json: string): boolean {
   }
 }
 
-function caminhoNovo(prefixo: string, pieceId: number, slot: number, ext = '.png'): string {
+export function caminhoNovo(prefixo: string, pieceId: number, slot: number, ext = '.png'): string {
   const nome = `${prefixo}_${pieceId}_s${slot}_${crypto.randomBytes(4).toString('hex')}${ext}`
   return path.join(imagesDir, nome)
 }
@@ -454,7 +454,7 @@ router.post('/pieces/:id/photo/:slot/preview', requireAuth, async (req, res) => 
   }
 })
 
-async function comporFoto(
+export async function comporFoto(
   l: LinhaFoto,
   modo: Modo,
   ajuste: ParamsEnquadramento,
