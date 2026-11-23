@@ -353,6 +353,8 @@ async function perguntarLfm(
     `da mulher e outra do homem sem dizer onde vai cada uma, a foto da MULHER vai na peça MASCULINA ` +
     `e a foto do HOMEM vai na peça FEMININA (cada um veste o rosto do outro). Se o cliente disser ` +
     `onde vai cada foto, vale o que ele disse.\n` +
+    `EMOJIS: "❤️🔥" (coração e fogo lado a lado) são DOIS emojis, CORAÇÃO e FOGO; só é ` +
+    `"CORAÇÃO ROSA COM FOGO" se o cliente pedir o coração pegando fogo.\n` +
     `Emojis do catálogo (use exatamente estes nomes): ${nomesEmoji.join(', ')}.\n\n` +
     `Conversa (mais antiga primeiro):\n${conversa}\n\n` +
     `Responda SÓ com JSON neste formato:\n` +
@@ -621,9 +623,18 @@ async function montarPedido(
 
   // Emojis: unicode que o cliente mandou no texto vale mais que o palpite do LFM.
   const emojis: string[] = []
+  // Emoji por emoji (grafema): "❤️🔥" sem o ZWJ são DOIS emojis (coração + fogo), não o
+  // coração pegando fogo (❤️‍🔥, que é um grafema só).
+  const segmentar = new Intl.Segmenter('pt', { granularity: 'grapheme' })
+  const catalogo = listCatalog()
   for (const m of janela.filter((x) => x.fromBuyer && x.text)) {
-    const item = resolveByAlias(m.text)
-    if (item && !emojis.includes(item.name)) emojis.push(item.name)
+    for (const { segment } of segmentar.segment(m.text)) {
+      if (!/\p{Extended_Pictographic}/u.test(segment)) continue
+      // Alias idêntico primeiro (❤️‍🔥 ≠ ❤️); senão o casamento por trecho do catálogo.
+      const semVs = (t: string) => t.replace(/️/g, '')
+      const item = catalogo.find((c) => c.aliases.some((a) => a && semVs(a) === semVs(segment))) ?? resolveByAlias(segment)
+      if (item && !emojis.includes(item.name)) emojis.push(item.name)
+    }
   }
   for (const nome of pedidoLfm?.emojis ?? []) {
     const item = nomesEmoji.includes(nome) ? nome : searchByName(nome)[0]?.name
