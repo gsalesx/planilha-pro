@@ -203,6 +203,39 @@ router.post('/mercadolivre/messages/send', requireAuth, async (req, res) => {
   }
 })
 
+/** POST /api/mercadolivre/messages/send-text-to-buyer — texto pelo username (chat vinculado) */
+router.post('/mercadolivre/messages/send-text-to-buyer', requireAuth, async (req, res) => {
+  if (!mlConfigured()) {
+    res.status(400).json({ error: 'Mercado Livre não configurado' })
+    return
+  }
+  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : ''
+  const text = typeof req.body?.text === 'string' ? req.body.text : ''
+  if (!username || !text.trim()) {
+    res.status(400).json({ error: 'username e text obrigatórios' })
+    return
+  }
+  const chat = getBuyerChatByUsername(username)
+  if (!chat) {
+    res.status(404).json({ error: 'Chat não vinculado' })
+    return
+  }
+  const auth = loadMercadoLivreAuth()
+  if (!auth?.userId) {
+    res.status(400).json({ error: 'ML não autenticado' })
+    return
+  }
+  try {
+    const data = await sendPackMessage(chat.packId, auth.userId, { text })
+    res.json({ ok: true, data })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao enviar mensagem',
+    })
+  }
+})
+
 /** POST /api/mercadolivre/messages/send-preview */
 router.post('/mercadolivre/messages/send-preview', requireAuth, async (req, res) => {
   if (!mlConfigured()) {

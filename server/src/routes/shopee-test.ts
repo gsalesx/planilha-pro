@@ -724,6 +724,43 @@ router.post('/shopee/messages/send-preview', requireAuth, async (req, res) => {
 })
 
 /**
+ * POST /api/shopee/messages/send-text-to-buyer — texto pro comprador pelo username
+ * (chat já vinculado). Usado pelo "Marcar como prévia + aviso 24h": a planilha não
+ * tem toId/conversationId à mão no fluxo da grade, só o username da coluna E.
+ */
+router.post('/shopee/messages/send-text-to-buyer', requireAuth, async (req, res) => {
+  if (!shopeeConfigured()) {
+    res.status(400).json({ error: 'Shopee não configurada' })
+    return
+  }
+  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : ''
+  const text = typeof req.body?.text === 'string' ? req.body.text : ''
+  if (!username || !text.trim()) {
+    res.status(400).json({ error: 'username e text obrigatórios' })
+    return
+  }
+  const chat = getBuyerChatByUsername(username)
+  if (!chat) {
+    res.status(404).json({ error: 'Chat não vinculado' })
+    return
+  }
+  try {
+    const data = await sendChatMessage({
+      toId: chat.toId,
+      text,
+      conversationId: chat.conversationId || undefined,
+      businessType: 0,
+    })
+    res.json({ ok: true, shopee: data })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro na Shopee',
+    })
+  }
+})
+
+/**
  * POST /api/shopee/messages/start-conversation — inicia um chat novo com o comprador
  * quando ainda não existe conversa (botão "Iniciar conversa" ao lado de "Vincular
  * conversas Shopee", pra pedido sem chat vinculado). Busca buyer_user_id via

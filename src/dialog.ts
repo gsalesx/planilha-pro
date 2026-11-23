@@ -451,6 +451,9 @@ export function openPreviewPickerDialog(opts: {
    * envio já fecha o modal), usado pelo fluxo simples do grid (1 linha, N colunas).
    */
   onMarkAsPreview?: () => Promise<void>
+  /** Segundo botão do rodapé: marca como prévia E manda o aviso de prazo (24h) no chat.
+   *  Só aparece junto com `onMarkAsPreview` — às vezes a equipe manda só a prévia. */
+  onMarkAsPreviewWithMessage?: () => Promise<void>
 }): void {
   const overlay = document.createElement('div')
   overlay.className = 'modal-overlay'
@@ -468,7 +471,7 @@ export function openPreviewPickerDialog(opts: {
   body.className = 'modal-body preview-picker-grid'
   let algumEnviado = false
   const atualizarBotaoMarcar = () => {
-    if (marcarBtn) marcarBtn.disabled = !algumEnviado
+    for (const b of marcarBtns) b.disabled = !algumEnviado
   }
 
   for (const item of opts.items) {
@@ -518,27 +521,38 @@ export function openPreviewPickerDialog(opts: {
 
   const actions = document.createElement('div')
   actions.className = 'modal-actions'
-  let marcarBtn: HTMLButtonElement | null = null
-  if (opts.onMarkAsPreview) {
-    marcarBtn = document.createElement('button')
-    marcarBtn.type = 'button'
-    marcarBtn.className = 'btn btn-primary'
-    marcarBtn.textContent = 'Marcar como prévia'
-    marcarBtn.disabled = true
-    marcarBtn.title = 'Envie ao menos 1 prévia antes de marcar o pedido'
-    marcarBtn.addEventListener('click', async () => {
-      marcarBtn!.disabled = true
-      marcarBtn!.textContent = 'Marcando...'
+  const marcarBtns: HTMLButtonElement[] = []
+  const addMarcarBtn = (texto: string, dica: string, acao: () => Promise<void>) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'btn btn-primary'
+    b.textContent = texto
+    b.disabled = true
+    b.title = dica
+    b.addEventListener('click', async () => {
+      for (const x of marcarBtns) x.disabled = true
+      b.textContent = 'Marcando...'
       try {
-        await opts.onMarkAsPreview!()
+        await acao()
         close()
       } catch (error) {
-        marcarBtn!.disabled = false
-        marcarBtn!.textContent = 'Marcar como prévia'
+        atualizarBotaoMarcar()
+        b.textContent = texto
         alert(`Falha ao marcar: ${(error as Error).message}`)
       }
     })
-    actions.appendChild(marcarBtn)
+    marcarBtns.push(b)
+    actions.appendChild(b)
+  }
+  if (opts.onMarkAsPreview) {
+    addMarcarBtn('Marcar como prévia', 'Envie ao menos 1 prévia antes de marcar o pedido', opts.onMarkAsPreview)
+    if (opts.onMarkAsPreviewWithMessage) {
+      addMarcarBtn(
+        'Marcar como prévia + aviso 24h',
+        'Marca como prévia e manda no chat o aviso do prazo de 24h para aprovação',
+        opts.onMarkAsPreviewWithMessage,
+      )
+    }
   }
   const cancelBtn = document.createElement('button')
   cancelBtn.type = 'button'

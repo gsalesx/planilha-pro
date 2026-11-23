@@ -561,6 +561,18 @@ export async function sendMarketplacePreview(
   })
 }
 
+/** Texto pro comprador pelo username (chat já vinculado) — ex.: aviso de prazo da prévia. */
+export async function sendMarketplaceTextToBuyer(
+  channel: MarketplaceChatChannel,
+  opts: { username: string; text: string },
+): Promise<{ ok: boolean }> {
+  return request(`${marketplaceApiPrefix(channel)}/messages/send-text-to-buyer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+}
+
 export async function fetchMarketplaceLinkedBuyerUsernames(
   channel: MarketplaceChatChannel,
 ): Promise<string[]> {

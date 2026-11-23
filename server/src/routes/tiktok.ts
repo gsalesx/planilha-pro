@@ -169,6 +169,37 @@ router.post('/tiktok/messages/send', requireAuth, async (req, res) => {
   }
 })
 
+/** POST /api/tiktok/messages/send-text-to-buyer — texto pelo username (chat vinculado) */
+router.post('/tiktok/messages/send-text-to-buyer', requireAuth, async (req, res) => {
+  if (!tiktokConfigured()) {
+    res.status(400).json({ error: 'TikTok não configurado' })
+    return
+  }
+  const username = typeof req.body?.username === 'string' ? req.body.username.trim() : ''
+  const text = typeof req.body?.text === 'string' ? req.body.text : ''
+  if (!username || !text.trim()) {
+    res.status(400).json({ error: 'username e text obrigatórios' })
+    return
+  }
+  const chat = getBuyerChatByUsername(username)
+  if (!chat) {
+    res.status(404).json({ error: 'Chat não vinculado' })
+    return
+  }
+  try {
+    const data = await sendConversationMessage(chat.conversationId, {
+      type: 'text',
+      content: { text },
+    })
+    res.json({ ok: true, data })
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Erro ao enviar mensagem',
+    })
+  }
+})
+
 /** POST /api/tiktok/messages/send-preview — envia imagem da planilha */
 router.post('/tiktok/messages/send-preview', requireAuth, async (req, res) => {
   if (!tiktokConfigured()) {

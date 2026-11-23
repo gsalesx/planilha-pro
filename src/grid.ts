@@ -105,7 +105,8 @@ export interface GridCallbacks {
   onImageDelete?(rowIndex: number, colIndex: number): void
   onCommentRequest?(rowIndex: number, colIndex: number): void
   onChatRequest?(rowIndex: number, colIndex: number): void
-  onPreviewRequest?(rowIndex: number, colIndex: number): void
+  /** `withMessage` = também manda o aviso de prazo de 24h no chat depois da prévia. */
+  onPreviewRequest?(rowIndex: number, colIndex: number, withMessage?: boolean): void
   onPrintLabelRequest?(rowIndex: number, colIndex: number): void
   onViewStateChange?(): void
 }
@@ -1123,6 +1124,7 @@ export class GridView {
     }
     if (linked && hasPreview && this.callbacks.onPreviewRequest) {
       addItem('Enviar prévia', () => this.callbacks.onPreviewRequest?.(row, col))
+      addItem('Enviar prévia + aviso 24h', () => this.callbacks.onPreviewRequest?.(row, col, true))
     }
     addItem(comment ? 'Editar comentário' : 'Comentário', () =>
       this.callbacks.onCommentRequest?.(row, col),

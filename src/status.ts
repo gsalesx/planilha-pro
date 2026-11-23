@@ -5,6 +5,10 @@ export const STATUS_COLUMN_INDEX = 5 // coluna F (Status)
 /** Status após envio de prévia no chat Shopee. */
 export const PREVIEW_SENT_STATUS = 'Prévia'
 
+/** Aviso de prazo mandado junto com a prévia no botão "Marcar como prévia + aviso 24h". */
+export const PREVIEW_DEADLINE_MESSAGE =
+  '⚠️ Lembrando que o prazo para aprovação é de até 24h. Após esse período, seguiremos com a produção automaticamente.'
+
 export const STATUS_OPTIONS: StatusOption[] = [
   { label: '', color: '#ffffff' },
   { label: 'Pronto', color: '#34d399' },

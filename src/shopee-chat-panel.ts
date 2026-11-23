@@ -12,6 +12,7 @@ import {
   removePiecePhoto,
   sendMarketplaceChatMessage,
   sendMarketplacePreview,
+  sendMarketplaceTextToBuyer,
   setPiecePhotoCrop,
   updateEmojiAliases,
   updateOrderPiece,
@@ -28,7 +29,7 @@ import {
 } from './api'
 import { openConfirmDialog, openPreviewPickerDialog } from './dialog'
 import { isPedidoEmCancelamento } from './marketplace'
-import { PREVIEW_SENT_STATUS, STATUS_COLUMN_INDEX } from './status'
+import { PREVIEW_DEADLINE_MESSAGE, PREVIEW_SENT_STATUS, STATUS_COLUMN_INDEX } from './status'
 import { openImageLightbox } from './lightbox'
 import { abrirPickerEditor, abrirPickerFila, type ItemFila } from './picker-editor'
 import { labelDoMolde } from './render-molde-client'
@@ -1089,6 +1090,18 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
         }
 
         const cacheBuster = Date.now() // a imagem acabou de ser trocada — evita servir a antiga do cache do navegador
+        const marcarComoPrevia = async () => {
+          // Sempre a linha-PAI (pieces[0].orderKey) — o painel pode ter aberto a
+          // partir de qualquer linha, e só patchar o pai aciona o cascade pras
+          // filhas no servidor (nunca o contrário).
+          const chavePai = pieces[0]?.orderKey ?? order.orderKey
+          await patchOrderDelta(order.workbookId, chavePai, {
+            cells: [{ col: STATUS_COLUMN_INDEX, value: PREVIEW_SENT_STATUS }],
+          })
+          if (chavePai === order.orderKey) {
+            order.status = PREVIEW_SENT_STATUS
+          }
+        }
         openPreviewPickerDialog({
           title: 'Enviar prévia',
           items: previas.map((p) => ({
@@ -1114,17 +1127,15 @@ export async function openShopeeChatPanel(order: ShopeeChatOrderInfo): Promise<v
               order.status = PREVIEW_SENT_STATUS
             }
           },
-          onMarkAsPreview: async () => {
-            // Sempre a linha-PAI (pieces[0].orderKey) — o painel pode ter aberto a
-            // partir de qualquer linha, e só patchar o pai aciona o cascade pras
-            // filhas no servidor (nunca o contrário).
-            const chavePai = pieces[0]?.orderKey ?? order.orderKey
-            await patchOrderDelta(order.workbookId, chavePai, {
-              cells: [{ col: STATUS_COLUMN_INDEX, value: PREVIEW_SENT_STATUS }],
+          onMarkAsPreview: marcarComoPrevia,
+          onMarkAsPreviewWithMessage: async () => {
+            // Marca primeiro: se o texto falhar, tentar de novo só re-marca (inofensivo)
+            // em vez de mandar o aviso duas vezes pro cliente.
+            await marcarComoPrevia()
+            await sendMarketplaceTextToBuyer(channel, {
+              username: order.buyerUsername,
+              text: PREVIEW_DEADLINE_MESSAGE,
             })
-            if (chavePai === order.orderKey) {
-              order.status = PREVIEW_SENT_STATUS
-            }
           },
         })
       }),

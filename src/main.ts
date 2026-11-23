@@ -21,6 +21,7 @@ import {
   clearShopeeBuyerChats,
   uploadImage,
   sendMarketplacePreview,
+  sendMarketplaceTextToBuyer,
   fetchShippingLabel,
   importShopeeOrdersXlsx,
   type OrderStyleDelta,
@@ -43,7 +44,7 @@ import {
 } from './grid'
 import { showLoginScreen } from './login'
 import { formatHitRef, highlightMatch, searchWorkbook, type SearchHit } from './search'
-import { STATUS_COLUMN_INDEX, PREVIEW_SENT_STATUS } from './status'
+import { STATUS_COLUMN_INDEX, PREVIEW_SENT_STATUS, PREVIEW_DEADLINE_MESSAGE } from './status'
 import type { CellValue, SheetData, WorkbookData } from './types'
 import { showWorkbooksList } from './workbooks-list'
 import {
@@ -851,7 +852,7 @@ function listPreviewPhotoCols(sheet: SheetData, row: number): number[] {
   return cols.filter((col) => Boolean(sheet.images[`${row}:${col}`]))
 }
 
-async function sendPreviewForRow(row: number, photoCol: number): Promise<void> {
+async function sendPreviewForRow(row: number, photoCol: number, withMessage = false): Promise<void> {
   if (!workbook || !currentWorkbookId || !grid) return
   const sheet = workbook.sheets[workbook.sheetOrder[0]]
   if (!sheet) return
@@ -886,13 +887,18 @@ async function sendPreviewForRow(row: number, photoCol: number): Promise<void> {
       serverUpdatedAt = Math.max(serverUpdatedAt, result.updatedAt)
       setStatusText('Prévia enviada')
     })
+    if (withMessage) {
+      setStatusText('Enviando aviso de prazo...')
+      await sendMarketplaceTextToBuyer(channel, { username: buyerUsername, text: PREVIEW_DEADLINE_MESSAGE })
+      setStatusText('Prévia + aviso 24h enviados')
+    }
   } catch (error) {
     handleApiError(error, 'Falha ao enviar prévia')
     throw error
   }
 }
 
-function handlePreviewRequest(row: number, col: number) {
+function handlePreviewRequest(row: number, col: number, withMessage = false) {
   if (!workbook || col !== RECIPIENT_COLUMN_INDEX) return
   const sheet = workbook.sheets[workbook.sheetOrder[0]]
   if (!sheet) return
@@ -910,17 +916,17 @@ function handlePreviewRequest(row: number, col: number) {
     return
   }
   if (photoCols.length === 1) {
-    void sendPreviewForRow(row, photoCols[0]!)
+    void sendPreviewForRow(row, photoCols[0]!, withMessage).catch(() => {})
     return
   }
   openPreviewPickerDialog({
-    title: 'Enviar prévia',
+    title: withMessage ? 'Enviar prévia + aviso 24h' : 'Enviar prévia',
     items: photoCols.map((photoCol) => {
       const img = sheet.images[`${row}:${photoCol}`]!
       const header = String(sheet.headers[photoCol] ?? '').trim() || `Coluna ${photoCol + 1}`
       return { col: photoCol, label: header, imageUrl: img.url ?? '' }
     }).filter((item) => item.imageUrl),
-    onSend: (item) => sendPreviewForRow(row, item.col),
+    onSend: (item) => sendPreviewForRow(row, item.col, withMessage),
   })
 }
 
