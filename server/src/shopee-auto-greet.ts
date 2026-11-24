@@ -2,7 +2,7 @@ import { db, nowMs } from './db.js'
 import {
   getOrderDetail,
   ORDER_BUYER_FIELDS,
-  sendChatMessage,
+  sendChatTextWithOrderCard,
   type ShopeeApiResponse,
 } from './shopee-api.js'
 
@@ -145,7 +145,7 @@ export async function maybeGreetOnReadyToShip(orderSn: string, status: string): 
     buyerUsername = info.buyerUsername
     if (!buyerUserId) throw new Error('buyer_user_id não retornado pelo get_order_detail')
 
-    const resp = await sendChatMessage({ toId: buyerUserId, text: message })
+    const resp = await sendChatTextWithOrderCard({ toId: buyerUserId, orderSn: sn, text: message })
     const err = shopeeErrorFrom(resp)
     if (err) throw new Error(err)
 

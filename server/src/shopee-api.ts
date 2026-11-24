@@ -487,6 +487,33 @@ export async function sendChatMessage(params: SendChatMessageParams): Promise<Sh
   return shopApiPost('/api/v2/sellerchat/send_message', body)
 }
 
+/**
+ * Manda o cartão do pedido no chat. A Shopee exige isso na 1ª mensagem pela Open API
+ * quando loja e comprador ainda não têm conversa (erro first_chat_without_order_info).
+ */
+export async function sendChatOrderCard(params: { toId: number; orderSn: string }): Promise<ShopeeApiResponse> {
+  const toId = Number(params.toId)
+  if (!toId || toId <= 0) throw new Error('toId obrigatório')
+  const orderSn = params.orderSn.trim().split('#')[0]
+  if (!orderSn) throw new Error('orderSn obrigatório')
+  return shopApiPost('/api/v2/sellerchat/send_message', {
+    to_id: toId,
+    message_type: 'order',
+    content: { order_sn: orderSn },
+  })
+}
+
+/** Cartão do pedido e, logo depois, o texto (o cartão abre a conversa com quem nunca falou com a loja). */
+export async function sendChatTextWithOrderCard(params: {
+  toId: number
+  orderSn: string
+  text: string
+}): Promise<ShopeeApiResponse> {
+  const card = await sendChatOrderCard({ toId: params.toId, orderSn: params.orderSn })
+  if (card.error) return card
+  return sendChatMessage({ toId: params.toId, text: params.text })
+}
+
 export async function uploadChatImage(filePath: string): Promise<string> {
   const auth = await ensureShopAuth()
   const apiPath = '/api/v2/sellerchat/upload_image'

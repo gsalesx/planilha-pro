@@ -13,6 +13,7 @@ import {
   getModelList,
   getMessageList,
   sendChatMessage,
+  sendChatTextWithOrderCard,
   uploadChatImage,
   sendChatImageMessage,
   fetchAllChatMessages,
@@ -802,7 +803,8 @@ router.post('/shopee/messages/start-conversation', requireAuth, async (req, res)
       return
     }
 
-    const sent = await sendChatMessage({ toId: buyerUserId, text: message })
+    // Cartão do pedido antes do texto: a Shopee recusa a 1ª mensagem sem ele.
+    const sent = await sendChatTextWithOrderCard({ toId: buyerUserId, orderSn: orderKey, text: message })
     if (sent.error) {
       res.status(502).json({
         ok: false,
