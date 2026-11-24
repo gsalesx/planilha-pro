@@ -21,7 +21,11 @@ import numpy as np
 from catboost import CatBoostRegressor
 
 API = os.environ.get("PLANILHA_API", "http://planilha-pro-m9si6g:3030/api").rstrip("/")
-SENHA = os.environ["IA_SENHA"]
+SENHA = os.environ.get("IA_SENHA", "")
+# Modo PC: lê os arquivos exportados do servidor (relatorio.json, ia.json, modelo-atual.json)
+# em vez da API, e grava o modelo novo em <pasta>/modelo-novo.json sem enviar nada.
+LOCAL = os.environ.get("TREINO_LOCAL", "")
+PESO_AJUSTADA = float(os.environ.get("PESO_AJUSTADA", "3"))
 CANVAS = 900.0
 FEATURES = [
     "coracao", "aspecto", "n_grupo", "n_bons", "gx0", "gy0", "gx1", "gy1", "gw_rel", "gh_rel",
@@ -102,7 +106,23 @@ def baixar_relatorio():
         desde = r["proximo"]
 
 
-def montar_linhas(itens):
+def igual_ao_da_ia(a, ia):
+    """Ajuste final igual ao que a IA gravou = rascunho aprovado sem mexer."""
+    if not ia:
+        return False
+    for k in ("dx", "dy"):
+        if abs(float(a.get(k) or 0) - float(ia.get(k) or 0)) > 2:
+            return False
+    for k in ("width", "height"):
+        va, vi = a.get(k), ia.get(k)
+        if va or vi:
+            if not va or not vi or abs(float(va) - float(vi)) / max(1.0, float(vi)) > 0.01:
+                return False
+    return True
+
+
+def montar_linhas(itens, ia_map=None):
+    ia_map = ia_map or {}
     # Última versão de cada (peça, slot) — é o ajuste que valeu.
     ultimo = {}
     for it in itens:
@@ -152,13 +172,19 @@ def montar_linhas(itens):
         if not (0 < alvo["gw"] < 3000) or abs(alvo["cx"]) > 3000 or abs(alvo["cy"]) > 3000:
             pular("alvo absurdo"); continue
         pedido = (it.get("pedido") or {}).get("order_key") or str(it["piece_id"])
-        linhas.append({"f": f, "alvo": alvo, "modo": modo, "n": min(n, 3), "pedido": pedido})
+        ia = (ia_map.get(f'{it["piece_id"]}:{it["slot"]}') or {}).get("ajuste")
+        if ia and igual_ao_da_ia(a, ia):
+            # Aprovado sem mexer: a IA aprenderia com ela mesma (eco). Fica fora do treino.
+            pular("rascunho da IA aprovado sem mexer"); continue
+        origem = "ajustada" if ia else "operador"
+        peso = PESO_AJUSTADA if ia else 1.0
+        linhas.append({"f": f, "alvo": alvo, "modo": modo, "n": min(n, 3), "pedido": pedido, "origem": origem, "peso": peso})
     return linhas, pulos
 
 
-def treinar(X, y):
+def treinar(X, y, w=None):
     m = CatBoostRegressor(iterations=400, depth=5, learning_rate=0.05, loss_function="RMSE", verbose=0, random_seed=7)
-    m.fit(X, y)
+    m.fit(X, y, sample_weight=w)
     return m
 
 
@@ -203,16 +229,36 @@ def prever_modelos(ms, linhas):
 
 def ajustar_todos(linhas):
     X = np.array([l["f"] for l in linhas])
+    w = np.array([l.get("peso", 1.0) for l in linhas])
     ms = {}
     for k in ("cx", "cy", "gw", "rot"):
-        ms[k] = treinar(X, np.array([l["alvo"][k] for l in linhas]))
+        ms[k] = treinar(X, np.array([l["alvo"][k] for l in linhas]), w)
     rec = [l for l in linhas if l["modo"] == "rosto"]
-    ms["uw"] = treinar(np.array([l["f"] for l in rec]), np.array([l["alvo"]["uw"] for l in rec]))
+    ms["uw"] = treinar(np.array([l["f"] for l in rec]), np.array([l["alvo"]["uw"] for l in rec]), np.array([l.get("peso", 1.0) for l in rec]))
     return ms
 
 
+def prever_pacote(pacote, linhas):
+    """Previsão do modelo já salvo (formato compacto, o mesmo avaliador do TypeScript)."""
+    out = []
+    for l in linhas:
+        x = l["f"]
+        p = {}
+        for k, pac in pacote["modelos"].items():
+            soma = 0.0
+            for t in pac["oblivious_trees"]:
+                idx = 0
+                for jj, sp in enumerate(t["splits"]):
+                    if x[sp["float_feature_index"]] > sp["border"]:
+                        idx |= 1 << jj
+                soma += t["leaf_values"][idx]
+            p[k] = pac["scale_and_bias"][0] * soma + pac["scale_and_bias"][1][0]
+        out.append(p)
+    return out
+
+
 def compactar(m, X_check):
-    caminho = "/tmp/m.json"
+    caminho = os.path.join(LOCAL or "/tmp", "_m.json")
     m.save_model(caminho, format="json")
     with open(caminho) as fh:
         j = json.load(fh)
@@ -242,11 +288,25 @@ def compactar(m, X_check):
 
 
 def main():
-    login = chamar("/login", {"username": "ia", "password": SENHA})
-    if login.get("role") != "ia" or not COOKIE["v"]:
-        raise SystemExit(f"login falhou: {login}")
-    itens = baixar_relatorio()
-    linhas, pulos = montar_linhas(itens)
+    ia_map, atual = {}, None
+    if LOCAL:
+        with open(os.path.join(LOCAL, "relatorio.json"), encoding="utf-8") as fh:
+            itens = json.load(fh)
+        caminho_ia = os.path.join(LOCAL, "ia.json")
+        if os.path.exists(caminho_ia):
+            with open(caminho_ia, encoding="utf-8") as fh:
+                ia_map = json.load(fh)
+        caminho_atual = os.path.join(LOCAL, "modelo-atual.json")
+        if os.path.exists(caminho_atual):
+            with open(caminho_atual, encoding="utf-8") as fh:
+                atual = json.load(fh)
+    else:
+        login = chamar("/login", {"username": "ia", "password": SENHA})
+        if login.get("role") != "ia" or not COOKIE["v"]:
+            raise SystemExit(f"login falhou: {login}")
+        itens = baixar_relatorio()
+    linhas, pulos = montar_linhas(itens, ia_map)
+    print("ORIGEM", json.dumps({o: sum(1 for l in linhas if l["origem"] == o) for o in ("operador", "ajustada")}), flush=True)
     print("RELATORIO", json.dumps({"registros": len(itens), "usados": len(linhas), "pulados": pulos}), flush=True)
     if len(linhas) < 200:
         raise SystemExit("poucos dados")
@@ -261,18 +321,33 @@ def main():
     m_modelo = metricas(teste, prever_modelos(ms, teste))
     m_regra = metricas(teste, baseline(treino, teste))
     resultado = {"treino": len(treino), "teste": len(teste), "regra_atual": m_regra, "modelo": m_modelo}
-    print("COMPARACAO", json.dumps(resultado, ensure_ascii=False), flush=True)
+    if atual:
+        # O modelo atual já viu parte deste teste no treino dele: a comparação o favorece.
+        resultado["modelo_atual"] = metricas(teste, prever_pacote(atual, teste))
+    aj = [l for l in teste if l["origem"] == "ajustada"]
+    if aj:
+        resultado["so_rascunhos_ajustados"] = {
+            "n": len(aj),
+            "modelo_novo": metricas(aj, prever_modelos(ms, aj)).get("todos"),
+            "modelo_atual": metricas(aj, prever_pacote(atual, aj)).get("todos") if atual else None,
+        }
+    print("COMPARACAO", json.dumps(resultado, ensure_ascii=False, indent=1), flush=True)
 
     final = ajustar_todos(linhas)
     X_check = np.array([l["f"] for l in linhas[:50]])
     pacote = {
-        "versao": 1,
+        "versao": (atual or {}).get("versao", 1) + 1 if LOCAL else 1,
         "criadoEm": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "features": FEATURES,
         "modelos": {k: compactar(final[k], X_check) for k in final},
         "metricas": {**resultado, "relatorio": {"registros": len(itens), "usados": len(linhas), "pulados": pulos}},
     }
-    print("ENVIO", chamar("/ia/modelo-enquadramento", pacote), flush=True)
+    if LOCAL:
+        with open(os.path.join(LOCAL, "modelo-novo.json"), "w", encoding="utf-8") as fh:
+            json.dump(pacote, fh)
+        print("SALVO", os.path.join(LOCAL, "modelo-novo.json"), flush=True)
+    else:
+        print("ENVIO", chamar("/ia/modelo-enquadramento", pacote), flush=True)
     print("FIM", flush=True)
 
 
